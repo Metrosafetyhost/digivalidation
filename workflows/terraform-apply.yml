@@ -1,0 +1,61 @@
+name: terraform apply
+'on':
+  push:
+    tags:
+    - '*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: version aka v.X.X.X
+        required: false
+        default: latest
+concurrency:
+  concurrency:
+    group: terraform-state
+permissions:
+  contents: read
+  id-token: write
+  actions: read
+  deployments: write
+  pull-requests: write
+jobs:
+  tf-apply:
+    name: Terraform Apply
+    runs-on: ubuntu-latest
+    environment: prod
+    env:
+      TF_VAR_env: prod
+    steps:
+    - name: Setup Babashka
+      uses: turtlequeue/setup-babashka@v1.7.0
+      with:
+        babashka-version: 1.12.196
+    - name: Setup terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.8.3
+    - name: Check out repository code
+      uses: actions/checkout@v4
+    - name: Get Python version
+      shell: bash
+      run: echo PYTHON_VERSION=$(cat .python-version) >> $GITHUB_ENV
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+    - name: Install Python
+      run: uv python install $PYTHON_VERSION
+    - name: Configure AWS Credentials
+      if: true
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::837329614132:role/github_oidc_role
+        aws-region: eu-west-2
+        disable-retry: true
+    - name: Terraform Init
+      run: "git config --global url.\"https://git:${{ steps.dependency-app.outputs.token }}@github.com/\".insteadOf \"https://github.com/\"\nterraform init \n--backend-config=bucket=bucket=metrosafety-cloud-env-terraform-state-master\n-backend-config=key=${{ github.event.repository.name }}/terraform.${{ matrix.environment.env-name }}.tfstate"
+      working-directory: ./tf
+    - name: Terraform Apply
+      run: bb apply
+      shell: bash
