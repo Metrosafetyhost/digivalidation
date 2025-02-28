@@ -60,12 +60,12 @@ resource "aws_s3_object" "lambda_zip" {
 resource "aws_lambda_function" "lambda" {
   for_each      = local.lambda_map
   function_name = "${var.namespace}-${each.key}"
-  handler = lookup(var.lambda_config, each.key, {
+  handler = "${each.key}.${lookup(var.lambda_config, each.key, {
     handler            = "process"
     memory_size        = 512
     timeout            = 6
     lambda_environment = {}
-  }).handler
+  }).handler}"
   runtime       = var.runtime
   architectures = [var.arch]
   role          = local.effective_lambda_roles[each.key]
