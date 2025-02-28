@@ -1,0 +1,53 @@
+name: ci-pytests
+'on':
+  workflow_dispatch: {}
+  pull_request:
+    branches:
+    - main
+    - master
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+  packages: read
+jobs:
+  env-config:
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.env.outputs.environments }}
+      version: ${{ env.VERSION }}
+    env:
+      VERSION: ${{ !github.event.inputs.comment_id && github.event.inputs.version || github.ref_name }}
+      ENV_NAME: ${{ github.event_name == 'push' && 'plat-dev' || format('{0}', inputs.environment) }}
+    steps:
+    - name: Convert latest to last tag
+      if: env.VERSION == 'latest'
+      run: echo VERSION=$(gh api /repos/${{ github.repository }}/git/refs/tags | jq -r '[.[].ref | select(test("refs/tags/v[0-9]+.[0-9]+.[0-9]+$"))] | last | sub("^refs/tags/"; "")') >> $GITHUB_ENV
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - uses: actions/checkout@v4
+    - name: Environment config
+      id: env
+      run: echo environments=$(cat .github/data/environments.yml | yq -o=json | jq '[.[] | select(."env-name" | IN(${{ env.ENV_NAME }}))]') >> $GITHUB_OUTPUT
+    - name: Environment config not found
+      run: 'if [[ "${{ steps.env.outputs.environments }}" == "[]" ]]; then echo ''environment config not defined for: ${{ env.ENV_NAME }}''; exit 1; fi'
+  py-test:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out repository code
+      uses: actions/checkout@v4
+    - name: Install uv
+      uses: astral-sh/setup-uv@v5
+      with:
+        enable-cache: true
+        cache-dependency-glob: uv.lock
+    - name: Get Python version
+      shell: bash
+      run: echo PYTHON_VERSION=$(cat .python-version) >> $GITHUB_ENV
+    - name: Install Python
+      run: uv python install $PYTHON_VERSION
+    - name: Install Python project
+      run: uv sync --all-extras --dev
+    - name: Run tests
+      run: uv run pytest

@@ -1,0 +1,114 @@
+{:paths ["scripts"]
+ :deps {lread/status-line {:git/url "https://github.com/lread/status-line.git"
+                           :sha "cf44c15f30ea3867227fa61ceb823e5e942c707f"}
+        }
+ :tasks {:requires ([babashka.fs :as fs]
+                    [clojure.string :as str]
+                    [babashka.cli :as cli]
+                    [aws-auth :refer [check-aws-env running-in-ci? assert-on-ci!]]
+                    [build :as build]
+                    [boot-project :as boot :refer [bootstrap-repo autoplan-env]]
+                    [babashka.process :refer [shell]]
+                    [lread.status-line :as status])
+         :enter (let [{:keys [name]} (current-task)]
+                  (if (str/starts-with? name "-")
+                    (status/line :detail "✔️ %s %s" name (str/join " " *command-line-args*))
+                    (status/line :head "🔄 TASK %s %s" name (str/join " " *command-line-args*))))
+         ;; :leave (let [{:keys [name]} (current-task)] (status/line :detail "\nTASK %s done." name))
+
+         ;; 🏁 CLI Argument Parsing for Configurable Options
+         :init (do
+                 (def cli-opts (cli/parse-opts *command-line-args*))
+                 (def stage (or (:stage cli-opts) (System/getenv "ENV") "data-dev"))
+                 (def region (or (:region cli-opts) (System/getenv "AWS_REGION") "ap-southeast-2"))
+                 (def python-runtime
+                   (or (System/getenv "PYTHON_VERSION")
+                       (when (fs/exists? ".python-version")
+                         (let [version (str/trim (slurp ".python-version"))]
+                           (when (seq version) version))))))
+
+         ;; 🏗️ Constants
+         -env               ".env"  ;;AWS account permissions
+         -venv              ".venv" ;; uv virtual-env
+         -pyproject-file     "pyproject.toml"
+         -runtime-build-dir  "dist"
+         -layers-dir         "layer"
+         -lambdas-dir        "lambdas"
+         -layer-zip          "layer.zip" ;; needs to be outside layer dir
+
+         ;; 🐍 Python & Virtual Environment Setup
+         -uv             {:task (boolean (shell {:out :string} "command -v uv"))}
+         -python-runtime {:task (println "Python runtime: " python-runtime)}
+         -python-project {:task (or (fs/exists? "requirements.txt")
+                                    (fs/exists? "pyproject.toml"))}
+
+          ;; 🔨 Directory Management
+         -setup-dirs {:depends [-layers-dir -runtime-build-dir -lambdas-dir]
+                      :task (doall (map fs/create-dirs [-layers-dir -runtime-build-dir -lambdas-dir]))
+                      :doc "Ensure required directories exist."}
+
+         -venv-change    {:depends [-layers-dir -runtime-build-dir -layer-zip -venv]
+                          :task (when (seq (fs/modified-since -layers-dir -venv))
+                                  (do (status/line :detail "Deleting layer and lambdas zip directories")
+                                      (fs/delete-tree -layers-dir)
+                                      (fs/delete-if-exists -layer-zip)
+                                      (fs/delete-tree -runtime-build-dir)
+                                      ))}
+
+         ;; ⚕️ AWS Environment Check
+         check-aws {:depends [-env]
+                    :task (check-aws-env)
+                    :doc "Check AWS session status for local dev."}
+
+         ;; 📦 Building the Lambda Layer
+         -build-layer {:depends [-setup-dirs -layers-dir -layer-zip -pyproject-file -venv-change ]
+                       :doc "🏗️ Build Runtime layer of external dependencies."
+                       :task (build/build-layer -layers-dir -layer-zip python-runtime)}
+
+         ;; 🏗️ Building the Lambda Packages
+         -build-lambdas {:depends [-setup-dirs -lambdas-dir -runtime-build-dir -runtime-build-dir]
+                         :doc "🏗️ Build and zip lambdas."
+                         :task (build/build-lambdas -lambdas-dir -runtime-build-dir python-runtime)}
+
+         -repackage-layer-lambdas {:depends [-setup-dirs -venv -venv-change]
+                                   :doc "🏗️ Rebuilds layer and lambda zips."
+                                   :task (shell "touch" -venv)}
+
+         ;; 🐍 Python testing & 🎨 Code Formatting
+         format       {:depends [-setup-dirs -python-project -uv]
+                       :doc "Format python lambdas files."
+                       :task (shell {:out :string} "uvx" "ruff" "check" -lambdas-dir "--fix" )}
+         test          {:depends [-setup-dirs -python-project -uv]
+                        :task (shell "uv run pytest")
+                        :doc "Run local python runtime tests."}
+
+         ;; 🌍 Terraform Commands
+         init            {:doc "Run Terraform Init Locally"
+                          :depends [-setup-dirs]
+                          :task (if running-in-ci?
+                                  (shell {:dir "tf"} "terraform init")
+                                  (let [backend-hcl-file (str "-backend-config=backend-" autoplan-env ".hcl")]
+                                    (shell {:dir "tf"} "terraform init" backend-hcl-file)))}
+         refresh         {:doc "Sync Terraform state with Refresh."
+                          :depends [check-aws]
+                          :task (shell {:dir "tf" :out :string :err :string} "terraform refresh")}
+         validate       {:depends [-build-layer -build-lambdas]
+                         :doc "Run Terraform validate."
+                         :task (shell {:dir "tf"} "terraform validate")}
+         plan          {:depends [-build-layer -build-lambdas init]
+                        :doc "Run Terraform plan."
+                        :task (let [namespace (build/extract-pyproject-name -pyproject-file)]
+                                (shell {:dir "tf"} (str "terraform plan -input=false -var-file=lambda.auto.tfvars -var=namespace=" namespace)))}
+         -assert-on-ci {:task (assert-on-ci!)} ;; Ensure immediate exit if in CI/CD
+         apply {:depends [-assert-on-ci -build-layer -build-lambdas]
+                :doc "Run Terraform apply."
+                :task (let [namespace (build/extract-pyproject-name -pyproject-file)]
+                         (shell {:dir "tf"}
+                                (str "terraform apply -auto-approve -input=false -var-file=lambda.auto.tfvars -var=namespace=" namespace)))}
+
+         ;; bootstrap Project Tasks
+         Bootstrap-Project {:depends [-pyproject-file -uv]
+                            :doc "Bootstrap project files. Will REMOVE .git directory!"
+                            :task (bootstrap-repo)}
+         }
+ }
