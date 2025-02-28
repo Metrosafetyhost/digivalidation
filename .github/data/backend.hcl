@@ -1,4 +1,4 @@
-    bucket         = "trove-cloud-env-terraform-state-{{ ENV }}"
+    bucket         = "metrosafety-cloud-env-tf-state-master"
     key            = "{{ SERVICENAME }}/terraform.{{ ENV }}.tfstate"
-    region         = "ap-southeast-2"
-    dynamodb_table = "terraform-state"
+    region         = "eu-west-2"
+    dynamodb_table = "terraform-state-locks"
