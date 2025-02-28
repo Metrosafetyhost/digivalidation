@@ -34,13 +34,6 @@ jobs:
       uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: 1.8.3
-    - name: Get Github App token
-      uses: actions/create-github-app-token@v1
-      id: dependency-app
-      with:
-        app-id: 718810
-        private-key: ${{ secrets.TROVE_CI_DEPENDENCY_PRIVATE_KEY }}
-        owner: trovemoney
     - name: Check out repository code
       uses: actions/checkout@v4
     - name: Get Python version
@@ -58,7 +51,7 @@ jobs:
       uses: aws-actions/configure-aws-credentials@v4
       with:
         role-to-assume: arn:aws:iam::837329614132:role/github_oidc_role
-        aws-region: ap-southeast-2
+        aws-region: eu-west-2
         disable-retry: true
     - name: Terraform Init
       run: "git config --global url.\"https://git:${{ steps.dependency-app.outputs.token }}@github.com/\".insteadOf \"https://github.com/\"\nterraform init \n--backend-config=bucket=bucket=metrosafety-cloud-env-terraform-state-${{ matrix.environment.account-identifier }}\n-backend-config=key=${{ github.event.repository.name }}/terraform.${{ matrix.environment.env-name }}.tfstate"
