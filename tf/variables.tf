@@ -21,7 +21,7 @@ variable "gh_org" {
 
 variable "region" {
   type    = string
-  default = "ap-southeast-2"
+  default = "eu-west-2"
 }
 
 variable "lambda_file_names" {
