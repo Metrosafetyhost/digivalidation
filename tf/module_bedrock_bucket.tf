@@ -1,4 +1,4 @@
-module "lambda_zips_bucket" {
+module "bedrock_output_bucket" {
   source = "./modules/s3"
 
   bucket         = "metrosafety-bedrock-output-${var.env}-${var.namespace}"

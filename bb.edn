@@ -78,7 +78,7 @@
          format       {:depends [-setup-dirs -python-project -uv]
                        :doc "Format python lambdas files."
                        :task (shell {:out :string} "uvx" "ruff" "check" -lambdas-dir "--fix" )}
-         test          {:depends [-setup-dirs -python-project -uv]
+         tests         {:depends [-setup-dirs -python-project -uv]
                         :task (shell "uv run pytest")
                         :doc "Run local python runtime tests."}
 
@@ -107,7 +107,7 @@
                                 (str "terraform apply -auto-approve -input=false -var-file=lambda.auto.tfvars -var=namespace=" namespace)))}
 
          ;; bootstrap Project Tasks
-         Bootstrap-Project {:depends [-pyproject-file -uv]
+         -Bootstrap-Project {:depends [-pyproject-file -uv]
                             :doc "Bootstrap project files. Will REMOVE .git directory!"
                             :task (bootstrap-repo)}
          }

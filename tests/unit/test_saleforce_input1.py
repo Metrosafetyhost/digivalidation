@@ -1,6 +1,6 @@
 import os
 from contextlib import contextmanager
-from lambdas.salesforce_input import call_bedrock, extract_headers
+from lambdas.salesforce_input import call_bedrock
 from moto import mock_aws
 import boto3
 

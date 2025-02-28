@@ -3,7 +3,7 @@ version = "1.0.0"
 name = "bedrock-lambda"
 description = "Bedrock Lambda for MetroSafety"
 authors = [
-    { name = "MetroSafety", email = "pablito@metrosaftey.co.nz"},
+    { name = "MetroSafety", email = "luke.gasson@metrosafety.co.uk"},
 ]
 readme = "README.md"
 requires-python = ">= 3.13"

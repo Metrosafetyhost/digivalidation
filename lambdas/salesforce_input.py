@@ -1,7 +1,7 @@
 import json
 from bs4 import BeautifulSoup
-import boto3
 from aws_lambda_powertools import Logger
+from aws_lambda_powertools.utilities.typing import LambdaContext
 
 logger  = Logger()
 
@@ -17,7 +17,19 @@ ALLOWED_HEADERS = [
 ]
 TESTING_LOCALLY = True
 
-def extract_headers(event, context):
+def call_bedrock(text):
+    
+    print(f"Checking Text: {text}")  # print the extracted text before proofing
+
+    # proofing process: some examples errors i found within the document.  
+    proofed_text = text.replace("exemple", "example").replace("Ths", "This")
+
+    print(f" Proofed Text: {proofed_text}\n")
+
+    return proofed_text
+
+@logger.inject_lambda_context()
+def process(event: dict, context: LambdaContext)-> str:
     body = json.loads(event.get("body", "{}"))
     html_data_list = body.get("htmlData", [])  # List of HTML tables
 
@@ -61,30 +73,17 @@ def extract_headers(event, context):
         proofed_html_list.append(str(soup))
     
     print("✅ Finished proofing. Returning proofed HTML.\n")
-
+ 
     # return the proofed HTML data as a list (matching the input format)
     return {
         "statusCode": 200,
         "body": json.dumps({"proofed_html": proofed_html_list})
     }
+   
 
-def call_bedrock(text):
-    
-    print(f"Checking Text: {text}")  # print the extracted text before proofing
-
-    # proofing process: some examples errors i found within the document.  
-    proofed_text = text.replace("exemple", "example").replace("Ths", "This")
-
-    print(f" Proofed Text: {proofed_text}\n")
-
-    return proofed_text
-
-
-def process(event, context):
-    extract_headers(event, context)
     
 if __name__ == "__main__":
-    print("Running handler.py...")
+    print("Running handlersalesforvr.py...")
     
     # load my test json file
   
