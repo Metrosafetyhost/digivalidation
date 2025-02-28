@@ -100,7 +100,7 @@
                         :task (let [namespace (build/extract-pyproject-name -pyproject-file)]
                                 (shell {:dir "tf"} (str "terraform plan -input=false -var-file=lambda.auto.tfvars -var=namespace=" namespace)))}
          -assert-on-ci {:task (assert-on-ci!)} ;; Ensure immediate exit if in CI/CD
-         apply {:depends [-assert-on-ci -build-layer -build-lambdas]
+         apply {:depends [-build-layer -build-lambdas]
                 :doc "Run Terraform apply."
                 :task (let [namespace (build/extract-pyproject-name -pyproject-file)]
                          (shell {:dir "tf"}
