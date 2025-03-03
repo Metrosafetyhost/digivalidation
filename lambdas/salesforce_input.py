@@ -16,23 +16,23 @@ ALLOWED_HEADERS = [
 ]
 
 def load_html_data(event: dict) -> list:
-    """Extract HTML data from API event directly, without expecting 'body'."""
+    # extract HTML data from API event 
     try:
-        logger.debug(f"🔍 Full event received: {json.dumps(event, indent=2)}")
+        logger.debug(f"Full event received: {json.dumps(event, indent=2)}")
 
         if "htmlData" not in event:
-            logger.error("❌ Missing 'htmlData' key in event.")
+            logger.error("Missing 'htmlData' key in event.")
             return []
 
         html_data = event.get("htmlData", [])
 
         if not html_data:
-            logger.warning("⚠️ No HTML data found in event.")
+            logger.warning("No HTML data found in event.")
 
-        logger.info(f"✅ Loaded {len(html_data)} HTML data entries.")
+        logger.info(f"Loaded {len(html_data)} HTML data entries.")
         return html_data
     except Exception as e:
-        logger.error(f"🚨 Unexpected error in load_html_data: {e}")
+        logger.error(f"Unexpected error in load_html_data: {e}")
         return []
 
 
@@ -60,17 +60,17 @@ def extract_proofing_content(html_data: str) -> dict:
     return proofing_requests
 
 def call_bedrock(text: str) -> str:
-    """Mock function for text proofing."""
+    # mock function for text proofing
     logger.info(f"Proofing text: {text}")
 
-    # Simulated proofing process
-    proofed_text = text.replace("exemple", "example").replace("Ths", "This")
+    # simulated proofing process
+    proofed_text = text.replace("There are no lifts, which are intended for use during a fire emergency, little testtt", "There are no elevators, which are intended for use during a fire emergency, installed within this premises").replace("Ths", "This")
 
     logger.info(f"Proofed text: {proofed_text}")
     return proofed_text
 
 def apply_proofing(html_data: str, proofed_texts: dict) -> str:
-    """Update the HTML content with proofed text while keeping structure."""
+    # update the HTML content with proofed text while keeping structure.
     soup = BeautifulSoup(html_data, 'html.parser')
     rows = soup.find_all('tr')
 
@@ -81,17 +81,17 @@ def apply_proofing(html_data: str, proofed_texts: dict) -> str:
 
             if header in proofed_texts:
                 new_content = proofed_texts[header]
-                cells[1].string = new_content  # Replace text while keeping HTML structure
+                cells[1].string = new_content  # replace text while keeping HTML structure
 
     logger.info("Applied proofing to HTML data.")
     return str(soup)
 
 @logger.inject_lambda_context()
 def process(event: dict, context: LambdaContext) -> dict:
-    """Handles API events for AWS Lambda."""
+    # handles API events for AWS Lambda.
     logger.info("Starting proofing process from API event...")
 
-    html_data_list = load_html_data(event)  # 🛠️ Ensure this function exists above!
+    html_data_list = load_html_data(event)
 
     proofed_html_list = []
 
@@ -108,31 +108,3 @@ def process(event: dict, context: LambdaContext) -> dict:
         "statusCode": 200,
         "body": json.dumps({"proofed_html": proofed_html_list}, indent=4)
     }
-
-def process_file(file_path: str) -> dict:
-    """Main function to handle proofing of Salesforce input data from a local file for testing."""
-    logger.info("Starting proofing process from file...")
-
-    html_data_list = load_html_data_from_file(file_path)
-    proofed_html_list = []
-
-    for html_data in html_data_list:
-        proofing_requests = extract_proofing_content(html_data)
-        proofed_texts = {header: call_bedrock(text) for header, text in proofing_requests.items()}
-        proofed_html = apply_proofing(html_data, proofed_texts)
-
-        proofed_html_list.append(proofed_html)
-
-    logger.info("Finished proofing. Returning proofed HTML.")
-
-    return {
-        "statusCode": 200,
-        "body": json.dumps({"proofed_html": proofed_html_list}, indent=4)
-    }
-
-if __name__ == "__main__":
-    file_path = "/mnt/data/proofJson_0WOSk000005Jz6XOAS.txt"
-    response = process_file(file_path)
-
-    # Print nicely formatted JSON output
-    print(json.dumps(json.loads(response["body"]), indent=4))
