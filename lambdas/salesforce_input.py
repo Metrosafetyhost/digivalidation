@@ -17,11 +17,15 @@ ALLOWED_HEADERS = [
 
 
 def load_html_data(event: dict) -> list:
-    # extract HTML tables from the input JSON event.
     try:
-        body = json.loads(event.get("body", "{}"))
+        logger.debug(f"Raw event received: {json.dumps(event, indent=2)}")
+        
+        body = json.loads(event.get("body", "{}"))  # Decode JSON body
+        logger.debug(f"Decoded body: {json.dumps(body, indent=2)}")
+
         html_data = body.get("htmlData", [])
         logger.info(f"Loaded {len(html_data)} HTML data entries.")
+        
         return html_data
     except json.JSONDecodeError as e:
         logger.error(f"Failed to decode JSON: {e}")
