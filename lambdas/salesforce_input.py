@@ -85,32 +85,11 @@ def apply_proofing(html_data: str, proofed_texts: dict) -> str:
     return str(soup)
 
 # commenting out API event handling for now whilst i test locally 
-# @logger.inject_lambda_context()
-# def process(event: dict, context: LambdaContext) -> dict:
-#     Main function to handle proofing of Salesforce input data from an API event.
-#     logger.info("Starting proofing process...")
-#     html_data_list = load_html_data(event)  # Extract data from API request
-#     proofed_html_list = []
-
-#     for html_data in html_data_list:
-#         proofing_requests = extract_proofing_content(html_data)
-#         proofed_texts = {header: call_bedrock(text) for header, text in proofing_requests.items()}
-#         proofed_html = apply_proofing(html_data, proofed_texts)
-
-#         proofed_html_list.append(proofed_html)
-
-#     logger.info("Finished proofing. Returning proofed HTML.")
-
-#     return {
-#         "statusCode": 200,
-#         "body": json.dumps({"proofed_html": proofed_html_list}, indent=4)
-#     }
-
-def process_file(file_path: str) -> dict:
-    # main function to handle proofing of Salesforce input data from a local file
-    logger.info("Starting proofing process from file...")
-
-    html_data_list = load_html_data_from_file(file_path)
+@logger.inject_lambda_context()
+def process(event: dict, context: LambdaContext) -> dict:
+    # main function to handle proofing of Salesforce input data from an API event.
+    logger.info("Starting proofing process...")
+    html_data_list = load_html_data(event)  # Extract data from API request
     proofed_html_list = []
 
     for html_data in html_data_list:
@@ -128,8 +107,8 @@ def process_file(file_path: str) -> dict:
     }
 
 if __name__ == "__main__":
-    file_path = "/data/conftest.json"
-    response = process_file(file_path)
+    file_path = "/mnt/data/proofJson_0WOSk000005Jz6XOAS.txt"
+    response = process(file_path)
 
     # Print nicely formatted JSON output
     print(json.dumps(json.loads(response["body"]), indent=4))
