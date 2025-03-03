@@ -19,17 +19,34 @@ def load_html_data(event: dict) -> list:
     """Load HTML data from an API event."""
     try:
         logger.debug(f"Raw event received: {json.dumps(event, indent=2)}")
-        body = json.loads(event.get("body", "{}"))
+
+        if "body" not in event:
+            logger.error("❌ Missing 'body' key in event.")
+            return []
+
+        # Log the body before decoding
+        logger.debug(f"Raw 'body': {event['body']}")
+
+        # Try decoding the body
+        try:
+            body = json.loads(event["body"])
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ Failed to decode JSON body: {e}")
+            return []
+
+        logger.debug(f"Decoded body: {json.dumps(body, indent=2)}")
+
         html_data = body.get("htmlData", [])
-
+        
         if not html_data:
-            logger.warning("No HTML data found in event body.")
+            logger.warning("⚠️ No HTML data found in event body.")
 
-        logger.info(f"Loaded {len(html_data)} HTML data entries.")
+        logger.info(f"✅ Loaded {len(html_data)} HTML data entries.")
         return html_data
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to decode JSON: {e}")
+    except Exception as e:
+        logger.error(f"🚨 Unexpected error in load_html_data: {e}")
         return []
+
 
 
 def extract_proofing_content(html_data: str) -> dict:
