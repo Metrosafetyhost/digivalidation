@@ -93,23 +93,23 @@ def process(event: dict, context: LambdaContext) -> dict:
     for index, html_data in enumerate(html_data_list):
         logger.debug(f"Processing table {index+1}/{len(html_data_list)}: {html_data[:500]}...")  # Log first 500 chars
 
-        # Extract proofing requests
+        # extract proofing requests
         proofing_requests = extract_proofing_content(html_data)
         logger.debug(f"Extracted proofing requests: {proofing_requests}")
 
-        # If no proofing requests were found, log a warning
+        # if no proofing requests were found, log a warning
         if not proofing_requests:
             logger.warning(f"No proofing requests found for table {index+1}.")
 
-        # Send content to AWS Bedrock (or mock function)
+        # send content to AWS Bedrock (or mock function)
         proofed_texts = {header: call_bedrock(text) for header, text in proofing_requests.items()}
         logger.debug(f"Proofed texts: {proofed_texts}")
 
-        # If proofed_texts is empty, log a warning
+        # if proofed_texts is empty, log a warning
         if not proofed_texts:
             logger.warning(f"No proofed texts returned for table {index+1}.")
 
-        # Apply proofed content back to the HTML
+        # apply proofed content back to the HTML
         logger.debug(f"Before applying proofing: {html_data[:500]}...")
         proofed_html = apply_proofing(html_data, proofed_texts)
         logger.debug(f"After applying proofing: {proofed_html[:500]}...")
