@@ -18,14 +18,21 @@ ALLOWED_HEADERS = [
 
 def load_html_data(event: dict) -> list:
     try:
-        logger.debug(f"Raw event received: {json.dumps(event, indent=2)}")
-        
-        body = json.loads(event.get("body", "{}"))  # Decode JSON body
+        logger.debug(f"Full event received: {json.dumps(event, indent=2)}")
+
+        if "body" not in event:
+            logger.error("Missing 'body' key in event.")
+            return []
+
+        body = json.loads(event["body"])
         logger.debug(f"Decoded body: {json.dumps(body, indent=2)}")
 
         html_data = body.get("htmlData", [])
+
+        if not html_data:
+            logger.warning("No HTML data found in event body.")
+
         logger.info(f"Loaded {len(html_data)} HTML data entries.")
-        
         return html_data
     except json.JSONDecodeError as e:
         logger.error(f"Failed to decode JSON: {e}")
@@ -33,7 +40,6 @@ def load_html_data(event: dict) -> list:
 
 
 def extract_proofing_content(html_data: str) -> dict:
-    # extract key-value pairs (headers and content) that need proofing.
     soup = BeautifulSoup(html_data, 'html.parser')
     rows = soup.find_all('tr')
 
@@ -45,12 +51,14 @@ def extract_proofing_content(html_data: str) -> dict:
             header = cells[0].get_text(strip=True)
             content = cells[1].get_text(strip=True)
 
+            logger.debug(f"Checking row - Header: {header}, Content: {content}")
+
             if header in ALLOWED_HEADERS:
+                logger.info(f"Extracting header: {header}")
                 proofing_requests[header] = content
 
     logger.info(f"Extracted {len(proofing_requests)} items for proofing.")
     return proofing_requests
-
 
 def call_bedrock(text: str) -> str:
     # test function for text processing.
