@@ -16,36 +16,25 @@ ALLOWED_HEADERS = [
 ]
 
 def load_html_data(event: dict) -> list:
-    """Load HTML data from an API event."""
+    """Extract HTML data from API event directly, without expecting 'body'."""
     try:
-        logger.debug(f"Raw event received: {json.dumps(event, indent=2)}")
+        logger.debug(f"🔍 Full event received: {json.dumps(event, indent=2)}")
 
-        if "body" not in event:
-            logger.error("❌ Missing 'body' key in event.")
+        if "htmlData" not in event:
+            logger.error("❌ Missing 'htmlData' key in event.")
             return []
 
-        # Log the body before decoding
-        logger.debug(f"Raw 'body': {event['body']}")
+        html_data = event.get("htmlData", [])
 
-        # Try decoding the body
-        try:
-            body = json.loads(event["body"])
-        except json.JSONDecodeError as e:
-            logger.error(f"❌ Failed to decode JSON body: {e}")
-            return []
-
-        logger.debug(f"Decoded body: {json.dumps(body, indent=2)}")
-
-        html_data = body.get("htmlData", [])
-        
         if not html_data:
-            logger.warning("⚠️ No HTML data found in event body.")
+            logger.warning("⚠️ No HTML data found in event.")
 
         logger.info(f"✅ Loaded {len(html_data)} HTML data entries.")
         return html_data
     except Exception as e:
         logger.error(f"🚨 Unexpected error in load_html_data: {e}")
         return []
+
 
 
 
