@@ -29,7 +29,7 @@ def load_html_data(event: dict) -> list:
 
 
 def extract_proofing_content(html_data: str) -> dict:
-    # Extract key-value pairs (headers and content) that need proofing.
+    # extract key-value pairs (headers and content) that need proofing.
     soup = BeautifulSoup(html_data, 'html.parser')
     rows = soup.find_all('tr')
 
@@ -49,7 +49,7 @@ def extract_proofing_content(html_data: str) -> dict:
 
 
 def call_bedrock(text: str) -> str:
-    # Mock proofing function for text processing.
+    # test function for text processing.
     logger.info(f"Proofing text: {text}")
 
     # simulated proofing process
@@ -60,7 +60,7 @@ def call_bedrock(text: str) -> str:
 
 
 def apply_proofing(html_data: str, proofed_texts: dict) -> str:
-    # Update the HTML content with proofed text while preserving structure.
+    # update the HTML content with proofed text while keeping structure.
     soup = BeautifulSoup(html_data, 'html.parser')
     rows = soup.find_all('tr')
 
@@ -71,7 +71,7 @@ def apply_proofing(html_data: str, proofed_texts: dict) -> str:
 
             if header in proofed_texts:
                 new_content = proofed_texts[header]
-                cells[1].string = new_content  # Replace text while keeping HTML structure
+                cells[1].string = new_content  # replace text while keeping HTML structure
 
     logger.info("Applied proofing to HTML data.")
     return str(soup)
@@ -79,15 +79,40 @@ def apply_proofing(html_data: str, proofed_texts: dict) -> str:
 
 @logger.inject_lambda_context()
 def process(event: dict, context: LambdaContext) -> dict:
-    #  main function to handle proofing of salesforce input data.
     logger.info("Starting proofing process...")
+
+    # Log the full event to ensure it's received correctly
+    logger.debug(f"Event received: {json.dumps(event, indent=2)}")
+
+    # Load HTML data
     html_data_list = load_html_data(event)
+    logger.debug(f"Extracted HTML data count: {len(html_data_list)}")
+
     proofed_html_list = []
 
-    for html_data in html_data_list:
+    for index, html_data in enumerate(html_data_list):
+        logger.debug(f"Processing table {index+1}/{len(html_data_list)}: {html_data[:500]}...")  # Log first 500 chars
+
+        # Extract proofing requests
         proofing_requests = extract_proofing_content(html_data)
+        logger.debug(f"Extracted proofing requests: {proofing_requests}")
+
+        # If no proofing requests were found, log a warning
+        if not proofing_requests:
+            logger.warning(f"No proofing requests found for table {index+1}.")
+
+        # Send content to AWS Bedrock (or mock function)
         proofed_texts = {header: call_bedrock(text) for header, text in proofing_requests.items()}
+        logger.debug(f"Proofed texts: {proofed_texts}")
+
+        # If proofed_texts is empty, log a warning
+        if not proofed_texts:
+            logger.warning(f"No proofed texts returned for table {index+1}.")
+
+        # Apply proofed content back to the HTML
+        logger.debug(f"Before applying proofing: {html_data[:500]}...")
         proofed_html = apply_proofing(html_data, proofed_texts)
+        logger.debug(f"After applying proofing: {proofed_html[:500]}...")
 
         proofed_html_list.append(proofed_html)
 
@@ -97,6 +122,7 @@ def process(event: dict, context: LambdaContext) -> dict:
         "statusCode": 200,
         "body": json.dumps({"proofed_html": proofed_html_list})
     }
+
 
 
 if __name__ == "__main__":
@@ -110,5 +136,5 @@ if __name__ == "__main__":
 
     response = process(test_event, None)
 
-    # Print nicely formatted JSON
+    # print nicely formatted JSON
     print(json.dumps(json.loads(response["body"]), indent=4))
