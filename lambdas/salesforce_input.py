@@ -64,7 +64,7 @@ def call_bedrock(text: str) -> str:
     logger.info(f"Proofing text: {text}")
 
     # simulated proofing process
-    proofed_text = text.replace("There are no lifts, which are intended for use during a fire emergency, little testtt", "There are no elevators, which are intended for use during a fire emergency, installed within this premises").replace("Ths", "This")
+    proofed_text = text.replace("There are no lifts, which are intended for use during a fire emergency, installed within this premises", "There are no elevators, which are intended for use during a fire emergency, little test").replace("Ths", "This")
 
     logger.info(f"Proofed text: {proofed_text}")
     return proofed_text
