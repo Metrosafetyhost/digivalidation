@@ -15,26 +15,22 @@ ALLOWED_HEADERS = [
     "Roof Details"
 ]
 
-def load_html_data_from_file(file_path: str) -> list:
-    # load HTML data from a local JSON file instead of an API event.
+def load_html_data(event: dict) -> list:
+    """Load HTML data from an API event."""
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        logger.info(f"Loaded JSON file: {file_path}")
-        html_data = data.get("htmlData", [])
+        logger.debug(f"Raw event received: {json.dumps(event, indent=2)}")
+        body = json.loads(event.get("body", "{}"))
+        html_data = body.get("htmlData", [])
 
         if not html_data:
-            logger.warning("No HTML data found in JSON file.")
-        
-        logger.info(f"Extracted {len(html_data)} HTML entries.")
+            logger.warning("No HTML data found in event body.")
+
+        logger.info(f"Loaded {len(html_data)} HTML data entries.")
         return html_data
     except json.JSONDecodeError as e:
         logger.error(f"Failed to decode JSON: {e}")
         return []
-    except FileNotFoundError:
-        logger.error(f"File not found: {file_path}")
-        return []
+
 
 def extract_proofing_content(html_data: str) -> dict:
     # extract key-value pairs (headers and content) that need proofing.
@@ -58,7 +54,7 @@ def extract_proofing_content(html_data: str) -> dict:
     return proofing_requests
 
 def call_bedrock(text: str) -> str:
-    # mock function for text proofing.
+    """Mock function for text proofing."""
     logger.info(f"Proofing text: {text}")
 
     # Simulated proofing process
@@ -68,7 +64,7 @@ def call_bedrock(text: str) -> str:
     return proofed_text
 
 def apply_proofing(html_data: str, proofed_texts: dict) -> str:
-    # update the HTML content with proofed text while keeping structure.
+    """Update the HTML content with proofed text while keeping structure."""
     soup = BeautifulSoup(html_data, 'html.parser')
     rows = soup.find_all('tr')
 
@@ -79,17 +75,39 @@ def apply_proofing(html_data: str, proofed_texts: dict) -> str:
 
             if header in proofed_texts:
                 new_content = proofed_texts[header]
-                cells[1].string = new_content  # replace text while keeping HTML structure
+                cells[1].string = new_content  # Replace text while keeping HTML structure
 
     logger.info("Applied proofing to HTML data.")
     return str(soup)
 
-# commenting out API event handling for now whilst i test locally 
 @logger.inject_lambda_context()
 def process(event: dict, context: LambdaContext) -> dict:
-    # main function to handle proofing of Salesforce input data from an API event.
-    logger.info("Starting proofing process...")
-    html_data_list = load_html_data(event)  # Extract data from API request
+    """Handles API events for AWS Lambda."""
+    logger.info("Starting proofing process from API event...")
+
+    html_data_list = load_html_data(event)  # 🛠️ Ensure this function exists above!
+
+    proofed_html_list = []
+
+    for html_data in html_data_list:
+        proofing_requests = extract_proofing_content(html_data)
+        proofed_texts = {header: call_bedrock(text) for header, text in proofing_requests.items()}
+        proofed_html = apply_proofing(html_data, proofed_texts)
+
+        proofed_html_list.append(proofed_html)
+
+    logger.info("Finished proofing. Returning proofed HTML.")
+
+    return {
+        "statusCode": 200,
+        "body": json.dumps({"proofed_html": proofed_html_list}, indent=4)
+    }
+
+def process_file(file_path: str) -> dict:
+    """Main function to handle proofing of Salesforce input data from a local file for testing."""
+    logger.info("Starting proofing process from file...")
+
+    html_data_list = load_html_data_from_file(file_path)
     proofed_html_list = []
 
     for html_data in html_data_list:
@@ -108,7 +126,7 @@ def process(event: dict, context: LambdaContext) -> dict:
 
 if __name__ == "__main__":
     file_path = "/mnt/data/proofJson_0WOSk000005Jz6XOAS.txt"
-    response = process(file_path)
+    response = process_file(file_path)
 
     # Print nicely formatted JSON output
     print(json.dumps(json.loads(response["body"]), indent=4))
