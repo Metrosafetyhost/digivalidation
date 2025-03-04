@@ -41,24 +41,26 @@ def proof_html_with_bedrock(html_text):
 
         # Ensure correct JSON format
         payload = {
-            "inputText": prompt,  # 🔹 Some models require "inputText" instead of "prompt"
-            "maxTokenCount": 512,  # 🔹 Titan models use "maxTokenCount" instead of "max_tokens"
-            "temperature": 0.5,  # 🔹 Controls randomness (adjust if needed)
-            "topP": 0.9  # 🔹 Sampling parameter
+            "inputText": prompt,  # ✅ Place the full prompt here
+            "textGenerationConfig": {
+                "maxTokenCount": 512,
+                "temperature": 0.5,
+                "topP": 0.9
+            }
         }
 
-        # Make request to Bedrock
+        # 🔹 Make request to AWS Bedrock
         response = bedrock_client.invoke_model(
             modelId="amazon.titan-text-lite-v1",  # ✅ Ensure correct model ID
-            contentType="application/json",  # ✅ Set correct content type
+            contentType="application/json",
             accept="application/json",
-            body=json.dumps(payload)  # ✅ Ensure JSON format
+            body=json.dumps(payload)  # ✅ Ensure correct JSON format
         )
 
-        # Parse response
+        # 🔹 Parse response
         response_body = json.loads(response["body"].read().decode("utf-8"))
 
-        # Titan models return text under "results", check format
+        # 🔹 Titan models return proofed text inside "results"
         proofed_text = response_body.get("results", [{}])[0].get("outputText", "").strip()
 
         logger.info("✅ Bedrock proofing successful.")
@@ -66,7 +68,7 @@ def proof_html_with_bedrock(html_text):
 
     except Exception as e:
         logger.error(f"❌ Bedrock API Error: {str(e)}")
-        return html_text  # Return original text on failure
+        return html_text  # 🔹 Return original text if error occurs
 
 def process(event, context):
     # AWS Lambda entry point
