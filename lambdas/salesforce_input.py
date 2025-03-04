@@ -4,7 +4,7 @@ import logging
 from aws_lambda_powertools.logging import Logger
 
 # initialise logger
-logger = Logger(service="bedrock-lambda-salesforce_input")
+logger = Logger()
 
 # initialise AWS Bedrock client
 bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")

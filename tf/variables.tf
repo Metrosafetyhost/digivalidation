@@ -1,6 +1,7 @@
 variable "namespace" {
   description = "Namespace of the service"
   type        = string
+  default     = "bedrock-lambda"
 }
 
 variable "repo_name" {
