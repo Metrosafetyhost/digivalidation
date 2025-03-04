@@ -39,15 +39,27 @@ def proof_html_with_bedrock(html_text):
         # prompt to test with 
         prompt = f"Proofread and correct this HTML content, ensuring spelling and grammar is in British English:\n\n{html_text}"
 
-        # make request to Bedrock
+        # Ensure correct JSON format
+        payload = {
+            "inputText": prompt,  # 🔹 Some models require "inputText" instead of "prompt"
+            "maxTokenCount": 512,  # 🔹 Titan models use "maxTokenCount" instead of "max_tokens"
+            "temperature": 0.5,  # 🔹 Controls randomness (adjust if needed)
+            "topP": 0.9  # 🔹 Sampling parameter
+        }
+
+        # Make request to Bedrock
         response = bedrock_client.invoke_model(
-            modelId = BEDROCK_MODEL_ID,
-            body=json.dumps({"prompt": prompt, "max_tokens": 500})
+            modelId="amazon.titan-text-lite-v1",  # ✅ Ensure correct model ID
+            contentType="application/json",  # ✅ Set correct content type
+            accept="application/json",
+            body=json.dumps(payload)  # ✅ Ensure JSON format
         )
 
         # Parse response
         response_body = json.loads(response["body"].read().decode("utf-8"))
-        proofed_text = response_body.get("completion", "").strip()
+
+        # Titan models return text under "results", check format
+        proofed_text = response_body.get("results", [{}])[0].get("outputText", "").strip()
 
         logger.info("✅ Bedrock proofing successful.")
         return proofed_text
