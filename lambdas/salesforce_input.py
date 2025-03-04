@@ -9,8 +9,8 @@ logger = Logger(service="bedrock-lambda-salesforce_input")
 # Initialize AWS Bedrock client
 bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
 
-# Define Bedrock model (update if using a different model)
-BEDROCK_MODEL_ID = "anthropic.claude-v2"
+# Define Bedrock model
+BEDROCK_MODEL_ID = "amazon.titan-text-lite-v1"
 
 def load_html_data(event):
     """Extract HTML data directly from event without expecting 'body'."""
