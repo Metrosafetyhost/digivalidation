@@ -28,5 +28,6 @@ resource "aws_lambda_function" "salesforce_input" {
   }
 
   filename         = "dist/salesforce_input.zip"
-  source_code_hash = filebase64sha256("dist/salesforce_input.zip")
+  source_code_hash = filebase64sha256("${path.module}/../dist/salesforce_input.zip")
+
 }

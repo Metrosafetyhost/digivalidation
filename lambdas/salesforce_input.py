@@ -41,7 +41,7 @@ def proof_html_with_bedrock(html_text):
 
         # Ensure correct JSON format
         payload = {
-            "inputText": prompt,  # ✅ Place the full prompt here
+            "inputText": prompt,
             "textGenerationConfig": {
                 "maxTokenCount": 512,
                 "temperature": 0.5,
@@ -51,16 +51,16 @@ def proof_html_with_bedrock(html_text):
 
         # 🔹 Make request to AWS Bedrock
         response = bedrock_client.invoke_model(
-            modelId="amazon.titan-text-lite-v1",  # ✅ Ensure correct model ID
+            modelId="amazon.titan-text-lite-v1", 
             contentType="application/json",
             accept="application/json",
-            body=json.dumps(payload)  # ✅ Ensure correct JSON format
+            body=json.dumps(payload) 
         )
 
-        # 🔹 Parse response
+        # parse response
         response_body = json.loads(response["body"].read().decode("utf-8"))
 
-        # 🔹 Titan models return proofed text inside "results"
+        # Titan return proofed text inside "results"
         proofed_text = response_body.get("results", [{}])[0].get("outputText", "").strip()
 
         logger.info("✅ Bedrock proofing successful.")
