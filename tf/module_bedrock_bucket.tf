@@ -12,3 +12,7 @@ module "bedrock_output_bucket" {
 
   force_destroy = true
 }
+
+resource "aws_bedrock_model" "anthropic_claude_v2" {
+  model_id = "anthropic.claude-v2" # Adjust to the best available model
+}

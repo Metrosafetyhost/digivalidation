@@ -1,110 +1,72 @@
 import json
-from bs4 import BeautifulSoup
-from aws_lambda_powertools import Logger
-from aws_lambda_powertools.utilities.typing import LambdaContext
+import boto3
+import logging
+from aws_lambda_powertools.logging import Logger
 
-logger = Logger()
+# Initialize logger
+logger = Logger(service="bedrock-lambda-salesforce_input")
 
-# Define headers that need proofing
-ALLOWED_HEADERS = [
-    "Passenger and Disabled Access Platform Lifts (DAPL)",
-    "Fire Service and Evacuation Lifts",
-    "Mains Electrical incomers and electrical distribution boards (EDBs)",
-    "Natural Gas Supplies",
-    "Fire Safety",
-    "Roof Details"
-]
+# Initialize AWS Bedrock client
+bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
 
-def load_html_data(event: dict) -> list:
-    # extract HTML data from API event 
+# Define Bedrock model (update if using a different model)
+BEDROCK_MODEL_ID = "anthropic.claude-v2"
+
+def load_html_data(event):
+    """Extract HTML data from API Gateway event."""
     try:
-        logger.debug(f"Full event received: {json.dumps(event, indent=2)}")
-
-        if "htmlData" not in event:
-            logger.error("Missing 'htmlData' key in event.")
+        if "body" not in event:
+            logger.error("❌ Missing 'body' key in event.")
             return []
 
-        html_data = event.get("htmlData", [])
+        body = json.loads(event["body"])
+        html_data = body.get("htmlData", [])
 
         if not html_data:
-            logger.warning("No HTML data found in event.")
+            logger.warning("⚠️ No HTML data found in event body.")
 
-        logger.info(f"Loaded {len(html_data)} HTML data entries.")
+        logger.info(f"✅ Loaded {len(html_data)} HTML entries.")
         return html_data
-    except Exception as e:
-        logger.error(f"Unexpected error in load_html_data: {e}")
+
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ JSON Decode Error: {str(e)}")
         return []
 
+def proof_html_with_bedrock(html_text):
+    """Calls AWS Bedrock model to proof HTML content."""
+    try:
+        # Define the prompt for Bedrock
+        prompt = f"Proofread and correct this HTML content, keeping it professional:\n\n{html_text}"
 
+        # Make request to Bedrock
+        response = bedrock_client.invoke_model(
+            modelId=BEDROCK_MODEL_ID,
+            body=json.dumps({"prompt": prompt, "max_tokens": 500})
+        )
 
+        # Parse response
+        response_body = json.loads(response["body"].read().decode("utf-8"))
+        proofed_text = response_body.get("completion", "").strip()
 
-def extract_proofing_content(html_data: str) -> dict:
-    # extract key-value pairs (headers and content) that need proofing.
-    soup = BeautifulSoup(html_data, 'html.parser')
-    rows = soup.find_all('tr')
+        logger.info("✅ Bedrock proofing successful.")
+        return proofed_text
 
-    proofing_requests = {}
+    except Exception as e:
+        logger.error(f"❌ Bedrock API Error: {str(e)}")
+        return html_text  # Return original text on failure
 
-    for row in rows:
-        cells = row.find_all('td')
-        if len(cells) >= 2:
-            header = cells[0].get_text(strip=True)
-            content = cells[1].get_text(strip=True)
+def process(event, context):
+    """AWS Lambda entry point."""
+    logger.info("🚀 Starting proofing process via AWS Bedrock...")
 
-            logger.debug(f"Checking row - Header: {header}, Content: {content}")
+    # Load HTML from request
+    html_entries = load_html_data(event)
 
-            if header in ALLOWED_HEADERS:
-                proofing_requests[header] = content
+    # Process each entry with Bedrock
+    proofed_entries = [proof_html_with_bedrock(entry) for entry in html_entries]
 
-    logger.info(f"Extracted {len(proofing_requests)} items for proofing.")
-    return proofing_requests
-
-def call_bedrock(text: str) -> str:
-    # mock function for text proofing
-    logger.info(f"Proofing text: {text}")
-
-    # simulated proofing process
-    proofed_text = text.replace("There are no lifts, which are intended for use during a fire emergency, installed within this premises", "There are no elevators, which are intended for use during a fire emergency, little test").replace("Ths", "This")
-
-    logger.info(f"Proofed text: {proofed_text}")
-    return proofed_text
-
-def apply_proofing(html_data: str, proofed_texts: dict) -> str:
-    # update the HTML content with proofed text while keeping structure.
-    soup = BeautifulSoup(html_data, 'html.parser')
-    rows = soup.find_all('tr')
-
-    for row in rows:
-        cells = row.find_all('td')
-        if len(cells) >= 2:
-            header = cells[0].get_text(strip=True)
-
-            if header in proofed_texts:
-                new_content = proofed_texts[header]
-                cells[1].string = new_content  # replace text while keeping HTML structure
-
-    logger.info("Applied proofing to HTML data.")
-    return str(soup)
-
-@logger.inject_lambda_context()
-def process(event: dict, context: LambdaContext) -> dict:
-    # handles API events for AWS Lambda.
-    logger.info("Starting proofing process from API event...")
-
-    html_data_list = load_html_data(event)
-
-    proofed_html_list = []
-
-    for html_data in html_data_list:
-        proofing_requests = extract_proofing_content(html_data)
-        proofed_texts = {header: call_bedrock(text) for header, text in proofing_requests.items()}
-        proofed_html = apply_proofing(html_data, proofed_texts)
-
-        proofed_html_list.append(proofed_html)
-
-    logger.info("Finished proofing. Returning proofed HTML.")
-
+    # Return proofed HTML
     return {
         "statusCode": 200,
-        "body": json.dumps({"proofed_html": proofed_html_list}, indent=4)
+        "body": json.dumps({"proofed_html": proofed_entries})
     }

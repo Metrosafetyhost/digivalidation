@@ -38,7 +38,7 @@ def test_extract_proofing_content(load_salesforce_json):
         "Fire Safety", "Roof Details", "Natural Gas Supplies"
     ])
 
-    print("✅ test_extract_proofing_content passed")
+    print("test_extract_proofing_content passed")
 
 def test_call_bedrock():
     """Test proofing function with specific text corrections."""
@@ -46,7 +46,7 @@ def test_call_bedrock():
     proofed_text = call_bedrock(input_text)
 
     assert proofed_text == "This is an example text."
-    print("✅ test_call_bedrock passed")
+    print(" test_call_bedrock passed")
 
 
 def test_process(load_salesforce_json):
