@@ -13,23 +13,24 @@ bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
 BEDROCK_MODEL_ID = "anthropic.claude-v2"
 
 def load_html_data(event):
-    """Extract HTML data from API Gateway event."""
+    """Extract HTML data directly from event without expecting 'body'."""
     try:
-        if "body" not in event:
-            logger.error("❌ Missing 'body' key in event.")
+        logger.debug(f"🔍 Full event received: {json.dumps(event, indent=2)}")
+
+        # Check if 'htmlData' exists directly in the event
+        if "htmlData" not in event:
+            logger.error("❌ Missing 'htmlData' key in event.")
             return []
 
-        body = json.loads(event["body"])
-        html_data = body.get("htmlData", [])
+        html_data = event["htmlData"]
 
         if not html_data:
-            logger.warning("⚠️ No HTML data found in event body.")
+            logger.warning("⚠️ No HTML data found in event.")
 
-        logger.info(f"✅ Loaded {len(html_data)} HTML entries.")
+        logger.info(f"✅ Loaded {len(html_data)} HTML data entries.")
         return html_data
-
-    except json.JSONDecodeError as e:
-        logger.error(f"❌ JSON Decode Error: {str(e)}")
+    except Exception as e:
+        logger.error(f"🚨 Unexpected error in load_html_data: {e}")
         return []
 
 def proof_html_with_bedrock(html_text):
