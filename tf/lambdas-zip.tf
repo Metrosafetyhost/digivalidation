@@ -12,22 +12,3 @@ module "lambdas_zip" {
   force_lambda_code_deploy = true
   # lambda_additional_policies = ["data_extra_lambda_policy"]
 }
-
-resource "aws_lambda_function" "salesforce_input" {
-  function_name    = "bedrock-lambda-salesforce_input"
-  runtime         = "python3.9"
-  handler         = "salesforce_input.process"
-  role            = aws_iam_role.lambda_role.arn
-  timeout         = 60 
-  memory_size     = 1024 
-
-  environment {
-    variables = {
-      BEDROCK_MODEL_ID = "amazon.titan-text-lite-v1"
-    }
-  }
-
-  filename         = "${path.module}/../dist/salesforce_input.zip"
-  source_code_hash = filebase64sha256("${path.module}/../dist/salesforce_input.zip")
-
-}
