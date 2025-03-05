@@ -47,30 +47,32 @@ def load_html_data(event):
             for row in rows:
                 cells = row.find_all("td")
                 if len(cells) >= 2:
-                    header = cells[0].get_text(strip=True)
-                    content = cells[1].get_text(strip=True)
+                    header = cells[0].get_text(strip=True)  # Get header text
+                    content = cells[1].get_text(strip=True)  # Get content to proof
 
                     logger.debug(f"🔎 Checking row - Header: {header}, Content: {content}")
 
                     if header in ALLOWED_HEADERS:
-                        proofing_requests[header] = content
+                        proofing_requests[header] = content  # Only send content for proofing
 
         logger.info(f"✅ Extracted {len(proofing_requests)} items for proofing.")
-        return proofing_requests
+        return proofing_requests  # Returns only content, not headers
 
     except Exception as e:
         logger.error(f"🚨 Unexpected error in load_html_data: {e}")
         return {}
 
 
-def proof_html_with_bedrock(html_text):
-    # calls AWS Bedrock model to proof content
+def proof_html_with_bedrock(header, content):
+    """Proofreads and corrects content using AWS Bedrock."""
     try:
-        logger.info(f"Original HTML text before proofing:\n{html_text}")
-        # prompt to test with 
-        prompt = f"Proofread and correct this HTML content, ensuring spelling and grammar is in British English:\n\n{html_text}"
+        # Log the original content before proofing
+        logger.info(f"🔹 Original content before proofing (Header: {header}): {content}")
 
-        # ensure correct JSON format
+        # Construct Bedrock prompt (without sending the header itself)
+        prompt = f"Proofread and correct this text, ensuring spelling and grammar is in British English:\n\n{content}"
+
+        # Prepare request payload
         payload = {
             "inputText": prompt,
             "textGenerationConfig": {
@@ -80,40 +82,42 @@ def proof_html_with_bedrock(html_text):
             }
         }
 
-        # make request to AWS Bedrock
+        # 🔹 Call AWS Bedrock API
         response = bedrock_client.invoke_model(
-            modelId="amazon.titan-text-lite-v1", 
+            modelId="amazon.titan-text-lite-v1",
             contentType="application/json",
             accept="application/json",
-            body=json.dumps(payload) 
+            body=json.dumps(payload)
         )
 
-        # parse response
+        # Parse response
         response_body = json.loads(response["body"].read().decode("utf-8"))
-
-        # Titan return proofed text inside "results"
         proofed_text = response_body.get("results", [{}])[0].get("outputText", "").strip()
 
-        logger.info(f"✅ Bedrock proofing successful. Proofed text:\n{proofed_text}")
+        # Log the proofed text
+        logger.info(f"✅ Proofed content (Header: {header}): {proofed_text}")
 
-        return proofed_text
+        return proofed_text  # Only return proofed content
 
     except Exception as e:
         logger.error(f"❌ Bedrock API Error: {str(e)}")
-        return html_text  # 🔹 Return original text if error occurs
+        return content  # Return original text if error occurs
+
 
 def process(event, context):
-    # AWS Lambda entry point
     logger.info("🚀 Starting proofing process via AWS Bedrock...")
 
-    # load HTML from request
-    html_entries = load_html_data(event)
+    # Load and filter HTML data
+    proofing_requests = load_html_data(event)
 
-    # process each entry with Bedrock
-    proofed_entries = [proof_html_with_bedrock(entry) for entry in html_entries]
+    # Process each entry with Bedrock
+    proofed_entries = {
+        header: proof_html_with_bedrock(header, content) for header, content in proofing_requests.items()
+    }
 
-    # return proofed HTML
+    # Return proofed HTML as JSON
     return {
         "statusCode": 200,
         "body": json.dumps({"proofed_html": proofed_entries})
     }
+
