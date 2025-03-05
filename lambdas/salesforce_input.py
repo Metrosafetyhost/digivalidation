@@ -2,6 +2,7 @@ import json
 import boto3
 import logging
 from aws_lambda_powertools.logging import Logger
+from bs4 import BeautifulSoup
 
 # initialise logger
 logger = Logger()
@@ -12,26 +13,55 @@ bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
 # define Bedrock model
 BEDROCK_MODEL_ID = "amazon.titan-text-lite-v1"
 
+# Define headers that need proofing
+ALLOWED_HEADERS = [
+    "Passenger and Disabled Access Platform Lifts (DAPL)",
+    "Fire Service and Evacuation Lifts",
+    "Mains Electrical incomers and electrical distribution boards (EDBs)",
+    "Natural Gas Supplies",
+    "Fire Safety",
+    "Roof Details"
+]
+
 def load_html_data(event):
-    # extract HTML data directly
+    """Extracts and filters HTML data based on allowed headers"""
     try:
         logger.debug(f"🔍 Full event received: {json.dumps(event, indent=2)}")
 
-        # check if 'htmlData' exists directly in the event
         if "htmlData" not in event:
             logger.error("❌ Missing 'htmlData' key in event.")
-            return []
+            return {}
 
         html_data = event["htmlData"]
-
         if not html_data:
             logger.warning("⚠️ No HTML data found in event.")
+            return {}
 
-        logger.info(f"✅ Loaded {len(html_data)} HTML data entries.")
-        return html_data
+        proofing_requests = {}
+
+        # Process each HTML entry
+        for html_entry in html_data:
+            soup = BeautifulSoup(html_entry, "html.parser")
+            rows = soup.find_all("tr")
+
+            for row in rows:
+                cells = row.find_all("td")
+                if len(cells) >= 2:
+                    header = cells[0].get_text(strip=True)
+                    content = cells[1].get_text(strip=True)
+
+                    logger.debug(f"🔎 Checking row - Header: {header}, Content: {content}")
+
+                    if header in ALLOWED_HEADERS:
+                        proofing_requests[header] = content
+
+        logger.info(f"✅ Extracted {len(proofing_requests)} items for proofing.")
+        return proofing_requests
+
     except Exception as e:
         logger.error(f"🚨 Unexpected error in load_html_data: {e}")
-        return []
+        return {}
+
 
 def proof_html_with_bedrock(html_text):
     # calls AWS Bedrock model to proof content
