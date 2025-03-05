@@ -36,10 +36,11 @@ def load_html_data(event):
 def proof_html_with_bedrock(html_text):
     # calls AWS Bedrock model to proof content
     try:
+        logger.info(f"Original HTML text before proofing:\n{html_text}")
         # prompt to test with 
         prompt = f"Proofread and correct this HTML content, ensuring spelling and grammar is in British English:\n\n{html_text}"
 
-        # Ensure correct JSON format
+        # ensure correct JSON format
         payload = {
             "inputText": prompt,
             "textGenerationConfig": {
@@ -49,7 +50,7 @@ def proof_html_with_bedrock(html_text):
             }
         }
 
-        # 🔹 Make request to AWS Bedrock
+        # make request to AWS Bedrock
         response = bedrock_client.invoke_model(
             modelId="amazon.titan-text-lite-v1", 
             contentType="application/json",
@@ -63,7 +64,8 @@ def proof_html_with_bedrock(html_text):
         # Titan return proofed text inside "results"
         proofed_text = response_body.get("results", [{}])[0].get("outputText", "").strip()
 
-        logger.info("✅ Bedrock proofing successful.")
+        logger.info(f"✅ Bedrock proofing successful. Proofed text:\n{proofed_text}")
+
         return proofed_text
 
     except Exception as e:
