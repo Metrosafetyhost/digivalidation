@@ -21,11 +21,12 @@ ALLOWED_HEADERS = [
     "Natural Gas Supplies",
     "Roof Details",
     "Disabled escape arrangements",
-    "General Means of Escape Description"
+    "General Means of Escape Description",
+    "Fire Assembly Point"
 ]
 
 def load_html_data(event):
-    # Extracts and filters HTML data based on allowed headers
+    # extract filtered data based on allowed headers
     try:
         logger.debug(f"Full event received: {json.dumps(event, indent=2)}")
 
@@ -40,7 +41,7 @@ def load_html_data(event):
 
         proofing_requests = {}
 
-        # Process each HTML entry
+        # process each entry
         for html_entry in html_data:
             soup = BeautifulSoup(html_entry, "html.parser")
             rows = soup.find_all("tr")
@@ -71,7 +72,11 @@ def proof_html_with_bedrock(header, content):
         logger.info(f"🔹 Original content before proofing (Header: {header}): {content}")
 
         # prompt - to be altered if needed
-        prompt = f"Proofread and correct this text, ensuring spelling and grammar is in British English. Ensure not to change (add or delete) the content itself, just proof read it ensuring no spelling or grammatical errors:\n\n{content}"
+        prompt = f"""
+                Proofread and correct the following text, ensuring British English spelling and grammar. 
+                Do not add any introductory text, explanations, or formatting. 
+                Do not add or remove content—only correct errors.
+                Correct this text:{content} """
 
         # prepare request payload
         payload = {
