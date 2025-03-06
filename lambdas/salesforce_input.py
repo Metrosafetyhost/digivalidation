@@ -19,8 +19,9 @@ ALLOWED_HEADERS = [
     "Fire Service and Evacuation Lifts",
     "Mains Electrical incomers and electrical distribution boards (EDBs)",
     "Natural Gas Supplies",
-    "Fire Safety",
-    "Roof Details"
+    "Roof Details",
+    "Disabled escape arrangements",
+    "General Means of Escape Description"
 ]
 
 def load_html_data(event):
