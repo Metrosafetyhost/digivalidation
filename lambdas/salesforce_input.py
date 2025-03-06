@@ -81,8 +81,9 @@ def proof_html_with_bedrock(header, content):
                     - Do NOT add any introductory text, explanations, or formatting.
                     - Every word and punctuation in the original text must remain exactly as it is, except for spelling and grammar corrections.
                     - Ensure that lists, bullet points, and standalone words remain intact.
+                    "\n\nIMPORTANT: Ensure every original word, phrase, and punctuation remains in the corrected output."
                     Correct this text: {content} """
-        prompt += "\n\nIMPORTANT: Ensure every original word, phrase, and punctuation remains in the corrected output."
+        
 
 
         # prepare request payload
