@@ -19,7 +19,6 @@ ALLOWED_HEADERS = [
     "Fire Service and Evacuation Lifts",
     "Mains Electrical incomers and electrical distribution boards (EDBs)",
     "Natural Gas Supplies",
-    "Roof Details",
     "Disabled escape arrangements",
     "General Means of Escape Description",
     "Fire Assembly Point"
@@ -73,10 +72,13 @@ def proof_html_with_bedrock(header, content):
 
         # prompt - to be altered if needed
         prompt = f"""
-                Proofread and correct the following text, ensuring British English spelling and grammar. 
-                Do not add any introductory text, explanations, or formatting. 
-                Do not add or remove content—only correct errors.
-                Correct this text:{content} """
+                Proofread and correct the following text while ensuring:
+                    - Spelling and grammar are corrected in **British English.
+                    - Headings, section titles, and structure remain unchanged. 
+                    - Do NOT merge separate points or section headings.
+                    - Do NOT add any introductory text, explanations, or formatting.
+                    - Only fix grammatical and spelling mistakes while preserving original layout.
+                    Correct this text: {content} """
 
         # prepare request payload
         payload = {
