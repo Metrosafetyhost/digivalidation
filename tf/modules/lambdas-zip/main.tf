@@ -63,7 +63,7 @@ resource "aws_lambda_function" "lambda" {
   handler = "${each.key}.${lookup(var.lambda_config, each.key, {
     handler            = "process"
     memory_size        = 512
-    timeout            = 6
+    timeout            = 240
     lambda_environment = {}
   }).handler}"
   runtime       = var.runtime
@@ -75,13 +75,13 @@ resource "aws_lambda_function" "lambda" {
   memory_size = lookup(var.lambda_config, each.key, {
     handler            = "process"
     memory_size        = 512
-    timeout            = 6
+    timeout            = 240
     lambda_environment = {}
   }).memory_size
   timeout = lookup(var.lambda_config, each.key, {
     handler            = "process"
     memory_size        = 512
-    timeout            = 6
+    timeout            = 240
     lambda_environment = {}
   }).timeout
 
@@ -94,7 +94,7 @@ resource "aws_lambda_function" "lambda" {
     variables = merge(var.default_environment, lookup(var.lambda_config, each.key, {
       handler            = "process"
       memory_size        = 512
-      timeout            = 6
+      timeout            = 240
       lambda_environment = {}
     }).lambda_environment)
   }
