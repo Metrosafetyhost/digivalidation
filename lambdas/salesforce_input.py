@@ -71,7 +71,7 @@ def proof_html_with_bedrock(header, content):
         logger.info(f"🔹 Original content before proofing (Header: {header}): {content}")
 
         # prompt - to be altered if needed
-        prompt = f""" To the following
+        prompt = f""" Proofread and correct the following text while ensuring:
                     - Spelling and grammar are corrected in British English.
                     - Headings, section titles, and structure remain unchanged.
                     - Do NOT merge separate points or section headings.
