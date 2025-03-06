@@ -74,17 +74,19 @@ def proof_html_with_bedrock(header, content):
         prompt = f""" Proofread and correct the following text while ensuring:
                     - Spelling and grammar are corrected in British English, and spacing and formatted corrected.
                     - Headings, section titles, and structure remain unchanged.
-                    - Do NOT merge separate points or section headings.
                     - Do NOT remove any words, phrases, from the original content.
+                    - Do NOT split, merge, or add any new sentences or content.
                     - Ensure NOT to add any introductory text, explanations ANYWHERE.
                     - Ensure that lists, bullet points, and standalone words remain intact.
-                     \n\nIMPORTANT: Only fix spelling, spacing and grammar while keeping the original wording, order, and structure 100% intact.
+                     \nIMPORTANT: The only allowed changes are correcting spacing and grammar while keeping the original wording, order, and structure 100% intact.
+                     \nIMPORTANT: If the text is already correct, return it exactly as-is without any modifications
 
                     Correct this text: {content} """
 
                     # - Do NOT rephrase or alter any wording, even if grammatically incorrect.
                     # - Every word and punctuation in the original text must remain exactly as it is, except for spelling, spacing and grammar corrections.
                     # Ensure every original word, phrase and punctuation remains in the corrected output.
+                    #- Do NOT merge separate points or section headings.
         # prepare request payload
         payload = {
             "inputText": prompt,
