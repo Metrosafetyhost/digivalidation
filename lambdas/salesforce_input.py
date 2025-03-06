@@ -73,11 +73,11 @@ def proof_html_with_bedrock(header, content):
         # prompt - to be altered if needed
         prompt = f"""
                 Proofread and correct the following text while ensuring:
-                    - Spelling and grammar are corrected in **British English.
+                    - Spelling and grammar are corrected in British English.
                     - Headings, section titles, and structure remain unchanged. 
                     - Do NOT merge separate points or section headings.
                     - Do NOT add any introductory text, explanations, or formatting.
-                    - Do NOT remove or alter any words, phrases, or punctuation that are part of the original content.
+                    - Do **NOT** remove or alter any words, phrases, or punctuation that are part of the original content.
                     - Only fix grammatical and spelling mistakes while preserving original layout.
                     Correct this text: {content} """
 
