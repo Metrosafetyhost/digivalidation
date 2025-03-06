@@ -71,18 +71,18 @@ def proof_html_with_bedrock(header, content):
         logger.info(f"🔹 Original content before proofing (Header: {header}): {content}")
 
         # prompt - to be altered if needed
-        prompt = f"""
-                    - Spelling and grammar are corrected in **British English**.
+        prompt = f""" To the following
+                    - Spelling and grammar are corrected in British English.
                     - Headings, section titles, and structure remain unchanged.
                     - Do NOT merge separate points or section headings.
-                    - Do NOT remove any words, phrases, or punctuation from the original content.
-                    - Do NOT rephrase or alter any wording**, even if grammatically incorrect.
+                    - Do NOT remove any words, phrases, from the original content.
                     - Do NOT add any introductory text, explanations, or formatting.
-                    - Every word and punctuation in the original text must remain exactly as it is, except for spelling spacing and grammar corrections.
                     - Ensure that lists, bullet points, and standalone words remain intact.
                      \n\nIMPORTANT: Ensure every original word, phrase, and punctuation remains in the corrected output.
                     Correct this text: {content} """
 
+                    # - Do NOT rephrase or alter any wording, even if grammatically incorrect.
+                    # - Every word and punctuation in the original text must remain exactly as it is, except for spelling, spacing and grammar corrections.
         # prepare request payload
         payload = {
             "inputText": prompt,
