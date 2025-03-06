@@ -75,13 +75,15 @@ def proof_html_with_bedrock(header, content):
                 Proofread and correct the following text while ensuring:
                     - Spelling and grammar are corrected in **British English**.
                     - Headings, section titles, and structure remain unchanged.
-                    - Do **NOT** merge separate points or section headings.
-                    - Do **NOT** remove **any words, phrases, or punctuation** from the original content.
-                    - Do **NOT** rephrase or alter **any wording**, even if grammatically incorrect.
-                    - Do **NOT** add any introductory text, explanations, or formatting.
-                    - **Every word and punctuation in the original text must remain exactly as it is**, except for spelling and grammar corrections.
-                    - Ensure that **lists, bullet points, and standalone words remain intact**.
+                    - Do NOT merge separate points or section headings.
+                    - Do NOT remove any words, phrases, or punctuation from the original content.
+                    - Do NOT rephrase or alter any wording, even if grammatically incorrect.
+                    - Do NOT add any introductory text, explanations, or formatting.
+                    - Every word and punctuation in the original text must remain exactly as it is, except for spelling and grammar corrections.
+                    - Ensure that lists, bullet points, and standalone words remain intact.
                     Correct this text: {content} """
+        prompt += "\n\nIMPORTANT: Ensure every original word, phrase, and punctuation remains in the corrected output."
+
 
         # prepare request payload
         payload = {
