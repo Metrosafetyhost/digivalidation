@@ -64,13 +64,13 @@ def load_html_data(event):
 
 
 def proof_html_with_bedrock(header, content):
-    # corrects content using Bedrock.
+    # corrects content using  Bedrock.
     try:
         # log the original content before proofing
         logger.info(f"🔹 Original content before proofing (Header: {header}): {content}")
 
         # prompt - to be altered if needed
-        prompt = f"Proofread and correct this text, ensuring spelling and grammar is in British English:\n\n{content}"
+        prompt = f"Proofread and correct this text, ensuring spelling and grammar is in British English. Ensure not to change (add or delete) the content itself, just proof read it ensuring no spelling or grammatical errors:\n\n{content}"
 
         # prepare request payload
         payload = {
