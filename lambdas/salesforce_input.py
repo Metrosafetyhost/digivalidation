@@ -78,6 +78,7 @@ def proof_html_with_bedrock(header, content):
                     - Do NOT split, merge, or add any new sentences or content.
                     - Ensure NOT to add any introductory text or explanations ANYWHERE.
                     - Ensure that lists, bullet points, and standalone words remain intact.
+                    - Ensure only to proofread once, NEVER repeat the same text twice in the ouput. 
                      \nIMPORTANT: The only allowed changes are correcting spacing, spelling and grammar while keeping the original order, and structure 100% intact.
                      \nIMPORTANT: If the text is already correct, return it exactly as it is without any modifications
 
