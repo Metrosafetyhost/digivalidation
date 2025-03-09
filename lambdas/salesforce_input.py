@@ -21,7 +21,9 @@ ALLOWED_HEADERS = [
     "Natural Gas Supplies",
     "Disabled escape arrangements",
     "General Means of Escape Description",
-    "Fire Assembly Point"
+    "Fire Assembly Point",
+    "Optimal evacuation strategy for the building occupancy type",
+    "Fire Safety Policies"
 ]
 
 def load_html_data(event):
