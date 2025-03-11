@@ -147,25 +147,32 @@ def proof_html_with_bedrock(header, content):
 
     except Exception as e:
         logger.error(f"❌ Bedrock API Error: {str(e)}")
-        return content  # Return original text if error occurs
+        return content  # return original text if error 
 
 
 def process(event, context):
-    workorder_id = event.get("workorder", str(uuid.uuid4()))  # Generate an ID if missing
+    workorder_id = event.get("workorder", str(uuid.uuid4()))  # generate an ID if missing
     html_entries = load_html_data(event)
-    
+
     proofed_entries = {}
 
+    original_text = "=== ORIGINAL TEXT ===\n"
+    proofed_text = "=== PROOFED TEXT ===\n"
+
     for header, content in html_entries.items():
-        proofed_text = proof_html_with_bedrock(header, content)
-        proofed_entries[header] = proofed_text
+        proofed_content = proof_html_with_bedrock(header, content)
+        proofed_entries[header] = proofed_content
 
-        # Store both original and proofed text in S3 in different folders
-        original_s3_key = store_in_s3(content, f"{workorder_id}_{header}_original", "original")
-        proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_{header}_proofed", "proofed")
+        # Add headers and spacing for better readability
+        original_text += f"\n\n### {header} ###\n{content}\n"
+        proofed_text += f"\n\n### {header} ###\n{proofed_content}\n"
 
-        # Store metadata in DynamoDB
-        store_metadata(workorder_id, original_s3_key, proofed_s3_key)
+    # Store a single file for original and proofed text in S3
+    original_s3_key = store_in_s3(original_text, f"{workorder_id}_original", "original")
+    proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_proofed", "proofed")
+
+    # Store metadata in DynamoDB
+    store_metadata(workorder_id, original_s3_key, proofed_s3_key)
 
     return {
         "statusCode": 200,
@@ -175,3 +182,29 @@ def process(event, context):
             "proofed_entries": proofed_entries
         })
     }
+
+# def process(event, context):
+#     workorder_id = event.get("workorder", str(uuid.uuid4()))  # generate an ID if missing
+#     html_entries = load_html_data(event)
+    
+#     proofed_entries = {}
+
+#     for header, content in html_entries.items():
+#         proofed_text = proof_html_with_bedrock(header, content)
+#         proofed_entries[header] = proofed_text
+
+#         # store both original and proofed text in S3 in different folders
+#         original_s3_key = store_in_s3(content, f"{workorder_id}_{header}_original", "original")
+#         proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_{header}_proofed", "proofed")
+
+#         # store metadata in DynamoDB
+#         store_metadata(workorder_id, original_s3_key, proofed_s3_key)
+
+#     return {
+#         "statusCode": 200,
+#         "body": json.dumps({
+#             "workorder_id": workorder_id,
+#             "message": "Stored for validation",
+#             "proofed_entries": proofed_entries
+#         })
+#     }
