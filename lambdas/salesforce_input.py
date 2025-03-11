@@ -154,14 +154,15 @@ def process(event, context):
     workorder_id = event.get("workorder", str(uuid.uuid4()))  # Generate an ID if missing
     html_entries = load_html_data(event)
     
-    proofed_entries = []
-    for entry in html_entries:
-        proofed_text = proof_html_with_bedrock(entry)
-        proofed_entries.append(proofed_text)
+    proofed_entries = {}
+
+    for header, content in html_entries.items():
+        proofed_text = proof_html_with_bedrock(header, content)
+        proofed_entries[header] = proofed_text
 
         # Store both original and proofed text in S3 in different folders
-        original_s3_key = store_in_s3(entry, f"{workorder_id}_original", "original")
-        proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_proofed", "proofed")
+        original_s3_key = store_in_s3(content, f"{workorder_id}_{header}_original", "original")
+        proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_{header}_proofed", "proofed")
 
         # Store metadata in DynamoDB
         store_metadata(workorder_id, original_s3_key, proofed_s3_key)
@@ -171,7 +172,6 @@ def process(event, context):
         "body": json.dumps({
             "workorder_id": workorder_id,
             "message": "Stored for validation",
-            "original_s3_key": original_s3_key,
-            "proofed_s3_key": proofed_s3_key
+            "proofed_entries": proofed_entries
         })
     }
