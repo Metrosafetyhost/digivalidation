@@ -7,11 +7,15 @@ from bs4 import BeautifulSoup
 # initialise logger
 logger = Logger()
 
-# initialise AWS Bedrock client
+# initialise AWS clients
 bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
+s3_client = boto3.clinet('s3')
+dynamodb = boto3.resource('dynamodb')
 
 # define Bedrock model
 BEDROCK_MODEL_ID = "amazon.titan-text-lite-v1"
+BUCKET_NAME = f"metrosafety-bedrock-output-data-dev-bedrock-lambda"
+TABLE_NAME = "ProofingMetadata"
 
 # define headers that need proofing
 ALLOWED_HEADERS = [
@@ -25,6 +29,28 @@ ALLOWED_HEADERS = [
     "Optimal evacuation strategy for the building occupancy type",
     "Fire Safety Policies"
 ]
+
+
+def store_in_s3(text, filename, folder):
+    # store text in S3 under the correct folder and return object key
+    s3_key = f"{folder}/{filename}.txt"
+    s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=text)
+    return s3_key
+
+
+def store_metadata(workorder_id, original_s3_key, proofed_s3_key):
+    # store metadata in DynamoDB for tracking.
+    table = dynamodb.Table(TABLE_NAME)
+    table.put_item(
+        Item={
+            "workorder_id": workorder_id,
+            "original_s3_key": original_s3_key,
+            "proofed_s3_key": proofed_s3_key,
+            "status": "Pending",
+            "timestamp": int(time.time())
+        }
+    )
+
 
 def load_html_data(event):
     # extract filtered data based on allowed headers
@@ -123,19 +149,27 @@ def proof_html_with_bedrock(header, content):
 
 
 def process(event, context):
-    logger.info("Starting proofing...")
+    workorder_id = event.get("workorder", str(uuid.uuid4()))  # Generate an ID if missing
+    html_entries = load_html_data(event)
+    
+    proofed_entries = []
+    for entry in html_entries:
+        proofed_text = proof_html_with_bedrock(entry)
+        proofed_entries.append(proofed_text)
 
-    # load and filter HTML data
-    proofing_requests = load_html_data(event)
+        # Store both original and proofed text in S3 in different folders
+        original_s3_key = store_in_s3(entry, f"{workorder_id}_original", "original")
+        proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_proofed", "proofed")
 
-    # process each entry with Bedrock
-    proofed_entries = {
-        header: proof_html_with_bedrock(header, content) for header, content in proofing_requests.items()
-    }
+        # Store metadata in DynamoDB
+        store_metadata(workorder_id, original_s3_key, proofed_s3_key)
 
-    # return proofed HTML as JSON
     return {
         "statusCode": 200,
-        "body": json.dumps({"proofed_html": proofed_entries})
+        "body": json.dumps({
+            "workorder_id": workorder_id,
+            "message": "Stored for validation",
+            "original_s3_key": original_s3_key,
+            "proofed_s3_key": proofed_s3_key
+        })
     }
-

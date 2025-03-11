@@ -205,3 +205,15 @@ resource "aws_ssm_parameter" "s3_bucket_ssm" {
 output "this_s3_bucket_resource" {
   value = aws_s3_bucket.this
 }
+
+#folder structrue for bedrock output 
+variable "s3_folder_structure" {
+  default = ["original", "proofed"]
+}
+
+resource "aws_s3_object" "create_folders" {
+  for_each = toset(var.s3_folder_structure)
+
+  bucket = aws_s3_bucket.this.id
+  key    = "${each.value}/"  # creats empty folders
+}
