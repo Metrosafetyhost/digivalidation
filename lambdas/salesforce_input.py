@@ -3,6 +3,8 @@ import boto3
 import logging
 from aws_lambda_powertools.logging import Logger
 from bs4 import BeautifulSoup
+import uuid
+import time
 
 # initialise logger
 logger = Logger()
