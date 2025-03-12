@@ -27,7 +27,7 @@ resource "aws_apigatewayv2_stage" "lambda_stage" {
 resource "aws_lambda_permission" "apigw_lambda" {
   statement_id  = "AllowExecutionFromAPIGateway"
   action        = "lambda:InvokeFunction"
-  function_name = bedrock-lambda-salesforce_input
+  function_name = "bedrock-lambda-salesforce_input"
   principal     = "apigateway.amazonaws.com"
 
   source_arn = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
