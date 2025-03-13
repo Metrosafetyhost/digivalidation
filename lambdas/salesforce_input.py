@@ -10,7 +10,7 @@ import time
 logger = Logger()
 
 # initialise AWS clients
-bedrock_client = boto3.client("bedrock", region_name="eu-west-1")
+bedrock_client = boto3.client("bedrock", region_name="eu-west-2")
 s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
 
