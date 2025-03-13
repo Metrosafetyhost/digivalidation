@@ -123,13 +123,19 @@ def proof_html_with_bedrock(header, content):
                     # Ensure every original word, phrase and punctuation remains in the corrected output.
                     #- Do NOT merge separate points or section headings.
         # prepare request payload
+        # payload = {
+        #     "inputText": prompt,
+        #     "textGenerationConfig": {
+        #         "maxTokenCount": 512,
+        #         "temperature": 0.5,
+        #         "topP": 0.9
+        #     }
+        # }
+
         payload = {
-            "inputText": prompt,
-            "textGenerationConfig": {
-                "maxTokenCount": 512,
-                "temperature": 0.5,
-                "topP": 0.9
-            }
+            "prompt": f"\n\nHuman: {prompt} \n\nAssistant:",
+            "max_tokens_to_sample": 512,
+            "temperature": 0.3
         }
 
         # call AWS Bedrock API

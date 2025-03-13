@@ -59,7 +59,7 @@ resource "aws_iam_policy" "lambda_s3_access" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "lambda_s3" {
+resource "aws_iam_role_policy_attachm ent" "lambda_s3" {
   policy_arn = aws_iam_policy.lambda_s3_access.arn
   role       = "bedrock-lambda-salesforce_input"
 }
