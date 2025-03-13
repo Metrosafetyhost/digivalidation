@@ -18,7 +18,11 @@ dynamodb = boto3.resource('dynamodb')
 BEDROCK_MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0" #"amazon.titan-text-lite-v1"
 BUCKET_NAME = f"metrosafety-bedrock-output-data-dev-bedrock-lambda"
 TABLE_NAME = "ProofingMetadata"
+models = bedrock_client.list_foundation_models()
 
+print("✅ Available models in eu-west-1:")
+for model in models["modelSummaries"]:
+    print(model["modelId"])
 # define headers that need proofing
 ALLOWED_HEADERS = [
     "Passenger and Disabled Access Platform Lifts (DAPL)",
