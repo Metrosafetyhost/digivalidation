@@ -15,7 +15,7 @@ s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
 
 # define Bedrock model
-BEDROCK_MODEL_ID = "amazon.titan-text-lite-v1"
+BEDROCK_MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0" #"amazon.titan-text-lite-v1"
 BUCKET_NAME = f"metrosafety-bedrock-output-data-dev-bedrock-lambda"
 TABLE_NAME = "ProofingMetadata"
 
@@ -130,7 +130,7 @@ def proof_html_with_bedrock(header, content):
 
         # call AWS Bedrock API
         response = bedrock_client.invoke_model(
-            modelId="amazon.titan-text-lite-v1",
+            modelId= "anthropic.claude-3-haiku-20240307-v1:0#", #"amazon.titan-text-lite-v1",
             contentType="application/json",
             accept="application/json",
             body=json.dumps(payload)
