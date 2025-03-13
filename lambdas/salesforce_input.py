@@ -150,11 +150,11 @@ def proof_html_with_bedrock(header, content):
 
         response_body = json.loads(response["body"].read().decode("utf-8"))
 
+        logger.info(f"🔹 Full Bedrock response: {json.dumps(response_body, indent=2)}")
+
         # ✅ Correct extraction from Bedrock Claude 3 response
         proofed_text = response_body.get("completion", "").strip()
 
-
-        logger.info(f"✅ Proofed content (Header: {header}): {proofed_text}")
         # parse response for titan 
         # response_body = json.loads(response["body"].read().decode("utf-8"))
         # proofed_text = response_body.get("results", [{}])[0].get("outputText", "").strip()
@@ -162,7 +162,7 @@ def proof_html_with_bedrock(header, content):
         # log the proofed text
         logger.info(f"✅ Proofed content (Header: {header}): {proofed_text}")
 
-        return proofed_text  # only return proofed content
+        return proofed_text if proofed_text else content  # only return proofed content
 
     except Exception as e:
         logger.error(f"❌ Bedrock API Error: {str(e)}")
