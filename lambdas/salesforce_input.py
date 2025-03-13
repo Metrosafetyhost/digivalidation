@@ -26,10 +26,10 @@ ALLOWED_HEADERS = [
     "Mains Electrical incomers and electrical distribution boards (EDBs)",
     "Natural Gas Supplies",
     "Disabled escape arrangements",
-    "General Means of Escape Description",
-    "Fire Assembly Point",
-    "Optimal evacuation strategy for the building occupancy type",
-    "Fire Safety Policies"
+    # "General Means of Escape Description",
+    # "Fire Assembly Point",
+    # "Optimal evacuation strategy for the building occupancy type",
+    # "Fire Safety Policies"
 ]
 
 
