@@ -153,7 +153,7 @@ def proof_html_with_bedrock(header, content):
         logger.info(f"🔹 Full Bedrock response: {json.dumps(response_body, indent=2)}")
 
         # ✅ Correct extraction from Bedrock Claude 3 response
-        proofed_text = response_body.get("completion", "").strip()
+        proofed_text = " ".join([msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]).strip()
 
         # parse response for titan 
         # response_body = json.loads(response["body"].read().decode("utf-8"))
