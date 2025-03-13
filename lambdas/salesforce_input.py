@@ -105,7 +105,9 @@ def proof_html_with_bedrock(header, content):
         logger.info(f"🔹 Original content before proofing (Header: {header}): {content}")
 
         # prompt - to be altered if needed
-        prompt = f""" Proofread and correct the following text while ensuring:
+        payload = {
+            "messages": [
+                {"role": "user", "content": f""" Proofread and correct the following text while ensuring:
                     - Spelling and grammar are corrected in British English, and spacing and formatted corrected.
                     - Headings, section titles, and structure remain unchanged.
                     - Do NOT remove any words, phrases, from the original content.
@@ -116,7 +118,11 @@ def proof_html_with_bedrock(header, content):
                      \nIMPORTANT: The only allowed changes are correcting spacing, spelling and grammar while keeping the original order, and structure 100% intact.
                      \nIMPORTANT: If the text is already correct, return it exactly as it is without any modifications
 
-                    Correct this text: {content} """
+                    Correct this text: {content} """}
+                     ],
+            "max_tokens": 512,
+            "temperature": 0.3
+        }
 
                     # - Do NOT rephrase or alter any wording, even if grammatically incorrect.
                     # - Every word and punctuation in the original text must remain exactly as it is, except for spelling, spacing and grammar corrections.
@@ -132,12 +138,6 @@ def proof_html_with_bedrock(header, content):
         #     }
         # }
 
-        payload = {
-            "prompt": f"\n\nHuman: {prompt} \n\nAssistant:",
-            "max_tokens_to_sample": 512,
-            "temperature": 0.3
-        }
-
         # call AWS Bedrock API
         response = bedrock_client.invoke_model(
             modelId= "anthropic.claude-3-haiku-20240307-v1:0", #"amazon.titan-text-lite-v1",
@@ -146,9 +146,16 @@ def proof_html_with_bedrock(header, content):
             body=json.dumps(payload)
         )
 
-        # parse response
+
         response_body = json.loads(response["body"].read().decode("utf-8"))
-        proofed_text = response_body.get("results", [{}])[0].get("outputText", "").strip()
+
+        # ✅ Correct extraction from Bedrock Claude 3 response
+        proofed_text = response_body.get("content", "").strip()
+
+        logger.info(f"✅ Proofed content (Header: {header}): {proofed_text}")
+        # parse response for titan 
+        # response_body = json.loads(response["body"].read().decode("utf-8"))
+        # proofed_text = response_body.get("results", [{}])[0].get("outputText", "").strip()
 
         # log the proofed text
         logger.info(f"✅ Proofed content (Header: {header}): {proofed_text}")
