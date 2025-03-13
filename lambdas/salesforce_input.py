@@ -106,6 +106,7 @@ def proof_html_with_bedrock(header, content):
 
         # prompt - to be altered if needed
         payload = {
+            "anthropic_version": "bedrock-2023-05-31", 
             "messages": [
                 {"role": "user", "content": f""" Proofread and correct the following text while ensuring:
                     - Spelling and grammar are corrected in British English, and spacing and formatted corrected.
