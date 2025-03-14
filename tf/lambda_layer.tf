@@ -25,7 +25,7 @@ resource "aws_iam_policy" "bedrock_invoke_policy" {
       {
         Effect   = "Allow"
         Action   = "bedrock:InvokeModel"
-        Resource = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-haiku-20240307-v1:0" #"amazon.titan-text-lite-v1"
+        Resource = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0" #"amazon.titan-text-lite-v1"
       }
     ]
   })
