@@ -55,7 +55,7 @@ resource "aws_cloudwatch_log_group" "api_gw_logs" {
 resource "aws_lambda_permission" "apigw_lambda" {
   statement_id  = "AllowExecutionFromAPIGateway"
   action        = "lambda:InvokeFunction"
-  function_name = "aws_lambda_function.bedrock-lambda-salesforce_input"
+  function_name = aws_lambda_function.bedrock-lambda-salesforce_input
   principal     = "apigateway.amazonaws.com"
 
   source_arn = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
