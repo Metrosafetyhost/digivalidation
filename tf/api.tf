@@ -7,7 +7,7 @@ resource "aws_apigatewayv2_api" "lambda_api" {
 resource "aws_apigatewayv2_integration" "lambda_integration" {
   api_id           = aws_apigatewayv2_api.lambda_api.id
   integration_type = "AWS_PROXY"
-  integration_uri  = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-salesforce_input"
+  integration_uri  = module.lambdas_zip.aws_lambda_function.lambda["salesforce_input"].invoke_arn
 }
 
 
