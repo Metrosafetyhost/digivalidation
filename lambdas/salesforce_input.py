@@ -20,7 +20,7 @@ BUCKET_NAME = f"metrosafety-bedrock-output-data-dev-bedrock-lambda"
 TABLE_NAME = "ProofingMetadata"
 # models = bedrock_client.list_foundation_models()
 
-# print("Available models in eu-west-1:")
+# print("✅ Available models in eu-west-1:")
 # for model in models["modelSummaries"]:
 #     print(model["modelId"])
 # define headers that need proofing
@@ -169,34 +169,36 @@ def proof_html_with_bedrock(header, content):
 
 
 def process(event, context):
-    workorder_id = event.get("workorder", str(uuid.uuid4()))  # generate an ID if missing
-    html_entries = load_html_data(event)
+    workorder_id = event.get("workOrderId", str(uuid.uuid4()))  # Ensure key matches Apex
 
-    proofed_entries = {}
+    html_entries = event.get("sectionContents", [])  # Extract content list
+
+    proofed_entries = []
 
     original_text = "=== ORIGINAL TEXT ===\n"
     proofed_text = "=== PROOFED TEXT ===\n"
 
-    for header, content in html_entries.items():
-        proofed_content = proof_html_with_bedrock(header, content)
-        proofed_entries[header] = proofed_content
+    for entry in html_entries:
+        record_id = entry.get("recordId")
+        content = entry.get("content")
 
-        # Add headers and spacing for better readability
-        original_text += f"\n\n### {header} ###\n{content}\n"
-        proofed_text += f"\n\n### {header} ###\n{proofed_content}\n"
+        if record_id and content:
+            proofed_content = proof_html_with_bedrock("Proofing", content)  # Process text
+            proofed_entries.append({"recordId": record_id, "content": proofed_content})
 
-    # store a single file for original and proofed text in S3
+            # Maintain original S3/DynamoDB storage logic
+            original_text += f"\n\n### {record_id} ###\n{content}\n"
+            proofed_text += f"\n\n### {record_id} ###\n{proofed_content}\n"
+
     original_s3_key = store_in_s3(original_text, f"{workorder_id}_original", "original")
     proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_proofed", "proofed")
 
-    # store metadata in DynamoDB
     store_metadata(workorder_id, original_s3_key, proofed_s3_key)
 
     return {
         "statusCode": 200,
         "body": json.dumps({
-            "workorder_id": workorder_id,
-            "message": "Stored for validation",
-            "proofed_entries": proofed_entries
+            "workOrderId": workorder_id,  # Match Apex naming
+            "sectionContents": proofed_entries  # Match Apex expected format
         })
     }
