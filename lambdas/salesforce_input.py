@@ -63,11 +63,12 @@ def load_html_data(event):
     try:
         logger.debug(f"Full event received: {json.dumps(event, indent=2)}")
 
-        if "htmlData" not in event:
-            logger.error("❌ Missing 'htmlData' key in event.")
+        if "sectionContents" not in event:
+            logger.error(f"❌ Missing 'sectionContents' key in event. Received keys: {list(event.keys())}")
             return {}, {}
 
-        html_data = event["htmlData"]
+        html_data = event["sectionContents"]
+
         if not html_data:
             logger.warning("No HTML data found in event.")
             return {}, {}
@@ -75,8 +76,16 @@ def load_html_data(event):
         proofing_requests = {}
         table_data = {}  # Store original table rows
 
-        for html_entry in html_data:
-            soup = BeautifulSoup(html_entry, "html.parser")
+        for entry in html_data:
+            record_id = entry.get("recordId")  # Extract record ID
+            content_html = entry.get("content")  # Extract table HTML
+
+            if not record_id or not content_html:
+                logger.warning(f"⚠️ Skipping entry with missing recordId or content: {entry}")
+                continue
+
+            soup = BeautifulSoup(content_html, "html.parser")
+
             rows = soup.find_all("tr")
 
             for row in rows:
@@ -89,8 +98,10 @@ def load_html_data(event):
                     logger.debug(f"🔍 Extracted - Header: '{header_text}', Content: '{content_text}'")
 
                     if any(allowed_header.lower().strip() == header_text.lower().strip() for allowed_header in ALLOWED_HEADERS):
-                        proofing_requests[header_text] = content_text  # Send only extracted text to Bedrock
-                        table_data[header_text] = content_html  # Store full HTML for reinsertion
+                        proofing_requests[header_text] = content_text  # ✅ Match by header
+                        table_data[header_text] = content_html  # ✅ Match by header
+
+
 
 
         logger.info(f"✅ Extracted {len(proofing_requests)} items for proofing.")
@@ -162,10 +173,14 @@ def proof_html_with_bedrock(header, content):
         proofed_text = " ".join([msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]).strip()
 
         if proofed_text:
-            # Reinsert proofed text into original HTML
-            proofed_html = content.replace(text_content, proofed_text)
+            soup = BeautifulSoup(content, "html.parser")
+            content_cell = soup.find_all("td")[1]  # Second <td> has the content
+            content_cell.string = proofed_text  # Replace only the proofed text
+            proofed_html = str(soup)  # Convert back to full HTML
         else:
             proofed_html = content  # Keep original HTML if no proofing is applied
+
+
 
         logger.info(f"✅ Proofed content (Header: {header}): {proofed_html}")
         return proofed_html
@@ -183,8 +198,7 @@ def proof_html_with_bedrock(header, content):
 
 def process(event, context):
     logger.info(f"🔹 Full Incoming Event: {json.dumps(event, indent=2)}") 
-    
-    # ✅ Ensure the request body is correctly parsed
+
     try:
         body = json.loads(event["body"])  # Extract JSON body
     except (TypeError, KeyError, json.JSONDecodeError):
@@ -215,10 +229,11 @@ def process(event, context):
             continue
 
         header = None  # Track which header this content belongs to
-        for h, c in proofing_requests.items():
-            if c == content:  # Find the matching header for this content
+        for h in proofing_requests.keys():
+            if h in content:  # Ensure the header exists in the content
                 header = h
                 break
+
 
         if not header:
             logger.warning(f"⚠️ Could not match content to a known header: '{content[:100]}' (truncated)")
