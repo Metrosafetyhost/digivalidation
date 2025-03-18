@@ -82,14 +82,16 @@ def load_html_data(event):
             for row in rows:
                 cells = row.find_all("td")
                 if len(cells) >= 2:
-                    header_text = cells[0].get_text(strip=True)
-                    content = cells[1].get_text(strip=True)
+                    header_text = cells[0].get_text().strip()  # Get header text
+                    content_html = str(cells[1])  # Preserve full HTML content inside the <td>
+                    content_text = BeautifulSoup(content_html, "html.parser").get_text().strip()  # Extract plain text
 
-                    logger.debug(f"Checking row - Header: {header_text}, Content: {content}")
+                    logger.debug(f"🔍 Extracted - Header: '{header_text}', Content: '{content_text}'")
 
                     if any(allowed_header.lower().strip() == header_text.lower().strip() for allowed_header in ALLOWED_HEADERS):
-                        proofing_requests[header_text] = content.strip()  # Store text for proofing
-                        table_data[header_text] = row  # Store original HTML row structure
+                        proofing_requests[header_text] = content_text  # Send only extracted text to Bedrock
+                        table_data[header_text] = content_html  # Store full HTML for reinsertion
+
 
         logger.info(f"✅ Extracted {len(proofing_requests)} items for proofing.")
         return proofing_requests, table_data
@@ -106,6 +108,9 @@ def proof_html_with_bedrock(header, content):
         # log the original content before proofing
         logger.info(f"🔹 Original content before proofing (Header: {header}): {content}")
 
+        text_content = BeautifulSoup(content, "html.parser").get_text().strip()  # Extract clean text
+
+
         # prompt - to be altered if needed
         payload = {
             "anthropic_version": "bedrock-2023-05-31", 
@@ -121,7 +126,7 @@ def proof_html_with_bedrock(header, content):
                      \nIMPORTANT: The only allowed changes are correcting spacing, spelling and grammar while keeping the original order, and structure 100% intact.
                      \nIMPORTANT: If the text is already correct, return it exactly as it is without any modifications
 
-                    Correct this text: {content} """}
+                    Correct this text: {text_content} """}
                      ],
             "max_tokens": 512,
             "temperature": 0.3
@@ -156,14 +161,20 @@ def proof_html_with_bedrock(header, content):
 
         proofed_text = " ".join([msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]).strip()
 
+        if proofed_text:
+            # Reinsert proofed text into original HTML
+            proofed_html = content.replace(text_content, proofed_text)
+        else:
+            proofed_html = content  # Keep original HTML if no proofing is applied
+
+        logger.info(f"✅ Proofed content (Header: {header}): {proofed_html}")
+        return proofed_html
+
         # parse response for titan 
         # response_body = json.loads(response["body"].read().decode("utf-8"))
         # proofed_text = response_body.get("results", [{}])[0].get("outputText", "").strip()
 
         # log the proofed text
-        logger.info(f"✅ Proofed content (Header: {header}): {proofed_text}")
-
-        return proofed_text if proofed_text else content  # only return proofed content
 
     except Exception as e:
         logger.error(f"❌ Bedrock API Error: {str(e)}")
@@ -210,7 +221,8 @@ def process(event, context):
                 break
 
         if not header:
-            logger.warning(f"⚠️ Could not match content to a known header: {content}")
+            logger.warning(f"⚠️ Could not match content to a known header: '{content[:100]}' (truncated)")
+
             continue
 
         # ✅ Proof only the text content
