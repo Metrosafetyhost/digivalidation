@@ -169,6 +169,8 @@ def proof_html_with_bedrock(header, content):
 
 
 def process(event, context):
+
+    logger.info(f"🔹 Full Incoming Event: {json.dumps(event, indent=2)}") 
     workorder_id = event.get("workOrderId", str(uuid.uuid4()))  # Ensure key matches Apex
 
     html_entries = event.get("sectionContents", [])  # Extract content list
