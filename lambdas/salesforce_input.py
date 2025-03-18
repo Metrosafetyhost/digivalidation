@@ -7,7 +7,8 @@ import uuid
 import time
 
 # initialise logger
-logger = Logger()
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 # initialise AWS clients
 bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
@@ -169,18 +170,17 @@ def proof_html_with_bedrock(header, content):
 
 
 def process(event, context):
-
     logger.info(f"🔹 Full Incoming Event: {json.dumps(event, indent=2)}") 
-
+    
+    # ✅ Ensure the request body is correctly parsed
     try:
         body = json.loads(event["body"])  # Extract JSON body
     except (TypeError, KeyError, json.JSONDecodeError):
         logger.error("❌ Error parsing request body")
         return {"statusCode": 400, "body": json.dumps({"error": "Invalid JSON format"})}
 
-    workorder_id = event.get("workOrderId", str(uuid.uuid4()))  # Ensure key matches Apex
-
-    html_entries = event.get("sectionContents", [])  # Extract content list
+    workorder_id = body.get("workOrderId", str(uuid.uuid4()))  # Ensure key matches Apex
+    html_entries = body.get("sectionContents", [])  # Extract content list
 
     if not html_entries:
         logger.error("❌ No section contents received from Salesforce.")
@@ -204,7 +204,6 @@ def process(event, context):
             proofed_entries.append({"recordId": record_id, "content": proofed_content})
 
             logger.info(f"✅ Proofed Content for {record_id}: {proofed_content}")
-
 
             # Maintain original S3/DynamoDB storage logic
             original_text += f"\n\n### {record_id} ###\n{content}\n"
