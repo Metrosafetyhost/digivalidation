@@ -171,6 +171,13 @@ def proof_html_with_bedrock(header, content):
 def process(event, context):
 
     logger.info(f"🔹 Full Incoming Event: {json.dumps(event, indent=2)}") 
+
+    try:
+        body = json.loads(event["body"])  # Extract JSON body
+    except (TypeError, KeyError, json.JSONDecodeError):
+        logger.error("❌ Error parsing request body")
+        return {"statusCode": 400, "body": json.dumps({"error": "Invalid JSON format"})}
+
     workorder_id = event.get("workOrderId", str(uuid.uuid4()))  # Ensure key matches Apex
 
     html_entries = event.get("sectionContents", [])  # Extract content list
