@@ -173,6 +173,10 @@ def process(event, context):
 
     html_entries = event.get("sectionContents", [])  # Extract content list
 
+    if not html_entries:
+        logger.error("❌ No section contents received from Salesforce.")
+        return {"statusCode": 400, "body": json.dumps({"error": "No section contents found"})}
+
     proofed_entries = []
 
     original_text = "=== ORIGINAL TEXT ===\n"
@@ -182,13 +186,22 @@ def process(event, context):
         record_id = entry.get("recordId")
         content = entry.get("content")
 
+        if not record_id or not content:
+            logger.warning(f"⚠️ Skipping invalid entry: {entry}")
+            continue
+
         if record_id and content:
             proofed_content = proof_html_with_bedrock("Proofing", content)  # Process text
             proofed_entries.append({"recordId": record_id, "content": proofed_content})
 
+            logger.info(f"✅ Proofed Content for {record_id}: {proofed_content}")
+
+
             # Maintain original S3/DynamoDB storage logic
             original_text += f"\n\n### {record_id} ###\n{content}\n"
             proofed_text += f"\n\n### {record_id} ###\n{proofed_content}\n"
+
+            logger.info(f"🔹 Storing files in S3...")
 
     original_s3_key = store_in_s3(original_text, f"{workorder_id}_original", "original")
     proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_proofed", "proofed")
