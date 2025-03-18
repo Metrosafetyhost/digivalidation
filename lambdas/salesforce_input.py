@@ -25,7 +25,7 @@ TABLE_NAME = "ProofingMetadata"
 #     print(model["modelId"])
 # define headers that need proofing
 ALLOWED_HEADERS = [
-    "Passenger and Disabled Access Platform Lifts (DAPL)",
+    "Building Fire strategy",
     "Fire Service and Evacuation Lifts",
     "Mains Electrical incomers and electrical distribution boards (EDBs)",
     "Natural Gas Supplies",
