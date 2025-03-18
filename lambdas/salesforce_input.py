@@ -90,7 +90,7 @@ def load_html_data(event):
 
                    # Normalize headers to ensure flexible matching
                     if any(allowed_header.lower().strip() == header_text.lower().strip() for allowed_header in ALLOWED_HEADERS):
-                        proofing_requests[header_text] = content  # Store only matched headers
+                        proofing_requests[header_text] = content.strip  # Store only matched headers
                         logger.debug(f"✅ Matched Header: {header_text} -> Added for proofing.")
 
 
@@ -123,7 +123,7 @@ def proof_html_with_bedrock(header, content):
                      \nIMPORTANT: The only allowed changes are correcting spacing, spelling and grammar while keeping the original order, and structure 100% intact.
                      \nIMPORTANT: If the text is already correct, return it exactly as it is without any modifications
 
-                    Correct this text: {content} """}
+                    Correct this text: {content.strip} """}
                      ],
             "max_tokens": 512,
             "temperature": 0.3
