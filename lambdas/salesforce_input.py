@@ -62,12 +62,17 @@ def store_metadata(workorder_id, original_s3_key, proofed_s3_key):
 def load_html_data(event):
     try:
         logger.debug(f"Full event received: {json.dumps(event, indent=2)}")
-
-        if "sectionContents" not in event:
-            logger.error(f"❌ Missing 'sectionContents' key in event. Received keys: {list(event.keys())}")
+        
+        try:
+            body = json.loads(event["body"])  # ✅ Extract the JSON body
+            if "sectionContents" not in body:
+                logger.error(f"❌ Missing 'sectionContents' key in event body. Received keys: {list(body.keys())}")
+                return {}, {}
+            html_data = body["sectionContents"]  # ✅ Now correctly extracts the expected format
+        except json.JSONDecodeError:
+            logger.error("❌ Failed to decode JSON body.")
             return {}, {}
 
-        html_data = event["sectionContents"]
 
         if not html_data:
             logger.warning("No HTML data found in event.")
