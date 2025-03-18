@@ -60,22 +60,21 @@ def store_metadata(workorder_id, original_s3_key, proofed_s3_key):
 
 
 def load_html_data(event):
-    # extract filtered data based on allowed headers
     try:
         logger.debug(f"Full event received: {json.dumps(event, indent=2)}")
 
         if "htmlData" not in event:
             logger.error("❌ Missing 'htmlData' key in event.")
-            return {}
+            return {}, {}
 
         html_data = event["htmlData"]
         if not html_data:
             logger.warning("No HTML data found in event.")
-            return {}
+            return {}, {}
 
         proofing_requests = {}
+        table_data = {}  # Store original table rows
 
-        # process each entry
         for html_entry in html_data:
             soup = BeautifulSoup(html_entry, "html.parser")
             rows = soup.find_all("tr")
@@ -83,23 +82,22 @@ def load_html_data(event):
             for row in rows:
                 cells = row.find_all("td")
                 if len(cells) >= 2:
-                    header_text = cells[0].get_text(strip=True)  # get header
-                    content = cells[1].get_text(strip=True)  # get content
+                    header_text = cells[0].get_text(strip=True)
+                    content = cells[1].get_text(strip=True)
 
                     logger.debug(f"Checking row - Header: {header_text}, Content: {content}")
 
-                   # Normalize headers to ensure flexible matching
                     if any(allowed_header.lower().strip() == header_text.lower().strip() for allowed_header in ALLOWED_HEADERS):
-                        proofing_requests[header_text] = content.strip  # Store only matched headers
-                        logger.debug(f"✅ Matched Header: {header_text} -> Added for proofing.")
-
+                        proofing_requests[header_text] = content.strip()  # Store text for proofing
+                        table_data[header_text] = row  # Store original HTML row structure
 
         logger.info(f"✅ Extracted {len(proofing_requests)} items for proofing.")
-        return proofing_requests  # returns content
+        return proofing_requests, table_data
 
     except Exception as e:
         logger.error(f"Unexpected error in load_html_data: {e}")
-        return {}
+        return {}, {}
+
 
 
 def proof_html_with_bedrock(header, content):
@@ -123,7 +121,7 @@ def proof_html_with_bedrock(header, content):
                      \nIMPORTANT: The only allowed changes are correcting spacing, spelling and grammar while keeping the original order, and structure 100% intact.
                      \nIMPORTANT: If the text is already correct, return it exactly as it is without any modifications
 
-                    Correct this text: {content.strip} """}
+                    Correct this text: {content} """}
                      ],
             "max_tokens": 512,
             "temperature": 0.3
@@ -189,6 +187,9 @@ def process(event, context):
         logger.error("❌ No section contents received from Salesforce.")
         return {"statusCode": 400, "body": json.dumps({"error": "No section contents found"})}
 
+    # ✅ Load extracted text and original table structure
+    proofing_requests, table_data = load_html_data(event)
+
     proofed_entries = []
 
     original_text = "=== ORIGINAL TEXT ===\n"
@@ -202,17 +203,38 @@ def process(event, context):
             logger.warning(f"⚠️ Skipping invalid entry: {entry}")
             continue
 
-        if record_id and content:
-            proofed_content = proof_html_with_bedrock("Proofing", content)  # Process text
-            proofed_entries.append({"recordId": record_id, "content": proofed_content})
+        header = None  # Track which header this content belongs to
+        for h, c in proofing_requests.items():
+            if c == content:  # Find the matching header for this content
+                header = h
+                break
 
-            logger.info(f"✅ Proofed Content for {record_id}: {proofed_content}")
+        if not header:
+            logger.warning(f"⚠️ Could not match content to a known header: {content}")
+            continue
 
-            # Maintain original S3/DynamoDB storage logic
+        # ✅ Proof only the text content
+        proofed_content = proof_html_with_bedrock(header, content)
+
+        logger.info(f"✅ Proofed Content for {record_id} (Header: {header}): {proofed_content}")
+
+        # ✅ Reinsert proofed text into the original HTML row structure
+        if header in table_data:
+            row = table_data[header]
+            content_cell = row.find_all("td")[1]  # Second <td> contains the content
+            content_cell.string = proofed_content  # Replace with proofed text
+            updated_html = str(row)  # Convert modified row back to HTML
+
+            proofed_entries.append({"recordId": record_id, "content": updated_html})
+
+            # ✅ Store original and proofed content for tracking
             original_text += f"\n\n### {record_id} ###\n{content}\n"
             proofed_text += f"\n\n### {record_id} ###\n{proofed_content}\n"
 
-            logger.info(f"🔹 Storing files in S3...")
+        else:
+            logger.warning(f"⚠️ No table data found for header: {header}")
+
+    logger.info(f"🔹 Storing proofed files in S3...")
 
     original_s3_key = store_in_s3(original_text, f"{workorder_id}_original", "original")
     proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_proofed", "proofed")
@@ -223,6 +245,7 @@ def process(event, context):
         "statusCode": 200,
         "body": json.dumps({
             "workOrderId": workorder_id,  # Match Apex naming
-            "sectionContents": proofed_entries  # Match Apex expected format
+            "sectionContents": proofed_entries  # Ensure formatted HTML is returned
         })
     }
+
