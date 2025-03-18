@@ -83,13 +83,16 @@ def load_html_data(event):
             for row in rows:
                 cells = row.find_all("td")
                 if len(cells) >= 2:
-                    header = cells[0].get_text(strip=True)  # get header
+                    header_text = cells[0].get_text(strip=True)  # get header
                     content = cells[1].get_text(strip=True)  # get content
 
-                    logger.debug(f"Checking row - Header: {header}, Content: {content}")
+                    logger.debug(f"Checking row - Header: {header_text}, Content: {content}")
 
-                    if header in ALLOWED_HEADERS:
-                        proofing_requests[header] = content 
+                   # Normalize headers to ensure flexible matching
+                    if any(allowed_header.lower().strip() == header_text.lower().strip() for allowed_header in ALLOWED_HEADERS):
+                        proofing_requests[header_text] = content  # Store only matched headers
+                        logger.debug(f"✅ Matched Header: {header_text} -> Added for proofing.")
+
 
         logger.info(f"✅ Extracted {len(proofing_requests)} items for proofing.")
         return proofing_requests  # returns content
