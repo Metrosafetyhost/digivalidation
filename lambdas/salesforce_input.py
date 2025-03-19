@@ -175,12 +175,14 @@ def proof_html_with_bedrock(header, content):
 
         proofed_text = " ".join([msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]).strip()
 
+        logger.info(f"✅ Proofed content (Header: {header}): {proofed_text}")
+        
         if proofed_text:
             return proofed_text  # ✅ Return only proofed text
         else:
             return content  # ✅ Keep original if proofing fails
 
-
+        
         # parse response for titan 
         # response_body = json.loads(response["body"].read().decode("utf-8"))
         # proofed_text = response_body.get("results", [{}])[0].get("outputText", "").strip()
