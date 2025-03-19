@@ -104,8 +104,11 @@ def load_html_data(event):
 
 
                     if any(allowed_header.lower().strip() == header_text.lower().strip() for allowed_header in ALLOWED_HEADERS):
-                        proofing_requests[header_text] = content_text  # ✅ Match by header
-                        table_data[header_text] = content_html  # ✅ Match by header
+                        if content_text:
+                            proofing_requests[header_text] = content_text  # ✅ Match by header
+                            table_data[header_text] = content_html  # ✅ Match by header
+                        else:
+                            logger.info(f"⚠️ Skipping '{header_text}' as it has no content.")
 
         logger.info(f"✅ Extracted {len(proofing_requests)} items for proofing.")
         return proofing_requests, table_data
