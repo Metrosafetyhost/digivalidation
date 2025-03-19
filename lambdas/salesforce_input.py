@@ -103,12 +103,9 @@ def load_html_data(event):
                     logger.debug(f"🔍 Extracted - Header: '{header_text}', Content: '{content_text}'")
 
 
-                    if any(allowed_header.lower().strip() in header_text.lower().strip() for allowed_header in ALLOWED_HEADERS):
+                    if any(allowed_header.lower().strip() == header_text.lower().strip() for allowed_header in ALLOWED_HEADERS):
                         proofing_requests[header_text] = content_text  # ✅ Match by header
                         table_data[header_text] = content_html  # ✅ Match by header
-
-
-
 
         logger.info(f"✅ Extracted {len(proofing_requests)} items for proofing.")
         return proofing_requests, table_data
