@@ -73,7 +73,6 @@ def load_html_data(event):
             logger.error("❌ Failed to decode JSON body.")
             return {}, {}
 
-
         if not html_data:
             logger.warning("No HTML data found in event.")
             return {}, {}
@@ -91,22 +90,21 @@ def load_html_data(event):
 
             soup = BeautifulSoup(content_html, "html.parser")
 
-            rows = soup.find_all("tr")
+            rows = soup.find_all("tr")  # Extract all table rows
 
             for row in rows:
                 cells = row.find_all("td")
                 if len(cells) >= 2:
-                    header_text = cells[0].get_text().strip()  # Get header text
-                    content_html = str(cells[1])  # Preserve full HTML content inside the <td>
-                    content_text = BeautifulSoup(content_html, "html.parser").get_text().strip()  # Extract plain text
+                    header_text = cells[0].get_text(strip=True)  # Get header text only
+                    content_text = cells[1].get_text(strip=True)  # Extract clean content
 
                     logger.debug(f"🔍 Extracted - Header: '{header_text}', Content: '{content_text}'")
 
-
-                    if any(allowed_header.lower().strip() == header_text.lower().strip() for allowed_header in ALLOWED_HEADERS):
+                    if header_text in ALLOWED_HEADERS:
+                        # ✅ Only store if content is **non-empty**
                         if content_text:
-                            proofing_requests[header_text] = content_text  # ✅ Match by header
-                            table_data[header_text] = content_html  # ✅ Match by header
+                            proofing_requests[header_text] = content_text  # ✅ Store extracted text only
+                            table_data[header_text] = row  # ✅ Store the table row for reinsertion
                         else:
                             logger.info(f"⚠️ Skipping '{header_text}' as it has no content.")
 
@@ -116,7 +114,6 @@ def load_html_data(event):
     except Exception as e:
         logger.error(f"Unexpected error in load_html_data: {e}")
         return {}, {}
-
 
 
 def proof_html_with_bedrock(header, content):
@@ -179,17 +176,10 @@ def proof_html_with_bedrock(header, content):
         proofed_text = " ".join([msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]).strip()
 
         if proofed_text:
-            soup = BeautifulSoup(content, "html.parser")
-            content_cell = soup.find_all("td")[1]  # Second <td> has the content
-            content_cell.string = proofed_text  # Replace only the proofed text
-            proofed_html = str(soup)  # Convert back to full HTML
+            return proofed_text  # ✅ Return only proofed text
         else:
-            proofed_html = content  # Keep original HTML if no proofing is applied
+            return content  # ✅ Keep original if proofing fails
 
-
-
-        logger.info(f"✅ Proofed content (Header: {header}): {proofed_html}")
-        return proofed_html
 
         # parse response for titan 
         # response_body = json.loads(response["body"].read().decode("utf-8"))
@@ -226,44 +216,22 @@ def process(event, context):
     original_text = "=== ORIGINAL TEXT ===\n"
     proofed_text = "=== PROOFED TEXT ===\n"
 
-    for entry in html_entries:
-        record_id = entry.get("recordId")
-        content = entry.get("content")
-
-        if not record_id or not content:
-            logger.warning(f"⚠️ Skipping invalid entry: {entry}")
-            continue
-
-        header = None  # Track which header this content belongs to
-        for h in proofing_requests.keys():
-            if h in content:  # Ensure the header exists in the content
-                header = h
-                break
-
-
-        if not header:
-            logger.warning(f"⚠️ Could not match content to a known header: '{content[:100]}' (truncated)")
-
-            continue
-
-        # ✅ Proof only the text content
+    for header, content in proofing_requests.items():
         proofed_content = proof_html_with_bedrock(header, content)
-
-        logger.info(f"✅ Proofed Content for {record_id} (Header: {header}): {proofed_content}")
 
         # ✅ Reinsert proofed text into the original HTML row structure
         if header in table_data:
             row = table_data[header]
             content_cell = row.find_all("td")[1]  # Second <td> contains the content
-            content_cell.string = proofed_content  # Replace with proofed text
+            content_cell.clear()
+            content_cell.append(proofed_content)  # ✅ Replace text inside <td> correctly
             updated_html = str(row)  # Convert modified row back to HTML
 
-            proofed_entries.append({"recordId": record_id, "content": updated_html})
+            proofed_entries.append({"recordId": workorder_id, "content": updated_html})
 
             # ✅ Store original and proofed content for tracking
-            original_text += f"\n\n### {record_id} ###\n{content}\n"
-            proofed_text += f"\n\n### {record_id} ###\n{proofed_content}\n"
-
+            original_text += f"\n\n### {header} ###\n{content}\n"
+            proofed_text += f"\n\n### {header} ###\n{proofed_content}\n"
         else:
             logger.warning(f"⚠️ No table data found for header: {header}")
 
@@ -277,8 +245,7 @@ def process(event, context):
     return {
         "statusCode": 200,
         "body": json.dumps({
-            "workOrderId": workorder_id,  # Match Apex naming
-            "sectionContents": proofed_entries  # Ensure formatted HTML is returned
+            "workOrderId": workorder_id,
+            "sectionContents": proofed_entries  # ✅ Ensure formatted HTML is returned
         })
     }
-
