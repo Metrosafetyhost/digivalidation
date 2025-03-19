@@ -106,7 +106,19 @@ def proof_html_with_bedrock(header, content):
 
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
-            "messages": [{"role": "user", "content": f"Proofread and correct this text: {text_content}"}],
+            "messages": [{"role": "user", "content": f""" Proofread and correct the following text while ensuring:
+                    - Spelling and grammar are corrected in British English, and spacing and formatted corrected.
+                    - Headings, section titles, and structure remain unchanged.
+                    - Do NOT remove any words, phrases, from the original content.
+                    - Do NOT split, merge, or add any new sentences or content.
+                    - Ensure NOT to add any introductory text or explanations ANYWHERE.
+                    - Ensure that lists, bullet points, and standalone words remain intact.
+                    - Ensure only to proofread once, NEVER repeat the same text twice in the ouput. 
+                     \nIMPORTANT: The only allowed changes are correcting spacing, spelling and grammar while keeping the original order, and structure 100% intact.
+                     \nIMPORTANT: If the text is already correct, return it exactly as it is without any modifications
+
+                    Correct this text: {text_content} """}
+                     ],
             "max_tokens": 512,
             "temperature": 0.3
         }
@@ -166,7 +178,10 @@ def process(event, context):
 
             updated_html = str(row)
 
+            for entry in proofed_entries:
+                logger.info(f"🔍 Proofed entry: Record ID: {entry['recordId']}, Content: {entry['content']}")
             proofed_entries.append({"recordId": record_id, "content": updated_html})
+            
 
             original_text += f"\n\n### {header} ###\n{content}\n"
             proofed_text += f"\n\n### {header} ###\n{proofed_content}\n"
@@ -179,6 +194,14 @@ def process(event, context):
     proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_proofed", "proofed")
 
     store_metadata(workorder_id, original_s3_key, proofed_s3_key)
+
+    # Remove duplicate recordIds
+    unique_proofed_entries = {}
+    for entry in proofed_entries:
+        unique_proofed_entries[entry["recordId"]] = entry  # Keep only the latest version
+
+    proofed_entries = list(unique_proofed_entries.values())  # Convert back to list
+
 
     return {
         "statusCode": 200,
