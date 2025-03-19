@@ -28,25 +28,22 @@ ALLOWED_HEADERS = [
     "Disabled escape arrangements",
 ]
 
-
 def store_in_s3(text, filename, folder):
     s3_key = f"{folder}/{filename}.txt"
     s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=text)
     return s3_key
 
-
-def store_metadata(workorder_id, original_s3_key, proofed_s3_key):
+def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
     table = dynamodb.Table(TABLE_NAME)
     table.put_item(
         Item={
             "workorder_id": workorder_id,
             "original_s3_key": original_s3_key,
             "proofed_s3_key": proofed_s3_key,
-            "status": "Pending",
+            "status": status,  # "Proofed" or "Original"
             "timestamp": int(time.time())
         }
     )
-
 
 def load_html_data(event):
     """Extracts relevant text from Salesforce HTML table"""
@@ -85,7 +82,7 @@ def load_html_data(event):
                     if any(header_text.lower() == h.lower() for h in ALLOWED_HEADERS):
                         if content_text:
                             proofing_requests[header_text] = content_text
-                            table_data[header_text] = {"row": row, "record_id": record_id}  # Store row + ID
+                            table_data[header_text] = {"row": row, "record_id": record_id}
                         else:
                             logger.info(f"⚠️ Skipping '{header_text}' as it has no content.")
 
@@ -96,7 +93,6 @@ def load_html_data(event):
         logger.error(f"Unexpected error in load_html_data: {e}")
         return {}, {}
 
-
 def proof_html_with_bedrock(header, content):
     """Sends content for proofing and retrieves corrected version"""
     try:
@@ -106,19 +102,20 @@ def proof_html_with_bedrock(header, content):
 
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
-            "messages": [{"role": "user", "content": f""" Proofread and correct the following text while ensuring:
-                    - Spelling and grammar are corrected in British English, and spacing and formatted corrected.
-                    - Headings, section titles, and structure remain unchanged.
-                    - Do NOT remove any words, phrases, from the original content.
-                    - Do NOT split, merge, or add any new sentences or content.
-                    - Ensure NOT to add any introductory text or explanations ANYWHERE.
-                    - Ensure that lists, bullet points, and standalone words remain intact.
-                    - Ensure only to proofread once, NEVER repeat the same text twice in the ouput. 
-                     \nIMPORTANT: The only allowed changes are correcting spacing, spelling and grammar while keeping the original order, and structure 100% intact.
-                     \nIMPORTANT: If the text is already correct, return it exactly as it is without any modifications
-
-                    Correct this text: {text_content} """}
-                     ],
+            "messages": [{
+                "role": "user",
+                "content": (
+                    "Proofread and correct the following text while ensuring:\n"
+                    "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
+                    "- Headings, section titles, and structure remain unchanged.\n"
+                    "- Do NOT remove any words or phrases from the original content.\n"
+                    "- Do NOT split, merge, or add any new sentences or content.\n"
+                    "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
+                    "- Ensure that lists, bullet points, and standalone words remain intact.\n"
+                    "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
+                    "Correct this text: " + text_content
+                )
+            }],
             "max_tokens": 512,
             "temperature": 0.3
         }
@@ -131,16 +128,18 @@ def proof_html_with_bedrock(header, content):
         )
 
         response_body = json.loads(response["body"].read().decode("utf-8"))
-        proofed_text = " ".join([msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]).strip()
+        proofed_text = " ".join(
+            [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
+        ).strip()
 
         logger.info(f"✅ Proofed content (Header: {header}): {proofed_text}")
 
-        return proofed_text if proofed_text else content  # Return original if empty proofing response
+        # If proofed_text is empty, return original content
+        return proofed_text if proofed_text else content
 
     except Exception as e:
         logger.error(f"❌ Bedrock API Error: {str(e)}")
         return content
-
 
 def process(event, context):
     """Main processing function"""
@@ -164,8 +163,15 @@ def process(event, context):
     original_text = "=== ORIGINAL TEXT ===\n"
     proofed_text = "=== PROOFED TEXT ===\n"
 
+    # Flag to check if any content was actually corrected
+    proofed_flag = False
+
     for header, content in proofing_requests.items():
-        proofed_content = proof_html_with_bedrock(header, content)
+        corrected_content = proof_html_with_bedrock(header, content)
+
+        # Compare original vs. corrected (ignoring extra spaces)
+        if corrected_content.strip() != content.strip():
+            proofed_flag = True
 
         if header in table_data:
             row_info = table_data[header]
@@ -174,34 +180,34 @@ def process(event, context):
 
             content_cell = row.find_all("td")[1]
             content_cell.clear()
-            content_cell.append(proofed_content)
+            content_cell.append(corrected_content)
 
             updated_html = str(row)
 
-            for entry in proofed_entries:
-                logger.info(f"🔍 Proofed entry: Record ID: {entry['recordId']}, Content: {entry['content']}")
             proofed_entries.append({"recordId": record_id, "content": updated_html})
-            
-
             original_text += f"\n\n### {header} ###\n{content}\n"
-            proofed_text += f"\n\n### {header} ###\n{proofed_content}\n"
+            proofed_text += f"\n\n### {header} ###\n{corrected_content}\n"
         else:
             logger.warning(f"⚠️ No table data found for header: {header}")
 
-    logger.info(f"🔹 Storing proofed files in S3...")
+    # Log which status will be flagged
+    status_flag = "Proofed" if proofed_flag else "Original"
+    logger.info(f"Work order flagged as: {status_flag}")
+
+    logger.info("🔹 Storing proofed files in S3...")
 
     original_s3_key = store_in_s3(original_text, f"{workorder_id}_original", "original")
     proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_proofed", "proofed")
 
-    store_metadata(workorder_id, original_s3_key, proofed_s3_key)
+    # Store metadata including the flag status
+    store_metadata(workorder_id, original_s3_key, proofed_s3_key, status_flag)
 
-    # Remove duplicate recordIds
+    # Remove duplicate recordIds (keep the latest version)
     unique_proofed_entries = {}
     for entry in proofed_entries:
-        unique_proofed_entries[entry["recordId"]] = entry  # Keep only the latest version
+        unique_proofed_entries[entry["recordId"]] = entry
 
-    proofed_entries = list(unique_proofed_entries.values())  # Convert back to list
-
+    proofed_entries = list(unique_proofed_entries.values())
 
     return {
         "statusCode": 200,
