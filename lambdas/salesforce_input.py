@@ -84,7 +84,7 @@ def load_html_data(event):
                         content_text = cells[1].get_text(strip=True)
                         logger.debug(f"🔍 Extracted - Header: '{header_text}', Content: '{content_text}'")
                         # check if in allowed headers
-                        if any(header_text.lower() == h.lower() for h in ALLOWED_HEADERS):
+                        if any(header_text.lower() or h.lower() for h in ALLOWED_HEADERS):
                             proofing_requests[header_text] = content_text
                             table_data[header_text] = {"row": row, "record_id": record_id}
                         else:
