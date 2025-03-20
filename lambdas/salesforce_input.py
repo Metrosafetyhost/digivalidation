@@ -46,14 +46,13 @@ def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
     )
 
 def load_html_data(event):
-    """
-    Extracts relevant text from Salesforce input.
-    - For content that includes a <table> tag (form questions), we parse the table and use the header text.
-    - For content without a table (actions), we use the recordId as the key.
-    Returns:
-       proofing_requests: a dict where keys are either header texts (for form questions) or recordIds (for actions)
-       table_data: a dict with extra info needed later (for form questions: the row; for actions: the original text)
-    """
+    
+    # extracts salesforce input.
+    # - for content that includes a <table> tag (form questions), we parse the table and use the header text.
+    # - for content without a table (actions), we use the recordId as the key.
+    
+    #    proofing_requests: a dict where keys are either header texts (for form questions) or recordIds (for actions)
+    #    table_data: a dict with extra info needed later (for form questions: the row; for actions: the original text)
     try:
         logger.debug(f"Full event received: {json.dumps(event, indent=2)}")
         body = json.loads(event["body"])
@@ -74,7 +73,7 @@ def load_html_data(event):
                 logger.warning(f"⚠️ Skipping entry with missing recordId or content: {entry}")
                 continue
 
-            # If the content appears to be HTML (contains a table), process it as a form question
+            # if the content appears to be HTML, process it as a form question
             if "<table" in content_html.lower():
                 soup = BeautifulSoup(content_html, "html.parser")
                 rows = soup.find_all("tr")
@@ -84,14 +83,14 @@ def load_html_data(event):
                         header_text = cells[0].get_text(strip=True)
                         content_text = cells[1].get_text(strip=True)
                         logger.debug(f"🔍 Extracted - Header: '{header_text}', Content: '{content_text}'")
-                        # Check if the header matches one of the allowed headers
+                        # check if in allowed headers
                         if any(header_text.lower() == h.lower() for h in ALLOWED_HEADERS):
                             proofing_requests[header_text] = content_text
                             table_data[header_text] = {"row": row, "record_id": record_id}
                         else:
                             logger.info(f"Skipping header not in allowed list: {header_text}")
             else:
-                # For actions (plain text), simply use the recordId as the key.
+                # for actions (plain text), simply use the recordId as the key.
                 proofing_requests[record_id] = content_html.strip()
                 table_data[record_id] = {"content": content_html.strip(), "record_id": record_id}
 
@@ -103,11 +102,10 @@ def load_html_data(event):
         return {}, {}
 
 def proof_html_with_bedrock(header, content):
-    """Sends content for proofing and retrieves corrected version"""
     try:
         logger.info(f"🔹 Original content before proofing (Header/Key: {header}): {content}")
-        # For proofing, we always send the plain text version.
-        text_content = content  # For HTML, we already extracted the text from the cell
+        # for p[roofing, send plain text version.
+        text_content = content 
 
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
@@ -143,7 +141,7 @@ def proof_html_with_bedrock(header, content):
 
         logger.info(f"✅ Proofed content (Header/Key: {header}): {proofed_text}")
 
-        # If proofed_text is empty, return original content
+        # if proofed_text is empty, return original content
         return proofed_text if proofed_text else content
 
     except Exception as e:
@@ -151,7 +149,7 @@ def proof_html_with_bedrock(header, content):
         return content
 
 def process(event, context):
-    """Main processing function"""
+
     logger.info(f"🔹 Full Incoming Event: {json.dumps(event, indent=2)}")
 
     try:
@@ -178,9 +176,9 @@ def process(event, context):
         if corrected_content.strip() != content.strip():
             proofed_flag = True
 
-        # Check if this key corresponds to a form question (HTML) or an action (plain text)
+        # check if key corresponds to a form question (HTML) or an action (plain text)
         if key.lower() in [h.lower() for h in ALLOWED_HEADERS]:
-            # For form questions, update the HTML table row.
+            # for form questions, update the HTML table row.
             row_info = table_data.get(key)
             if row_info:
                 row = row_info["row"]
@@ -197,11 +195,11 @@ def process(event, context):
             else:
                 logger.warning(f"⚠️ No table data found for header: {key}")
         else:
-            # For actions, the key is the recordId and the content is plain text.
+            # fdor actions, key is the recordId and  content is plain text.
             rec_data = table_data.get(key)
             if rec_data:
                 record_id = rec_data["record_id"]
-                # No HTML processing needed; just update the content.
+
                 proofed_entries.append({"recordId": record_id, "content": corrected_content})
                 original_text += f"\n\n### {record_id} ###\n{content}\n"
                 proofed_text += f"\n\n### {record_id} ###\n{corrected_content}\n"
@@ -217,7 +215,7 @@ def process(event, context):
 
     store_metadata(workorder_id, original_s3_key, proofed_s3_key, status_flag)
 
-    # Remove duplicate recordIds (keeping the latest version)
+    # remove duplicate recordIds
     unique_proofed_entries = {}
     for entry in proofed_entries:
         unique_proofed_entries[entry["recordId"]] = entry
