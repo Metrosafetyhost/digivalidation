@@ -19,7 +19,7 @@ BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 BUCKET_NAME = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
 TABLE_NAME = "ProofingMetadata"
 
-# Allowed headers for proofing
+# Allowed headers for form questions (the building description tables)
 ALLOWED_HEADERS = [
     "Building Fire strategy",
     "Fire Service and Evacuation Lifts",
@@ -46,7 +46,14 @@ def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
     )
 
 def load_html_data(event):
-    """Extracts relevant text from Salesforce HTML table"""
+    """
+    Extracts relevant text from Salesforce input.
+    - For content that includes a <table> tag (form questions), we parse the table and use the header text.
+    - For content without a table (actions), we use the recordId as the key.
+    Returns:
+       proofing_requests: a dict where keys are either header texts (for form questions) or recordIds (for actions)
+       table_data: a dict with extra info needed later (for form questions: the row; for actions: the original text)
+    """
     try:
         logger.debug(f"Full event received: {json.dumps(event, indent=2)}")
         body = json.loads(event["body"])
@@ -67,24 +74,26 @@ def load_html_data(event):
                 logger.warning(f"⚠️ Skipping entry with missing recordId or content: {entry}")
                 continue
 
-            soup = BeautifulSoup(content_html, "html.parser")
-            rows = soup.find_all("tr")
-
-            for row in rows:
-                cells = row.find_all("td")
-                if len(cells) >= 2:
-                    header_text = cells[0].get_text(strip=True)
-                    content_text = cells[1].get_text(strip=True)
-
-                    logger.debug(f"🔍 Extracted - Header: '{header_text}', Content: '{content_text}'")
-
-                    # Ensure header is in ALLOWED_HEADERS
-                    if any(header_text.lower() == h.lower() for h in ALLOWED_HEADERS):
-                        if content_text:
+            # If the content appears to be HTML (contains a table), process it as a form question
+            if "<table" in content_html.lower():
+                soup = BeautifulSoup(content_html, "html.parser")
+                rows = soup.find_all("tr")
+                for row in rows:
+                    cells = row.find_all("td")
+                    if len(cells) >= 2:
+                        header_text = cells[0].get_text(strip=True)
+                        content_text = cells[1].get_text(strip=True)
+                        logger.debug(f"🔍 Extracted - Header: '{header_text}', Content: '{content_text}'")
+                        # Check if the header matches one of the allowed headers
+                        if any(header_text.lower() == h.lower() for h in ALLOWED_HEADERS):
                             proofing_requests[header_text] = content_text
                             table_data[header_text] = {"row": row, "record_id": record_id}
                         else:
-                            logger.info(f"⚠️ Skipping '{header_text}' as it has no content.")
+                            logger.info(f"Skipping header not in allowed list: {header_text}")
+            else:
+                # For actions (plain text), simply use the recordId as the key.
+                proofing_requests[record_id] = content_html.strip()
+                table_data[record_id] = {"content": content_html.strip(), "record_id": record_id}
 
         logger.info(f"✅ Extracted {len(proofing_requests)} items for proofing.")
         return proofing_requests, table_data
@@ -96,9 +105,9 @@ def load_html_data(event):
 def proof_html_with_bedrock(header, content):
     """Sends content for proofing and retrieves corrected version"""
     try:
-        logger.info(f"🔹 Original content before proofing (Header: {header}): {content}")
-
-        text_content = BeautifulSoup(content, "html.parser").get_text().strip()
+        logger.info(f"🔹 Original content before proofing (Header/Key: {header}): {content}")
+        # For proofing, we always send the plain text version.
+        text_content = content  # For HTML, we already extracted the text from the cell
 
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
@@ -132,7 +141,7 @@ def proof_html_with_bedrock(header, content):
             [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
         ).strip()
 
-        logger.info(f"✅ Proofed content (Header: {header}): {proofed_text}")
+        logger.info(f"✅ Proofed content (Header/Key: {header}): {proofed_text}")
 
         # If proofed_text is empty, return original content
         return proofed_text if proofed_text else content
@@ -162,51 +171,56 @@ def process(event, context):
     proofed_entries = []
     original_text = "=== ORIGINAL TEXT ===\n"
     proofed_text = "=== PROOFED TEXT ===\n"
-
-    # Flag to check if any content was actually corrected
     proofed_flag = False
 
-    for header, content in proofing_requests.items():
-        corrected_content = proof_html_with_bedrock(header, content)
-
-        # Compare original vs. corrected (ignoring extra spaces)
+    for key, content in proofing_requests.items():
+        corrected_content = proof_html_with_bedrock(key, content)
         if corrected_content.strip() != content.strip():
             proofed_flag = True
 
-        if header in table_data:
-            row_info = table_data[header]
-            row = row_info["row"]
-            record_id = row_info["record_id"]
+        # Check if this key corresponds to a form question (HTML) or an action (plain text)
+        if key.lower() in [h.lower() for h in ALLOWED_HEADERS]:
+            # For form questions, update the HTML table row.
+            row_info = table_data.get(key)
+            if row_info:
+                row = row_info["row"]
+                record_id = row_info["record_id"]
 
-            content_cell = row.find_all("td")[1]
-            content_cell.clear()
-            content_cell.append(corrected_content)
+                content_cell = row.find_all("td")[1]
+                content_cell.clear()
+                content_cell.append(corrected_content)
+                updated_html = str(row)
 
-            updated_html = str(row)
-
-            proofed_entries.append({"recordId": record_id, "content": updated_html})
-            original_text += f"\n\n### {header} ###\n{content}\n"
-            proofed_text += f"\n\n### {header} ###\n{corrected_content}\n"
+                proofed_entries.append({"recordId": record_id, "content": updated_html})
+                original_text += f"\n\n### {key} ###\n{content}\n"
+                proofed_text += f"\n\n### {key} ###\n{corrected_content}\n"
+            else:
+                logger.warning(f"⚠️ No table data found for header: {key}")
         else:
-            logger.warning(f"⚠️ No table data found for header: {header}")
+            # For actions, the key is the recordId and the content is plain text.
+            rec_data = table_data.get(key)
+            if rec_data:
+                record_id = rec_data["record_id"]
+                # No HTML processing needed; just update the content.
+                proofed_entries.append({"recordId": record_id, "content": corrected_content})
+                original_text += f"\n\n### {record_id} ###\n{content}\n"
+                proofed_text += f"\n\n### {record_id} ###\n{corrected_content}\n"
+            else:
+                logger.warning(f"⚠️ No table data found for action record: {key}")
 
-    # Log which status will be flagged
     status_flag = "Proofed" if proofed_flag else "Original"
     logger.info(f"Work order flagged as: {status_flag}")
 
     logger.info("🔹 Storing proofed files in S3...")
-
     original_s3_key = store_in_s3(original_text, f"{workorder_id}_original", "original")
     proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_proofed", "proofed")
 
-    # Store metadata including the flag status
     store_metadata(workorder_id, original_s3_key, proofed_s3_key, status_flag)
 
-    # Remove duplicate recordIds (keep the latest version)
+    # Remove duplicate recordIds (keeping the latest version)
     unique_proofed_entries = {}
     for entry in proofed_entries:
         unique_proofed_entries[entry["recordId"]] = entry
-
     proofed_entries = list(unique_proofed_entries.values())
 
     return {
