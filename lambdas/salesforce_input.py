@@ -69,13 +69,12 @@ def store_metadata(workorder_id: str, original_s3_key: str, proofed_s3_key: str,
 @tracer.capture_method
 def load_html_data(event_body: dict):
     """
-    Parses Salesforce input data by handling two cases:
-    1. Table-based (form questions): extract only allowed headers.
-    2. Plain text (actions): if they contain the '||' delimiter, use recordId as key.
-    
+    Parses Salesforce input data differently depending on the content format:
+      - For table-formatted entries, it extracts only rows with allowed headers.
+      - For plain-text entries (e.g. actions), it uses the recordId as the key.
     Returns:
-        proofing_requests: dict mapping keys (header or recordId) to content.
-        table_data: additional metadata keyed by the same key.
+      proofing_requests: Dict mapping keys (either allowed header names or recordIds) to their content.
+      table_data: Additional data keyed similarly.
     """
     proofing_requests = {}
     table_data = {}
@@ -92,34 +91,35 @@ def load_html_data(event_body: dict):
             logger.warning(f"Skipping entry with missing recordId or content: {entry}")
             continue
 
-        # If the content is table-based, process it as a form question.
+        # If content contains a table, attempt to extract allowed header rows.
         if "<table" in content_html.lower():
             soup = BeautifulSoup(content_html, "html.parser")
             rows = soup.find_all("tr")
-            entry_added = False
+            allowed_found = False
+
             for row in rows:
                 cells = row.find_all("td")
                 if len(cells) >= 2:
                     header_text = cells[0].get_text(strip=True)
                     content_text = cells[1].get_text(strip=True)
-                    # Check if header_text matches one of our allowed headers (case-insensitive)
+
+                    # Check case-insensitively if the header is one of our allowed headers.
                     if header_text.lower() in (h.lower() for h in ALLOWED_HEADERS):
                         proofing_requests[header_text] = content_text
                         table_data[header_text] = {"row": row, "record_id": record_id}
-                        entry_added = True
-            if not entry_added:
-                logger.info(f"No allowed headers found in table for record {record_id}; skipping this entry.")
-        # Otherwise, assume it's an action entry.
+                        allowed_found = True
+
+            if not allowed_found:
+                # If the table doesn't contain an allowed header, you may choose to log and ignore it.
+                logger.info(f"Table entry for record {record_id} did not contain any allowed header; skipping.")
         else:
-            # Check if the content contains our expected delimiter "||"
-            if "||" in content_html:
-                proofing_requests[record_id] = content_html.strip()
-                table_data[record_id] = {"content": content_html.strip(), "record_id": record_id}
-            else:
-                logger.info(f"Entry with record {record_id} is not in table format and does not contain '||'; skipping.")
+            # For plain text (likely from actions), use the recordId as the key.
+            proofing_requests[record_id] = content_html.strip()
+            table_data[record_id] = {"content": content_html.strip(), "record_id": record_id}
 
     logger.info({"proofed_requests": len(proofing_requests), "keys": list(proofing_requests.keys())})
     return proofing_requests, table_data
+
 
 
 @tracer.capture_method
