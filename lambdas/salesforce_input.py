@@ -1,27 +1,30 @@
 import json
 import boto3
+import os
 # import logging
 
-from aws_lambda_powertools import Logger
+from aws_lambda_powertools import Logger, Tracer
 from aws_lambda_powertools.utilities.typing import LambdaContext
+from aws_lambda_powertools.utilities.data_classes import event_source, APIGatewayProxyEvent
 from bs4 import BeautifulSoup
 import uuid
 import time
 
 # Initialise logger
 logger = Logger()
-# logger = logging.getLogger()
-# logger.setLevel(logging.INFO)
+tracer = Tracer()
+
+# AWS Environment Variables
+AWS_REGION = os.getenv("AWS_REGION", "eu-west-2")
+BUCKET_NAME = os.getenv("BUCKET_NAME", "metrosafety-bedrock-output-data-dev-bedrock-lambda")
+TABLE_NAME = os.getenv("TABLE_NAME", "ProofingMetadata")
+BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 
 # AWS clients
-bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
-s3_client = boto3.client('s3')
-dynamodb = boto3.resource('dynamodb')
+bedrock_client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
+s3_client = boto3.client('s3', region_name=AWS_REGION)
+dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
 
-# Configurations
-BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
-BUCKET_NAME = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
-TABLE_NAME = "ProofingMetadata"
 
 # Allowed headers for form questions (the building description tables)
 ALLOWED_HEADERS = [
@@ -32,6 +35,7 @@ ALLOWED_HEADERS = [
     "Disabled escape arrangements",
 ]
 
+@tracer.capture_method
 def store_in_s3(text: str, filename: str, folder: str) -> str:
     """Stores text in an S3 bucket and returns the S3 key."""
     s3_key = f"{folder}/{filename}.txt"
@@ -43,17 +47,24 @@ def store_in_s3(text: str, filename: str, folder: str) -> str:
         logger.error(f"❌ Failed to store file in S3: {e}")
         raise
 
-def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
+@tracer.capture_method
+def store_metadata(workorder_id: str, original_s3_key: str, proofed_s3_key: str, status: str) -> None:
+    """Stores proofing metadata in DynamoDB."""
     table = dynamodb.Table(TABLE_NAME)
-    table.put_item(
-        Item={
-            "workorder_id": workorder_id,
-            "original_s3_key": original_s3_key,
-            "proofed_s3_key": proofed_s3_key,
-            "status": status,  # "Proofed" or "Original"
-            "timestamp": int(time.time())
-        }
-    )
+    try:
+        table.put_item(
+            Item={
+                "workorder_id": workorder_id,
+                "original_s3_key": original_s3_key,
+                "proofed_s3_key": proofed_s3_key,
+                "status": status,  # "Proofed" or "Original"
+                "timestamp": int(time.time())
+            }
+        )
+        logger.info(f"✅ Metadata stored in DynamoDB for Work Order: {workorder_id}")
+    except Exception as e:
+        logger.exception("❌ Failed to store metadata in DynamoDB")
+        raise
 
 def load_html_data(event):
     

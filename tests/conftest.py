@@ -2,11 +2,16 @@ import json
 
 import pytest
 import os
-import moto
+from moto import mock_aws
 import boto3
 
 mp = pytest.MonkeyPatch()
 mp.setenv("POWERTOOLS_METRICS_NAMESPACE", "testLambdas")
+
+# Mock AWS region and resources
+AWS_REGION = "us-east-1"
+BUCKET_NAME = "test-bucket"
+TABLE_NAME = "ProofingMetadata"
 
 @pytest.fixture
 def lambda_context():
@@ -19,10 +24,39 @@ def lambda_context():
 
     return LambdaContext()
 
-@pytest.fixture
-def s3(aws_credentials):
-    with moto.mock_aws():
-        yield boto3.resource("s3")
+@pytest.fixture(scope="function", autouse=True)
+def aws_credentials():
+    """Mocked AWS Credentials for moto."""
+    os.environ["AWS_ACCESS_KEY_ID"] = "testing"
+    os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
+    os.environ["AWS_SECURITY_TOKEN"] = "testing"
+    os.environ["AWS_SESSION_TOKEN"] = "testing"
+    os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
+    os.environ["AWS_REGION"] = AWS_REGION
+    os.environ["BUCKET_NAME"] = BUCKET_NAME
+    os.environ["TABLE_NAME"] = TABLE_NAME
+
+# @pytest.fixture(scope="function")
+# def s3_mock():
+#     """Mocked S3 setup using Moto 5's mock_aws."""
+#     s3 = boto3.client("s3", region_name=AWS_REGION)
+#     s3.create_bucket(Bucket=BUCKET_NAME,
+#                      CreateBucketConfiguration={"LocationConstraint": AWS_REGION})
+#     return s3
+
+
+# @pytest.fixture(scope="function")
+# def dynamodb_mock():
+#     """Mocked DynamoDB setup using Moto 5's mock_aws."""
+#     dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
+#     table = dynamodb.create_table(
+#         TableName=TABLE_NAME,
+#         KeySchema=[{"AttributeName": "workorder_id", "KeyType": "HASH"}],
+#         AttributeDefinitions=[{"AttributeName": "workorder_id", "AttributeType": "S"}],
+#         ProvisionedThroughput={"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+#     )
+#     table.wait_until_exists()
+#     return dynamodb
 
 @pytest.fixture(scope="module")
 def sqs_event():
