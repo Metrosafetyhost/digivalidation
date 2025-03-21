@@ -19,20 +19,6 @@ def lambda_context():
 
     return LambdaContext()
 
-
-@pytest.fixture
-def aws_credentials():
-    """Mocked AWS Credentials for moto."""
-    os.environ["AWS_ACCESS_KEY_ID"] = "testing"
-    os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
-    os.environ["AWS_SECURITY_TOKEN"] = "testing"
-    os.environ["AWS_SESSION_TOKEN"] = "testing"
-    os.environ["AWS_DEFAULT_REGION"] = "ap-southeast-2"
-    os.environ[
-        "EVENTBUS_ARN"
-    ] = "arn:aws:events:ap-southeast-2:318356030799:event-bus/kapua-hermes"
-
-
 @pytest.fixture
 def s3(aws_credentials):
     with moto.mock_aws():
@@ -85,9 +71,4 @@ def sqs_event():
             ],
         },
     }
-
-@pytest.fixture(scope="module")
-def salesforce_input1():
-      with open("tests/salesforce.json", "r") as file:
-        json_data = json.load(file)
 

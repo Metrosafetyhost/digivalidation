@@ -32,10 +32,16 @@ ALLOWED_HEADERS = [
     "Disabled escape arrangements",
 ]
 
-def store_in_s3(text, filename, folder):
+def store_in_s3(text: str, filename: str, folder: str) -> str:
+    """Stores text in an S3 bucket and returns the S3 key."""
     s3_key = f"{folder}/{filename}.txt"
-    s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=text)
-    return s3_key
+    try:
+        s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=text)
+        logger.info(f"📂 Stored file in S3: s3://{BUCKET_NAME}/{s3_key}")
+        return s3_key
+    except Exception as e:
+        logger.error(f"❌ Failed to store file in S3: {e}")
+        raise
 
 def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
     table = dynamodb.Table(TABLE_NAME)
@@ -98,7 +104,7 @@ def load_html_data(event):
                 proofing_requests[record_id] = content_html.strip()
                 table_data[record_id] = {"content": content_html.strip(), "record_id": record_id}
 
-        logger.info({"proofed_requests": len(proofing_requests), "event": proofing_requests[record_id]})
+        logger.info({"proofed_requests": len(proofing_requests), "keys": list(proofing_requests.keys())})
         return proofing_requests, table_data
 
     except Exception as e:
