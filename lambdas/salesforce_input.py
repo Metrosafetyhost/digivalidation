@@ -69,20 +69,21 @@ def store_metadata(workorder_id: str, original_s3_key: str, proofed_s3_key: str,
 @tracer.capture_method
 def load_html_data(event_body: dict):
     """
-    Parses Salesforce input data differently depending on the content format:
-      - For table-formatted entries, it extracts only rows with allowed headers.
-      - For plain-text entries (e.g. actions), it uses the recordId as the key.
+    Processes the incoming JSON from Salesforce. Each entry in sectionContents is treated as an individual SectionData.
+    For form question records (Building Description tables), if the content contains a table, it extracts only rows
+    whose header matches one of the allowed headers (or synonyms) and then reconstructs a text block.
+    For other records (e.g. Actions), it simply returns the plain text.
+    
     Returns:
-      proofing_requests: Dict mapping keys (either allowed header names or recordIds) to their content.
-      table_data: Additional data keyed similarly.
+        A list of dictionaries, each with keys:
+           - "recordId": The Salesforce record ID (used later to update the record)
+           - "content": The text to proof, built from allowed sections if applicable.
     """
-    proofing_requests = {}
-    table_data = {}
+    proofing_requests = []
     html_data = event_body.get("sectionContents", [])
-
     if not html_data:
         logger.warning("No HTML data found in event.")
-        return {}, {}
+        return []
 
     for entry in html_data:
         record_id = entry.get("recordId")
@@ -91,34 +92,43 @@ def load_html_data(event_body: dict):
             logger.warning(f"Skipping entry with missing recordId or content: {entry}")
             continue
 
-        # If content contains a table, attempt to extract allowed header rows.
+        new_content = None
+        # If content appears to be table formatted, attempt to extract allowed rows.
         if "<table" in content_html.lower():
             soup = BeautifulSoup(content_html, "html.parser")
             rows = soup.find_all("tr")
-            allowed_found = False
-
+            extracted_sections = []
             for row in rows:
                 cells = row.find_all("td")
                 if len(cells) >= 2:
                     header_text = cells[0].get_text(strip=True)
                     content_text = cells[1].get_text(strip=True)
-
-                    # Check case-insensitively if the header is one of our allowed headers.
-                    if header_text.lower() in (h.lower() for h in ALLOWED_HEADERS):
-                        proofing_requests[header_text] = content_text
-                        table_data[header_text] = {"row": row, "record_id": record_id}
-                        allowed_found = True
-
-            if not allowed_found:
-                # If the table doesn't contain an allowed header, you may choose to log and ignore it.
-                logger.info(f"Table entry for record {record_id} did not contain any allowed header; skipping.")
+                    # Normalize header for comparison
+                    normalized = header_text.lower()
+                    # Check against each allowed header and mapping (case-insensitive)
+                    for allowed in ALLOWED_HEADERS:
+                        if allowed.lower() in normalized or normalized in allowed.lower():
+                            # If you have a mapping, use it:
+                            canonical = ALLOWED_HEADERS_MAPPING.get(normalized, allowed)
+                            extracted_sections.append(f"### {canonical} ###\n{content_text}")
+                            break
+            if extracted_sections:
+                new_content = "\n\n".join(extracted_sections)
+            else:
+                # If no allowed header was found, fallback to the original content.
+                new_content = content_html.strip()
         else:
-            # For plain text (likely from actions), use the recordId as the key.
-            proofing_requests[record_id] = content_html.strip()
-            table_data[record_id] = {"content": content_html.strip(), "record_id": record_id}
+            # For plain text entries (likely the Actions call), just use the original text.
+            new_content = content_html.strip()
 
-    logger.info({"proofed_requests": len(proofing_requests), "keys": list(proofing_requests.keys())})
-    return proofing_requests, table_data
+        proofing_requests.append({
+            "recordId": record_id,
+            "content": new_content
+        })
+
+    logger.info({"proofed_requests": len(proofing_requests),
+                 "recordIds": [req["recordId"] for req in proofing_requests]})
+    return proofing_requests
 
 
 
