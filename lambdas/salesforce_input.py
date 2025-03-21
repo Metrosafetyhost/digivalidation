@@ -114,8 +114,9 @@ def load_html_data(event_body: dict):
     return proofing_requests, table_data
 
 
-
-def proof_html_with_bedrock(header, content):
+@tracer.capture_method
+def proof_html_with_bedrock(header: str, content: str) -> str:
+    """Sends content to AWS Bedrock for proofing and returns corrected text."""
     try:
         logger.info(f"🔹 Original content before proofing (Header/Key: {header}): {content}")
         # for p[roofing, send plain text version.
@@ -159,84 +160,47 @@ def proof_html_with_bedrock(header, content):
         return proofed_text if proofed_text else content
 
     except Exception as e:
-        logger.error(f"❌ Bedrock API Error: {str(e)}")
+        logger.exception("❌ Bedrock API Error")
         return content
 
 @logger.inject_lambda_context(log_event=True)
-def process(event: dict, context: LambdaContext) -> str:
-
-    #logger.info(f"🔹 Full Incoming Event: {json.dumps(event, indent=2)}")
+@event_source(data_class=APIGatewayProxyEvent)
+@tracer.capture_lambda_handler
+def process(event: APIGatewayProxyEvent, context: LambdaContext):
+    """
+    AWS Lambda entrypoint. Extracts event data, processes text, stores proofed content in S3, and logs metadata.
+    """
 
     try:
-        body = json.loads(event["body"])
-    except (TypeError, KeyError, json.JSONDecodeError):
-        logger.error("❌ Error parsing request body")
-        return {"statusCode": 400, "body": json.dumps({"error": "Invalid JSON format"})}
+        body = event.json_body
+        # body = json.loads(event["body"])
+        workorder_id = body.get("workOrderId", str(uuid.uuid4()))
+        proofing_requests, table_data = load_html_data(body)
 
-    workorder_id = body.get("workOrderId", str(uuid.uuid4()))
-    html_entries = body.get("sectionContents", [])
+        if not proofing_requests:
+            return {"statusCode": 400, "body": json.dumps({"error": "No section contents found"})}
 
-    if not html_entries:
-        logger.error("❌ No section contents received from Salesforce.")
-        return {"statusCode": 400, "body": json.dumps({"error": "No section contents found"})}
+        proofed_entries = []
+        original_text, proofed_text = "=== ORIGINAL TEXT ===\n", "=== PROOFED TEXT ===\n"
+        proofed_flag = False
 
-    proofing_requests, table_data = load_html_data(event)
-    proofed_entries = []
-    original_text = "=== ORIGINAL TEXT ===\n"
-    proofed_text = "=== PROOFED TEXT ===\n"
-    proofed_flag = False
+        for key, content in proofing_requests.items():
+                corrected_content = proof_html_with_bedrock(key, content)
+                proofed_flag = proofed_flag or (corrected_content.strip() != content.strip())
 
-    for key, content in proofing_requests.items():
-        corrected_content = proof_html_with_bedrock(key, content)
-        if corrected_content.strip() != content.strip():
-            proofed_flag = True
-
-        # check if key corresponds to a form question (HTML) or an action (plain text)
-        if key.lower() in [h.lower() for h in ALLOWED_HEADERS]:
-            # for form questions, update the HTML table row.
-            row_info = table_data.get(key)
-            if row_info:
-                row = row_info["row"]
-                record_id = row_info["record_id"]
-
-                content_cell = row.find_all("td")[1]
-                content_cell.clear()
-                content_cell.append(corrected_content)
-                updated_html = str(row)
-
-                proofed_entries.append({"recordId": record_id, "content": updated_html})
+                row_info = table_data.get(key)
+                record_id = row_info["record_id"] if row_info else key
+                proofed_entries.append({"recordId": record_id, "content": corrected_content})
                 original_text += f"\n\n### {key} ###\n{content}\n"
                 proofed_text += f"\n\n### {key} ###\n{corrected_content}\n"
-            else:
-                logger.warning(f"⚠️ No table data found for header: {key}")
-        else:
-            # fdor actions, key is the recordId and  content is plain text.
-            rec_data = table_data.get(key)
-            if rec_data:
-                record_id = rec_data["record_id"]
 
-                proofed_entries.append({"recordId": record_id, "content": corrected_content})
-                original_text += f"\n\n### {record_id} ###\n{content}\n"
-                proofed_text += f"\n\n### {record_id} ###\n{corrected_content}\n"
-            else:
-                logger.warning(f"⚠️ No table data found for action record: {key}")
+        status_flag = "Proofed" if proofed_flag else "Original"
+        original_s3_key = store_in_s3(original_text, f"{workorder_id}_original", "original")
+        proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_proofed", "proofed")
+        store_metadata(workorder_id, original_s3_key, proofed_s3_key, status_flag)
 
-    status_flag = "Proofed" if proofed_flag else "Original"
-    logger.info(f"Work order flagged as: {status_flag}")
+        return {"statusCode": 200, "body": json.dumps({"workOrderId": workorder_id, "sectionContents": proofed_entries})}
 
-    logger.info("🔹 Storing proofed files in S3...")
-    original_s3_key = store_in_s3(original_text, f"{workorder_id}_original", "original")
-    proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_proofed", "proofed")
-
-    store_metadata(workorder_id, original_s3_key, proofed_s3_key, status_flag)
-
-    # remove duplicate recordIds
-    unique_proofed_entries = {}
-    for entry in proofed_entries:
-        unique_proofed_entries[entry["recordId"]] = entry
-    proofed_entries = list(unique_proofed_entries.values())
-
-    return {
-        "statusCode": 200,
-        "body": json.dumps({"workOrderId": workorder_id, "sectionContents": proofed_entries})
-    }
+    except Exception as e:
+        logger.exception("❌ Error processing request")
+        return {"statusCode": 500, "body": json.dumps({"error": "Internal Server Error"})}
