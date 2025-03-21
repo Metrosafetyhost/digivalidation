@@ -1,13 +1,17 @@
 import json
 import boto3
-import logging
+# import logging
+
+from aws_lambda_powertools import Logger
+from aws_lambda_powertools.utilities.typing import LambdaContext
 from bs4 import BeautifulSoup
 import uuid
 import time
 
 # Initialise logger
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+logger = Logger()
+# logger = logging.getLogger()
+# logger.setLevel(logging.INFO)
 
 # AWS clients
 bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
@@ -84,7 +88,7 @@ def load_html_data(event):
                         content_text = cells[1].get_text(strip=True)
                         logger.debug(f"🔍 Extracted - Header: '{header_text}', Content: '{content_text}'")
                         # check if in allowed headers
-                        if any(header_text.lower() or h.lower() for h in ALLOWED_HEADERS):
+                        if any(header_text.lower() == h.lower() for h in ALLOWED_HEADERS):
                             proofing_requests[header_text] = content_text
                             table_data[header_text] = {"row": row, "record_id": record_id}
                         else:
@@ -94,12 +98,13 @@ def load_html_data(event):
                 proofing_requests[record_id] = content_html.strip()
                 table_data[record_id] = {"content": content_html.strip(), "record_id": record_id}
 
-        logger.info(f"✅ Extracted {len(proofing_requests)} items for proofing.")
+        logger.info({"proofed_requests": len(proofing_requests), "event": proofing_requests[record_id]})
         return proofing_requests, table_data
 
     except Exception as e:
         logger.error(f"Unexpected error in load_html_data: {e}")
         return {}, {}
+
 
 def proof_html_with_bedrock(header, content):
     try:
@@ -148,9 +153,10 @@ def proof_html_with_bedrock(header, content):
         logger.error(f"❌ Bedrock API Error: {str(e)}")
         return content
 
-def process(event, context):
+@logger.inject_lambda_context(log_event=True)
+def process(event: dict, context: LambdaContext) -> str:
 
-    logger.info(f"🔹 Full Incoming Event: {json.dumps(event, indent=2)}")
+    #logger.info(f"🔹 Full Incoming Event: {json.dumps(event, indent=2)}")
 
     try:
         body = json.loads(event["body"])
