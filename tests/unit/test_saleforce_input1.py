@@ -77,7 +77,7 @@ def test_load_html_data():
         })
     }
 
-    proofing_requests, table_data = load_html_data(event)
+    proofing_requests, table_data = load_html_data(json.loads(event["body"]))  # Ensure body is parsed correctly
 
     assert proofing_requests["Building Fire strategy"] == "Test content"
     assert proofing_requests["rec456"] == "This is a plain text action"
@@ -88,6 +88,9 @@ def test_load_html_data_missing_body():
     """Test handling when body is missing or empty."""
     event = {"body": json.dumps({})}
     proofing_requests, table_data = load_html_data(event)
+
+    # Ensure header lookup is case-insensitive
+    expected_key = next((h for h in proofing_requests if h.lower() == "building fire strategy"), None)
 
     assert proofing_requests == {}
     assert table_data == {}

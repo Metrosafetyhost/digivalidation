@@ -66,61 +66,53 @@ def store_metadata(workorder_id: str, original_s3_key: str, proofed_s3_key: str,
         logger.exception("❌ Failed to store metadata in DynamoDB")
         raise
 
-def load_html_data(event):
-    
-    # extracts salesforce input.
-    # - for content that includes a <table> tag (form questions), we parse the table and use the header text.
-    # - for content without a table (actions), we use the recordId as the key.
-    
-    #    proofing_requests: a dict where keys are either header texts (for form questions) or recordIds (for actions)
-    #    table_data: a dict with extra info needed later (for form questions: the row; for actions: the original text)
-    try:
-        logger.debug(f"Full event received: {json.dumps(event, indent=2)}")
-        body = json.loads(event["body"])
-        html_data = body.get("sectionContents", [])
+@tracer.capture_method
+def load_html_data(event_body: dict):
+    """
+    Parses and extracts Salesforce input data.
 
-        if not html_data:
-            logger.warning("No HTML data found in event.")
-            return {}, {}
+    - Extracts table data for form questions (headers as keys)
+    - Uses `recordId` as the key for non-table data (actions)
 
-        proofing_requests = {}
-        table_data = {}
+    Returns:
+        - proofing_requests: Dict of extracted content (keyed by headers or record IDs)
+        - table_data: Dict containing extra info needed later
+    """
+    proofing_requests = {}
+    table_data = {}
 
-        for entry in html_data:
-            record_id = entry.get("recordId")
-            content_html = entry.get("content")
-
-            if not record_id or not content_html:
-                logger.warning(f"⚠️ Skipping entry with missing recordId or content: {entry}")
-                continue
-
-            # if the content appears to be HTML, process it as a form question
-            if "<table" in content_html.lower():
-                soup = BeautifulSoup(content_html, "html.parser")
-                rows = soup.find_all("tr")
-                for row in rows:
-                    cells = row.find_all("td")
-                    if len(cells) >= 2:
-                        header_text = cells[0].get_text(strip=True)
-                        content_text = cells[1].get_text(strip=True)
-                        logger.debug(f"🔍 Extracted - Header: '{header_text}', Content: '{content_text}'")
-                        # check if in allowed headers
-                        if any(header_text.lower() == h.lower() for h in ALLOWED_HEADERS):
-                            proofing_requests[header_text] = content_text
-                            table_data[header_text] = {"row": row, "record_id": record_id}
-                        else:
-                            logger.info(f"Skipping header not in allowed list: {header_text}")
-            else:
-                # for actions (plain text), simply use the recordId as the key.
-                proofing_requests[record_id] = content_html.strip()
-                table_data[record_id] = {"content": content_html.strip(), "record_id": record_id}
-
-        logger.info({"proofed_requests": len(proofing_requests), "keys": list(proofing_requests.keys())})
-        return proofing_requests, table_data
-
-    except Exception as e:
-        logger.error(f"Unexpected error in load_html_data: {e}")
+    html_data = event_body.get("sectionContents", [])
+    if not html_data:
+        logger.warning("No HTML data found in event.")
         return {}, {}
+
+    for entry in html_data:
+        record_id = entry.get("recordId")
+        content_html = entry.get("content")
+
+        if not record_id or not content_html:
+            logger.warning(f"⚠️ Skipping entry with missing recordId or content: {entry}")
+            continue
+
+        if "<table" in content_html.lower():
+            soup = BeautifulSoup(content_html, "html.parser")
+            rows = soup.find_all("tr")
+            for row in rows:
+                cells = row.find_all("td")
+                if len(cells) >= 2:
+                    header_text = cells[0].get_text(strip=True)
+                    content_text = cells[1].get_text(strip=True)
+
+                    if header_text.lower() in map(str.lower, ALLOWED_HEADERS):
+                        proofing_requests[header_text] = content_text
+                        table_data[header_text] = {"row": row, "record_id": record_id}
+        else:
+            proofing_requests[record_id] = content_html.strip()
+            table_data[record_id] = {"content": content_html.strip(), "record_id": record_id}
+
+    logger.info({"proofed_requests": len(proofing_requests), "keys": list(proofing_requests.keys())})
+    return proofing_requests, table_data
+
 
 
 def proof_html_with_bedrock(header, content):
