@@ -67,7 +67,6 @@ def store_metadata(workorder_id: str, original_s3_key: str, proofed_s3_key: str,
         raise
 
 @tracer.capture_method
-@tracer.capture_method
 def load_html_data(event_body: dict):
     """
     Parses Salesforce input data.
@@ -187,7 +186,6 @@ def process(event: APIGatewayProxyEvent, context: LambdaContext):
 
     try:
         body = event.json_body
-        # body = json.loads(event["body"])
         workorder_id = body.get("workOrderId", str(uuid.uuid4()))
         proofing_requests, table_data = load_html_data(body)
 
@@ -199,22 +197,48 @@ def process(event: APIGatewayProxyEvent, context: LambdaContext):
         proofed_flag = False
 
         for key, content in proofing_requests.items():
+            # NEW LOGIC FOR ACTIONS: If content has "||", parse & proof them separately.
+            if "||" in content:
+                parts = content.split("||", 1)  # split only once
+                obs = parts[0]
+                action = parts[1] if len(parts) > 1 else ""
+
+                obs_corrected = proof_html_with_bedrock(f"{key}_obs", obs)
+                action_corrected = proof_html_with_bedrock(f"{key}_act", action)
+
+                corrected_content = obs_corrected + "||" + action_corrected
+            else:
+                # Normal single-block content (either a table row or plain text without ||)
                 corrected_content = proof_html_with_bedrock(key, content)
-                proofed_flag = proofed_flag or (corrected_content.strip() != content.strip())
 
-                row_info = table_data.get(key)
-                record_id = row_info["record_id"] if row_info else key
-                proofed_entries.append({"recordId": record_id, "content": corrected_content})
-                original_text += f"\n\n### {key} ###\n{content}\n"
-                proofed_text += f"\n\n### {key} ###\n{corrected_content}\n"
+            # If the corrected content differs from original, mark that we did some proofing
+            if corrected_content.strip() != content.strip():
+                proofed_flag = True
 
+            # Prepare the final output record
+            row_info = table_data.get(key)
+            record_id = row_info["record_id"] if row_info else key
+            proofed_entries.append({"recordId": record_id, "content": corrected_content})
+
+            # Append to the "original" and "proofed" text logs
+            original_text += f"\n\n### {key} ###\n{content}\n"
+            proofed_text += f"\n\n### {key} ###\n{corrected_content}\n"
+
+        # Store the proofed vs. original text in S3
         status_flag = "Proofed" if proofed_flag else "Original"
         original_s3_key = store_in_s3(original_text, f"{workorder_id}_original", "original")
         proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_proofed", "proofed")
         store_metadata(workorder_id, original_s3_key, proofed_s3_key, status_flag)
 
-        return {"statusCode": 200, "body": json.dumps({"workOrderId": workorder_id, "sectionContents": proofed_entries})}
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "workOrderId": workorder_id,
+                "sectionContents": proofed_entries
+            })
+        }
 
     except Exception as e:
         logger.exception("❌ Error processing request")
         return {"statusCode": 500, "body": json.dumps({"error": "Internal Server Error"})}
+
