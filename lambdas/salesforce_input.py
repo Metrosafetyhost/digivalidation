@@ -138,8 +138,7 @@ def proof_html_with_bedrock(header, content):
 
         response_body = json.loads(response["body"].read().decode("utf-8"))
         proofed_text = " ".join(
-            [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
-        ).strip()
+            [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]).strip()
 
         logger.info(f"✅ Proofed content (Header/Key: {header}): {proofed_text}")
 
