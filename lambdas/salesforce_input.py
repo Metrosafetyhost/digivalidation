@@ -69,18 +69,17 @@ def store_metadata(workorder_id: str, original_s3_key: str, proofed_s3_key: str,
 @tracer.capture_method
 def load_html_data(event_body: dict):
     """
-    Parses Salesforce input data.
+    Parses Salesforce input data for form questions (table-based) ONLY.
     
-    - If the 'content' contains table markup, it is assumed to be a Report Section record.
-      In that case, the function iterates over each row and extracts only those rows
-      whose header (the first cell) matches one of the allowed headers (case-insensitive).
-    - Otherwise, it assumes the record is an Action record and simply stores the plain text,
-      using the recordId as the key.
-    
+    - If the 'content' includes <table>, we parse each row and look for a header cell
+      that matches one of the ALLOWED_HEADERS (case-insensitive).
+    - If no table or no matching header is found, we skip that entry entirely.
+    - We do NOT handle actions here at all (i.e. no recordId-based fallback).
+      That is assumed to be in a separate Apex call.
+
     Returns:
-        proofing_requests: Dict mapping keys (allowed header for form questions, or recordId for actions)
-                           to the content that should be proofed.
-        table_data: Additional metadata keyed in the same way.
+      proofing_requests: Dict mapping allowed header to the text in its second cell.
+      table_data: Additional info keyed by the same header.
     """
     proofing_requests = {}
     table_data = {}
@@ -97,31 +96,33 @@ def load_html_data(event_body: dict):
             logger.warning(f"Skipping entry with missing recordId or content: {entry}")
             continue
 
-        # Check if the content has table markup
+        # Only process if content has <table>
         if "<table" in content_html.lower():
             soup = BeautifulSoup(content_html, "html.parser")
             rows = soup.find_all("tr")
-            allowed_found = False
+            found_any = False
 
             for row in rows:
                 cells = row.find_all("td")
                 if len(cells) >= 2:
                     header_text = cells[0].get_text(strip=True)
                     content_text = cells[1].get_text(strip=True)
-                    # Only include rows where the header matches one of our allowed headers
+
+                    # If the header matches an allowed header (case-insensitive), store it.
                     if header_text.lower() in (h.lower() for h in ALLOWED_HEADERS):
                         proofing_requests[header_text] = content_text
                         table_data[header_text] = {"row": row, "record_id": record_id}
-                        allowed_found = True
+                        found_any = True
 
-            if not allowed_found:
-                logger.info(f"Table entry for record {record_id} did not contain any allowed header; skipping.")
+            if not found_any:
+                logger.info(f"No allowed header found in table for record {record_id}; skipping this entry.")
         else:
-            # For plain text (action records), simply use the recordId as the key.
-            proofing_requests[record_id] = content_html.strip()
-            table_data[record_id] = {"raw_content": content_html.strip(), "record_id": record_id}
+            logger.info(f"Skipping non-table entry for record {record_id} (not a building description).")
 
-    logger.info({"proofed_requests": len(proofing_requests), "keys": list(proofing_requests.keys())})
+    logger.info({
+        "proofed_requests": len(proofing_requests),
+        "keys": list(proofing_requests.keys())
+    })
     return proofing_requests, table_data
 
 
@@ -241,4 +242,3 @@ def process(event: APIGatewayProxyEvent, context: LambdaContext):
     except Exception as e:
         logger.exception("❌ Error processing request")
         return {"statusCode": 500, "body": json.dumps({"error": "Internal Server Error"})}
-
