@@ -47,18 +47,14 @@ def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
 
 def load_html_data(event):
     """
-    Extracts relevant text from Salesforce input.
-    - For content that includes a <table> tag (form questions), we parse the table and use the header text.
-    - For content without a table (actions), we use the recordId as the key.
-    Returns:
-       proofing_requests: a dict where keys are either header texts (for form questions) or recordIds (for actions)
-       table_data: a dict with extra info needed later (for form questions: the row; for actions: the original text)
+    Extracts ALL rows from any <table> in 'sectionContents', skipping records without <table>.
+    Returns two structures:
+      proofing_requests: {header_text: content_text} for every row in every table
+      table_data: {header_text: {...}} with extra info like row, record_id, and is_allowed
     """
     try:
-        logger.debug(f"Full event received: {json.dumps(event, indent=2)}")
         body = json.loads(event["body"])
         html_data = body.get("sectionContents", [])
-
         if not html_data:
             logger.warning("No HTML data found in event.")
             return {}, {}
@@ -71,36 +67,43 @@ def load_html_data(event):
             content_html = entry.get("content")
 
             if not record_id or not content_html:
-                logger.warning(f"⚠️ Skipping entry with missing recordId or content: {entry}")
+                logger.warning(f"Skipping entry with missing recordId or content: {entry}")
                 continue
 
-            # If the content appears to be HTML (contains a table), process it as a form question
+            # Only process if content has <table>. Otherwise skip entirely (no fallback).
             if "<table" in content_html.lower():
                 soup = BeautifulSoup(content_html, "html.parser")
                 rows = soup.find_all("tr")
+
                 for row in rows:
                     cells = row.find_all("td")
                     if len(cells) >= 2:
                         header_text = cells[0].get_text(strip=True)
                         content_text = cells[1].get_text(strip=True)
-                        logger.debug(f"🔍 Extracted - Header: '{header_text}', Content: '{content_text}'")
-                        # Check if the header matches one of the allowed headers
-                        if any(header_text.lower() == h.lower() for h in ALLOWED_HEADERS):
-                            proofing_requests[header_text] = content_text
-                            table_data[header_text] = {"row": row, "record_id": record_id}
-                        else:
-                            logger.info(f"Skipping header not in allowed list: {header_text}")
-            else:
-                # For actions (plain text), simply use the recordId as the key.
-                proofing_requests[record_id] = content_html.strip()
-                table_data[record_id] = {"content": content_html.strip(), "record_id": record_id}
 
-        logger.info(f"✅ Extracted {len(proofing_requests)} items for proofing.")
+                        # We'll store everything we find:
+                        proofing_requests[header_text] = content_text
+                        # Also store metadata, including if it's allowed
+                        is_allowed = any(
+                            header_text.lower() == h.lower() for h in ALLOWED_HEADERS
+                        )
+                        table_data[header_text] = {
+                            "row": row,
+                            "record_id": record_id,
+                            "is_allowed": is_allowed
+                        }
+                    else:
+                        logger.info("Skipping row with <2 cells in table.")
+            else:
+                logger.info(f"Skipping record {record_id} because it has no <table>.")
+
+        logger.info(f"Extracted {len(proofing_requests)} table rows total.")
         return proofing_requests, table_data
 
     except Exception as e:
         logger.error(f"Unexpected error in load_html_data: {e}")
         return {}, {}
+
 
 def proof_html_with_bedrock(header, content):
     """Sends content for proofing and retrieves corrected version"""
@@ -150,7 +153,6 @@ def proof_html_with_bedrock(header, content):
         return content
 
 def process(event, context):
-    """Main processing function"""
     logger.info(f"🔹 Full Incoming Event: {json.dumps(event, indent=2)}")
 
     try:
@@ -160,69 +162,73 @@ def process(event, context):
         return {"statusCode": 400, "body": json.dumps({"error": "Invalid JSON format"})}
 
     workorder_id = body.get("workOrderId", str(uuid.uuid4()))
-    html_entries = body.get("sectionContents", [])
-
-    if not html_entries:
-        logger.error("❌ No section contents received from Salesforce.")
-        return {"statusCode": 400, "body": json.dumps({"error": "No section contents found"})}
-
     proofing_requests, table_data = load_html_data(event)
+
+    if not proofing_requests:
+        logger.warning("No rows found to process.")
+        return {"statusCode": 200, "body": json.dumps({
+            "workOrderId": workorder_id,
+            "sectionContents": []  # return empty
+        })}
+
     proofed_entries = []
     original_text = "=== ORIGINAL TEXT ===\n"
     proofed_text = "=== PROOFED TEXT ===\n"
     proofed_flag = False
 
-    for key, content in proofing_requests.items():
-        corrected_content = proof_html_with_bedrock(key, content)
-        if corrected_content.strip() != content.strip():
-            proofed_flag = True
+    # Go through each row we extracted
+    for header_text, content in proofing_requests.items():
+        row_info = table_data[header_text]
+        record_id = row_info["record_id"]
+        is_allowed = row_info["is_allowed"]
 
-        # Check if this key corresponds to a form question (HTML) or an action (plain text)
-        if key.lower() in [h.lower() for h in ALLOWED_HEADERS]:
-            # For form questions, update the HTML table row.
-            row_info = table_data.get(key)
-            if row_info:
-                row = row_info["row"]
-                record_id = row_info["record_id"]
+        if is_allowed:
+            # Only proof if it's in ALLOWED_HEADERS
+            corrected_content = proof_html_with_bedrock(header_text, content)
+            if corrected_content.strip() != content.strip():
+                proofed_flag = True
 
-                content_cell = row.find_all("td")[1]
-                content_cell.clear()
-                content_cell.append(corrected_content)
-                updated_html = str(row)
+            # Update the <td> in the row
+            row = row_info["row"]
+            content_cell = row.find_all("td")[1]
+            content_cell.clear()
+            content_cell.append(corrected_content)
+            updated_html = str(row)
 
-                proofed_entries.append({"recordId": record_id, "content": updated_html})
-                original_text += f"\n\n### {key} ###\n{content}\n"
-                proofed_text += f"\n\n### {key} ###\n{corrected_content}\n"
-            else:
-                logger.warning(f"⚠️ No table data found for header: {key}")
+            # We'll store the row as the final "content"
+            proofed_entries.append({
+                "recordId": record_id,
+                "content": updated_html
+            })
+
+            original_text += f"\n\n### {header_text} ###\n{content}\n"
+            proofed_text += f"\n\n### {header_text} ###\n{corrected_content}\n"
         else:
-            # For actions, the key is the recordId and the content is plain text.
-            rec_data = table_data.get(key)
-            if rec_data:
-                record_id = rec_data["record_id"]
-                # No HTML processing needed; just update the content.
-                proofed_entries.append({"recordId": record_id, "content": corrected_content})
-                original_text += f"\n\n### {record_id} ###\n{content}\n"
-                proofed_text += f"\n\n### {record_id} ###\n{corrected_content}\n"
-            else:
-                logger.warning(f"⚠️ No table data found for action record: {key}")
+            # Not in ALLOWED_HEADERS, skip proofing but still return the row unchanged
+            row = row_info["row"]
+            updated_html = str(row)  # original row HTML
+            proofed_entries.append({
+                "recordId": record_id,
+                "content": updated_html
+            })
+            original_text += f"\n\n### {header_text} (SKIPPED) ###\n{content}\n"
+            proofed_text += f"\n\n### {header_text} (SKIPPED) ###\n{content}\n"
 
     status_flag = "Proofed" if proofed_flag else "Original"
     logger.info(f"Work order flagged as: {status_flag}")
 
-    logger.info("🔹 Storing proofed files in S3...")
+    # Store in S3
     original_s3_key = store_in_s3(original_text, f"{workorder_id}_original", "original")
     proofed_s3_key = store_in_s3(proofed_text, f"{workorder_id}_proofed", "proofed")
-
     store_metadata(workorder_id, original_s3_key, proofed_s3_key, status_flag)
 
-    # Remove duplicate recordIds (keeping the latest version)
-    unique_proofed_entries = {}
+    # If you want to remove duplicates by recordId, do so here
+    unique_map = {}
     for entry in proofed_entries:
-        unique_proofed_entries[entry["recordId"]] = entry
-    proofed_entries = list(unique_proofed_entries.values())
+        unique_map[entry["recordId"]] = entry
+    final_entries = list(unique_map.values())
 
     return {
         "statusCode": 200,
-        "body": json.dumps({"workOrderId": workorder_id, "sectionContents": proofed_entries})
+        "body": json.dumps({"workOrderId": workorder_id, "sectionContents": final_entries})
     }
