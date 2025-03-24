@@ -48,9 +48,23 @@ def load_html_data(event):
        proofing_requests: dict mapping recordId to its content.
        table_data: dict containing original content and recordId for updates.
     """
+    # Log the full event at INFO level so you can see it in CloudWatch easily
+    logger.info("=== load_html_data - FULL EVENT ===")
+    logger.info(json.dumps(event, indent=2))
+
     try:
-        logger.debug(f"Full event received: {json.dumps(event, indent=2)}")
-        body = json.loads(event["body"])
+        # Log the raw body string to see it before parsing
+        raw_body = event.get("body", "")
+        logger.info("=== load_html_data - RAW BODY STRING ===")
+        logger.info(raw_body)
+
+        # Parse the JSON body
+        body = json.loads(raw_body)
+
+        logger.info("=== load_html_data - PARSED BODY ===")
+        logger.info(json.dumps(body, indent=2))
+
+        # Now process the payload to extract items
         items = []
 
         if "sectionContents" in body:
@@ -66,6 +80,9 @@ def load_html_data(event):
             logger.warning("No proofing items found in event.")
             return {}, {}
 
+        logger.info("=== load_html_data - ITEMS ARRAY ===")
+        logger.info(json.dumps(items, indent=2))
+
         proofing_requests = {}
         table_data = {}
 
@@ -76,10 +93,16 @@ def load_html_data(event):
                 logger.warning(f"⚠️ Skipping entry with missing recordId or content: {entry}")
                 continue
 
+            # Store in the dictionaries
             proofing_requests[record_id] = content.strip()
             table_data[record_id] = {"content": content.strip(), "record_id": record_id}
 
         logger.info(f"✅ Extracted {len(proofing_requests)} items for proofing.")
+        logger.info("=== load_html_data - FINAL proofing_requests ===")
+        logger.info(json.dumps(proofing_requests, indent=2))
+        logger.info("=== load_html_data - FINAL table_data ===")
+        logger.info(json.dumps(table_data, indent=2))
+
         return proofing_requests, table_data
 
     except Exception as e:
@@ -132,15 +155,22 @@ def proof_html_with_bedrock(record_id, content):
 
 def process(event, context):
     """Main processing function"""
-    logger.info(f"🔹 Full Incoming Event: {json.dumps(event, indent=2)}")
+    # First, log the entire event as received by Lambda
+    logger.info("=== process - FULL EVENT AS RECEIVED ===")
+    logger.info(json.dumps(event, indent=2))
 
     try:
         body = json.loads(event["body"])
+        logger.info("=== process - PARSED BODY BEFORE load_html_data ===")
+        logger.info(json.dumps(body, indent=2))
     except (TypeError, KeyError, json.JSONDecodeError):
         logger.error("❌ Error parsing request body")
         return {"statusCode": 400, "body": json.dumps({"error": "Invalid JSON format"})}
 
+    # Extract the workOrderId or generate one if not provided
     workorder_id = body.get("workOrderId", str(uuid.uuid4()))
+    
+    # Now call load_html_data to parse out the recordId/content pairs
     proofing_requests, table_data = load_html_data(event)
 
     if not proofing_requests:
@@ -183,6 +213,10 @@ def process(event, context):
     for entry in proofed_entries:
         unique_proofed_entries[entry["recordId"]] = entry
     proofed_entries = list(unique_proofed_entries.values())
+
+    # Final logging
+    logger.info("=== process - FINAL PROOFED ENTRIES ===")
+    logger.info(json.dumps(proofed_entries, indent=2))
 
     return {
         "statusCode": 200,
