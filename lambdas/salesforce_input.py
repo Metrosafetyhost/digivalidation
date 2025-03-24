@@ -38,33 +38,44 @@ def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
 def load_html_data(event):
     """
     Extracts relevant text from Salesforce input.
-    Since we now rely on recordId for both building descriptions and actions,
-    we simply use the recordId as the key, ignoring any HTML table parsing.
+    This version supports two possible JSON formats:
+    1. A single key "sectionContents" containing an array of items.
+    2. A combined payload with separate keys "formQuestions" and "actions".
+    
+    Each item is expected to have a recordId and a content.
     
     Returns:
-       proofing_requests: a dict where keys are the recordIds and values are the content.
-       table_data: a dict containing the original content and recordId for later updates.
+       proofing_requests: dict mapping recordId to its content.
+       table_data: dict containing original content and recordId for updates.
     """
     try:
         logger.debug(f"Full event received: {json.dumps(event, indent=2)}")
         body = json.loads(event["body"])
-        html_data = body.get("sectionContents", [])
+        items = []
 
-        if not html_data:
-            logger.warning("No HTML data found in event.")
+        if "sectionContents" in body:
+            items = body["sectionContents"]
+        else:
+            # Combine items from separate keys if available
+            if "formQuestions" in body:
+                items.extend(body["formQuestions"])
+            if "actions" in body:
+                items.extend(body["actions"])
+
+        if not items:
+            logger.warning("No proofing items found in event.")
             return {}, {}
 
         proofing_requests = {}
         table_data = {}
 
-        for entry in html_data:
+        for entry in items:
             record_id = entry.get("recordId")
             content = entry.get("content")
             if not record_id or not content:
                 logger.warning(f"⚠️ Skipping entry with missing recordId or content: {entry}")
                 continue
 
-            # Use the recordId as the key, regardless of whether the content is plain or HTML.
             proofing_requests[record_id] = content.strip()
             table_data[record_id] = {"content": content.strip(), "record_id": record_id}
 
@@ -130,13 +141,12 @@ def process(event, context):
         return {"statusCode": 400, "body": json.dumps({"error": "Invalid JSON format"})}
 
     workorder_id = body.get("workOrderId", str(uuid.uuid4()))
-    html_entries = body.get("sectionContents", [])
-
-    if not html_entries:
-        logger.error("❌ No section contents received from Salesforce.")
-        return {"statusCode": 400, "body": json.dumps({"error": "No section contents found"})}
-
     proofing_requests, table_data = load_html_data(event)
+
+    if not proofing_requests:
+        logger.error("❌ No proofing items extracted from the payload.")
+        return {"statusCode": 400, "body": json.dumps({"error": "No proofing items found"})}
+
     proofed_entries = []
     original_text = "=== ORIGINAL TEXT ===\n"
     proofed_text = "=== PROOFED TEXT ===\n"
