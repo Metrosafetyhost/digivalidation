@@ -35,58 +35,50 @@ def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
         }
     )
 
-def load_html_data(event):
+def load_payload(event):
     """
-    Extracts relevant text from Salesforce input.
-    This version supports two possible JSON formats:
-    1. A single key "sectionContents" containing an array of items.
-    2. A combined payload with separate keys "formQuestions" and "actions".
-    
-    Each item is expected to have a recordId and a content.
-    
-    Returns:
-       proofing_requests: dict mapping recordId to its content.
-       table_data: dict containing original content and recordId for updates.
+    Extracts the payload from the incoming event.
+    Assumes a JSON structure with:
+      - workOrderId
+      - contentType: "FormQuestion" or "Action"
+      - sectionContents: a list of objects {recordId, content}
     """
-    logger.info("=== load_html_data - FULL EVENT ===")
+    logger.info("=== load_payload - FULL EVENT ===")
     logger.info(json.dumps(event, indent=2))
+    
     try:
-        logger.debug(f"Full event received: {json.dumps(event, indent=2)}")
-        body = json.loads(event["body"])
-        items = []
-
-        if "sectionContents" in body:
-            items = body["sectionContents"]
-        else:
-            # Combine items from separate keys if available
-            if "formQuestions" in body:
-                items.extend(body["formQuestions"])
-            if "actions" in body:
-                items.extend(body["actions"])
-
-        if not items:
-            logger.warning("No proofing items found in event.")
-            return {}, {}
-
+        raw_body = event.get("body", "")
+        logger.info("=== load_payload - RAW BODY STRING ===")
+        logger.info(raw_body)
+        body = json.loads(raw_body)
+        logger.info("=== load_payload - PARSED BODY ===")
+        logger.info(json.dumps(body, indent=2))
+        
+        # Extract contentType and sectionContents directly
+        content_type = body.get("contentType", "Unknown")
+        items = body.get("sectionContents", [])
+        
+        logger.info(f"Payload contentType: {content_type}")
+        logger.info(f"Number of sectionContents items: {len(items)}")
+        
+        # Build dictionaries for processing (mapping recordId to content)
         proofing_requests = {}
         table_data = {}
-
         for entry in items:
             record_id = entry.get("recordId")
             content = entry.get("content")
             if not record_id or not content:
                 logger.warning(f"⚠️ Skipping entry with missing recordId or content: {entry}")
                 continue
-
             proofing_requests[record_id] = content.strip()
             table_data[record_id] = {"content": content.strip(), "record_id": record_id}
-
+        
         logger.info(f"✅ Extracted {len(proofing_requests)} items for proofing.")
-        return proofing_requests, table_data
+        return body.get("workOrderId"), content_type, proofing_requests, table_data
 
     except Exception as e:
-        logger.error(f"Unexpected error in load_html_data: {e}")
-        return {}, {}
+        logger.error(f"Unexpected error in load_payload: {e}")
+        return None, None, {}, {}
 
 def proof_html_with_bedrock(record_id, content):
     """Sends content for proofing and retrieves corrected version"""
@@ -134,16 +126,17 @@ def proof_html_with_bedrock(record_id, content):
 
 def process(event, context):
     """Main processing function"""
-    logger.info(f"🔹 Full Incoming Event: {json.dumps(event, indent=2)}")
+    logger.info("=== process - FULL EVENT AS RECEIVED ===")
+    logger.info(json.dumps(event, indent=2))
 
     try:
-        body = json.loads(event["body"])
-    except (TypeError, KeyError, json.JSONDecodeError):
-        logger.error("❌ Error parsing request body")
+        # Extract workOrderId, contentType, and payload dictionaries
+        workorder_id, content_type, proofing_requests, table_data = load_payload(event)
+        if not workorder_id:
+            raise ValueError("Missing workOrderId in payload.")
+    except Exception as e:
+        logger.error("❌ Error parsing request body: " + str(e))
         return {"statusCode": 400, "body": json.dumps({"error": "Invalid JSON format"})}
-
-    workorder_id = body.get("workOrderId", str(uuid.uuid4()))
-    proofing_requests, table_data = load_html_data(event)
 
     if not proofing_requests:
         logger.error("❌ No proofing items extracted from the payload.")
@@ -154,6 +147,7 @@ def process(event, context):
     proofed_text = "=== PROOFED TEXT ===\n"
     proofed_flag = False
 
+    # Process each record in the payload's sectionContents
     for record_id, content in proofing_requests.items():
         corrected_content = proof_html_with_bedrock(record_id, content)
         
@@ -186,7 +180,15 @@ def process(event, context):
         unique_proofed_entries[entry["recordId"]] = entry
     proofed_entries = list(unique_proofed_entries.values())
 
+    # Optionally, you can include the contentType in your response if needed
+    response_body = {
+        "workOrderId": workorder_id,
+        "contentType": content_type,
+        "sectionContents": proofed_entries
+    }
+    logger.info("=== process - FINAL PROOFED ENTRIES ===")
+    logger.info(json.dumps(response_body, indent=2))
     return {
         "statusCode": 200,
-        "body": json.dumps({"workOrderId": workorder_id, "sectionContents": proofed_entries})
+        "body": json.dumps(response_body)
     }
