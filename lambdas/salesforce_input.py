@@ -47,10 +47,21 @@ def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
 
 def load_html_data(event):
     """
-    Extracts ALL rows from any <table> in 'sectionContents', skipping records without <table>.
-    Returns two structures:
-      proofing_requests: {header_text: content_text} for every row in every table
-      table_data: {header_text: {...}} with extra info like row, record_id, and is_allowed
+    Extracts relevant text from Salesforce input (for form questions).
+    
+    For each record in "sectionContents":
+      - If the content contains a <table> tag, we parse every table row.
+          • For each row, if the first cell’s text (after trimming) exactly
+            matches one of the ALLOWED_HEADERS (ignoring case), we store that row.
+      - Otherwise, we assume the content is plain text.
+          • We split by newline and take the first nonempty line as the header.
+          • If that header exactly matches one of ALLOWED_HEADERS (ignoring case),
+            we use it as the key and the rest of the text as the section content.
+          • If not, we skip the record.
+    
+    Returns:
+      proofing_requests: dict mapping allowed header text to the content (to be proofed).
+      table_data: dict with additional metadata (including record_id).
     """
     try:
         body = json.loads(event["body"])
@@ -65,41 +76,43 @@ def load_html_data(event):
         for entry in html_data:
             record_id = entry.get("recordId")
             content_html = entry.get("content")
-
             if not record_id or not content_html:
                 logger.warning(f"Skipping entry with missing recordId or content: {entry}")
                 continue
 
-            # Only process if content has <table>. Otherwise skip entirely (no fallback).
+            # Case 1: Content includes a table.
             if "<table" in content_html.lower():
                 soup = BeautifulSoup(content_html, "html.parser")
                 rows = soup.find_all("tr")
-
                 for row in rows:
                     cells = row.find_all("td")
                     if len(cells) >= 2:
                         header_text = cells[0].get_text(strip=True)
                         content_text = cells[1].get_text(strip=True)
-
-                        # We'll store everything we find:
-                        proofing_requests[header_text] = content_text
-                        # Also store metadata, including if it's allowed
-                        is_allowed = any(
-                            header_text.lower() == h.lower() for h in ALLOWED_HEADERS
-                        )
-                        table_data[header_text] = {
-                            "row": row,
-                            "record_id": record_id,
-                            "is_allowed": is_allowed
-                        }
-                    else:
-                        logger.info("Skipping row with <2 cells in table.")
+                        logger.debug(f"Extracted from table – Header: '{header_text}', Content: '{content_text}'")
+                        # Only include if header exactly matches one of the allowed headers.
+                        if any(header_text.lower() == allowed.lower() for allowed in ALLOWED_HEADERS):
+                            proofing_requests[header_text] = content_text
+                            table_data[header_text] = {"row": row, "record_id": record_id}
+                        else:
+                            logger.info(f"Skipping table row header not allowed: '{header_text}'")
             else:
-                logger.info(f"Skipping record {record_id} because it has no <table>.")
-
-        logger.info(f"Extracted {len(proofing_requests)} table rows total.")
+                # Case 2: Plain text content. Assume the first nonempty line is the header.
+                lines = [line.strip() for line in content_html.splitlines() if line.strip()]
+                if lines:
+                    potential_header = lines[0]
+                    # Check if potential_header is one of the allowed headers (exact match ignoring case)
+                    if any(potential_header.lower() == allowed.lower() for allowed in ALLOWED_HEADERS):
+                        content_text = "\n".join(lines[1:]).strip()
+                        proofing_requests[potential_header] = content_text
+                        table_data[potential_header] = {"raw_content": content_html.strip(), "record_id": record_id}
+                        logger.debug(f"Extracted from plain text – Header: '{potential_header}', Content: '{content_text}'")
+                    else:
+                        logger.info(f"Skipping plain text record {record_id} because first line '{potential_header}' is not allowed.")
+                else:
+                    logger.info(f"Skipping plain text record {record_id} because it is empty.")
+        logger.info(f"✅ Extracted {len(proofing_requests)} items for proofing. Keys: {list(proofing_requests.keys())}")
         return proofing_requests, table_data
-
     except Exception as e:
         logger.error(f"Unexpected error in load_html_data: {e}")
         return {}, {}
