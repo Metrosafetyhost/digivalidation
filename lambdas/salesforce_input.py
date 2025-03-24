@@ -97,6 +97,7 @@ def proof_html_with_bedrock(record_id, content):
                     "- Do NOT split, merge, or add any new sentences or content.\n"
                     "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
+                    "- IF text seperated by ||, proof content, but leave the || uncahnged. \n"
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
                     "Correct this text: " + content
                 )
