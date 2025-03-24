@@ -75,10 +75,10 @@ def load_html_data(event):
         logger.error(f"Unexpected error in load_html_data: {e}")
         return {}, {}
 
-def proof_html_with_bedrock(key, content):
+def proof_html_with_bedrock(record_id, content):
     """Sends content for proofing and retrieves corrected version"""
     try:
-        logger.info(f"🔹 Original content before proofing (recordId: {key}): {content}")
+        logger.info(f"🔹 Original content before proofing (recordId: {record_id}): {content}")
 
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
@@ -112,11 +112,11 @@ def proof_html_with_bedrock(key, content):
             [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
         ).strip()
 
-        logger.info(f"✅ Proofed content (recordId: {key}): {proofed_text}")
+        logger.info(f"✅ Proofed content (recordId: {record_id}): {proofed_text}")
         return proofed_text if proofed_text else content
 
     except Exception as e:
-        logger.error(f"❌ Bedrock API Error: {str(e)}")
+        logger.error(f"❌ Bedrock API Error for recordId {record_id}: {str(e)}")
         return content
 
 def process(event, context):
@@ -142,20 +142,22 @@ def process(event, context):
     proofed_text = "=== PROOFED TEXT ===\n"
     proofed_flag = False
 
-    for key, content in proofing_requests.items():
-        corrected_content = proof_html_with_bedrock(key, content)
+    for record_id, content in proofing_requests.items():
+        corrected_content = proof_html_with_bedrock(record_id, content)
+        
         if corrected_content.strip() != content.strip():
             proofed_flag = True
+            logger.info(f"Record {record_id} was proofed:\nOriginal: {content}\nCorrected: {corrected_content}")
+        else:
+            logger.info(f"Record {record_id} did not require changes: {content}")
 
-        # Here, since we rely on recordId, simply update using that key.
-        rec_data = table_data.get(key)
+        rec_data = table_data.get(record_id)
         if rec_data:
-            record_id = rec_data["record_id"]
             proofed_entries.append({"recordId": record_id, "content": corrected_content})
             original_text += f"\n\n### {record_id} ###\n{content}\n"
             proofed_text += f"\n\n### {record_id} ###\n{corrected_content}\n"
         else:
-            logger.warning(f"⚠️ No table data found for recordId: {key}")
+            logger.warning(f"⚠️ No table data found for recordId: {record_id}")
 
     status_flag = "Proofed" if proofed_flag else "Original"
     logger.info(f"Work order flagged as: {status_flag}")
