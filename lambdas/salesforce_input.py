@@ -1,9 +1,9 @@
 import json
 import boto3
 import logging
-from bs4 import BeautifulSoup
 import uuid
 import time
+from bs4 import BeautifulSoup
 
 # Initialise logger
 logger = logging.getLogger()
@@ -18,15 +18,6 @@ dynamodb = boto3.resource('dynamodb')
 BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 BUCKET_NAME = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
 TABLE_NAME = "ProofingMetadata"
-
-# Allowed headers for form questions (the building description tables)
-ALLOWED_HEADERS = [
-    "Building Fire strategy",
-    "Fire Service and Evacuation Lifts",
-    "Mains Electrical incomers and electrical distribution boards (EDBs)",
-    "Natural Gas Supplies",
-    "Disabled escape arrangements",
-]
 
 def store_in_s3(text, filename, folder):
     s3_key = f"{folder}/{filename}.txt"
@@ -48,7 +39,7 @@ def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
 def load_html_data(event):
     """
     Extracts relevant text from Salesforce input.
-    - For content that includes a <table> tag (form questions), we parse the table and use the header text.
+    - For content that includes a <table> tag (form questions), we parse the table and use the header text from each row.
     - For content without a table (actions), we use the recordId as the key.
     Returns:
        proofing_requests: a dict where keys are either header texts (for form questions) or recordIds (for actions)
@@ -84,12 +75,9 @@ def load_html_data(event):
                         header_text = cells[0].get_text(strip=True)
                         content_text = cells[1].get_text(strip=True)
                         logger.debug(f"🔍 Extracted - Header: '{header_text}', Content: '{content_text}'")
-                        # Check if the header matches one of the allowed headers
-                        if any(header_text.lower() == h.lower() for h in ALLOWED_HEADERS):
-                            proofing_requests[header_text] = content_text
-                            table_data[header_text] = {"row": row, "record_id": record_id}
-                        else:
-                            logger.info(f"Skipping header not in allowed list: {header_text}")
+                        # Process all table rows without filtering for allowed headers.
+                        proofing_requests[header_text] = content_text
+                        table_data[header_text] = {"row": row, "record_id": record_id}
             else:
                 # For actions (plain text), simply use the recordId as the key.
                 proofing_requests[record_id] = content_html.strip()
@@ -138,7 +126,8 @@ def proof_html_with_bedrock(header, content):
 
         response_body = json.loads(response["body"].read().decode("utf-8"))
         proofed_text = " ".join(
-            [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]).strip()
+            [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
+        ).strip()
 
         logger.info(f"✅ Proofed content (Header/Key: {header}): {proofed_text}")
 
@@ -177,9 +166,9 @@ def process(event, context):
         if corrected_content.strip() != content.strip():
             proofed_flag = True
 
-        # Check if this key corresponds to a form question (HTML) or an action (plain text)
-        if key.lower() in [h.lower() for h in ALLOWED_HEADERS]:
-            # For form questions, update the HTML table row.
+        # Check if this item is from an HTML table by checking for "row" in the table data.
+        if table_data.get(key, {}).get("row"):
+            # For form questions (HTML), update the table row.
             row_info = table_data.get(key)
             if row_info:
                 row = row_info["row"]
@@ -196,11 +185,10 @@ def process(event, context):
             else:
                 logger.warning(f"⚠️ No table data found for header: {key}")
         else:
-            # For actions, the key is the recordId and the content is plain text.
+            # For actions (plain text), the key is the recordId.
             rec_data = table_data.get(key)
             if rec_data:
                 record_id = rec_data["record_id"]
-                # No HTML processing needed; just update the content.
                 proofed_entries.append({"recordId": record_id, "content": corrected_content})
                 original_text += f"\n\n### {record_id} ###\n{content}\n"
                 proofed_text += f"\n\n### {record_id} ###\n{corrected_content}\n"
