@@ -3,7 +3,6 @@ import boto3
 import logging
 import uuid
 import time
-from bs4 import BeautifulSoup
 
 # Initialise logger
 logger = logging.getLogger()
@@ -39,11 +38,12 @@ def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
 def load_html_data(event):
     """
     Extracts relevant text from Salesforce input.
-    - For content that includes a <table> tag (form questions), we parse the table and use the header text from each row.
-    - For content without a table (actions), we use the recordId as the key.
+    Since we now rely on recordId for both building descriptions and actions,
+    we simply use the recordId as the key, ignoring any HTML table parsing.
+    
     Returns:
-       proofing_requests: a dict where keys are either header texts (for form questions) or recordIds (for actions)
-       table_data: a dict with extra info needed later (for form questions: the row; for actions: the original text)
+       proofing_requests: a dict where keys are the recordIds and values are the content.
+       table_data: a dict containing the original content and recordId for later updates.
     """
     try:
         logger.debug(f"Full event received: {json.dumps(event, indent=2)}")
@@ -59,29 +59,14 @@ def load_html_data(event):
 
         for entry in html_data:
             record_id = entry.get("recordId")
-            content_html = entry.get("content")
-
-            if not record_id or not content_html:
+            content = entry.get("content")
+            if not record_id or not content:
                 logger.warning(f"⚠️ Skipping entry with missing recordId or content: {entry}")
                 continue
 
-            # If the content appears to be HTML (contains a table), process it as a form question
-            if "<table" in content_html.lower():
-                soup = BeautifulSoup(content_html, "html.parser")
-                rows = soup.find_all("tr")
-                for row in rows:
-                    cells = row.find_all("td")
-                    if len(cells) >= 2:
-                        header_text = cells[0].get_text(strip=True)
-                        content_text = cells[1].get_text(strip=True)
-                        logger.debug(f"🔍 Extracted - Header: '{header_text}', Content: '{content_text}'")
-                        # Process all table rows without filtering for allowed headers.
-                        proofing_requests[header_text] = content_text
-                        table_data[header_text] = {"row": row, "record_id": record_id}
-            else:
-                # For actions (plain text), simply use the recordId as the key.
-                proofing_requests[record_id] = content_html.strip()
-                table_data[record_id] = {"content": content_html.strip(), "record_id": record_id}
+            # Use the recordId as the key, regardless of whether the content is plain or HTML.
+            proofing_requests[record_id] = content.strip()
+            table_data[record_id] = {"content": content.strip(), "record_id": record_id}
 
         logger.info(f"✅ Extracted {len(proofing_requests)} items for proofing.")
         return proofing_requests, table_data
@@ -90,12 +75,10 @@ def load_html_data(event):
         logger.error(f"Unexpected error in load_html_data: {e}")
         return {}, {}
 
-def proof_html_with_bedrock(header, content):
+def proof_html_with_bedrock(key, content):
     """Sends content for proofing and retrieves corrected version"""
     try:
-        logger.info(f"🔹 Original content before proofing (Header/Key: {header}): {content}")
-        # For proofing, we always send the plain text version.
-        text_content = content  # For HTML, we already extracted the text from the cell
+        logger.info(f"🔹 Original content before proofing (recordId: {key}): {content}")
 
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
@@ -110,7 +93,7 @@ def proof_html_with_bedrock(header, content):
                     "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
-                    "Correct this text: " + text_content
+                    "Correct this text: " + content
                 )
             }],
             "max_tokens": 512,
@@ -129,9 +112,7 @@ def proof_html_with_bedrock(header, content):
             [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
         ).strip()
 
-        logger.info(f"✅ Proofed content (Header/Key: {header}): {proofed_text}")
-
-        # If proofed_text is empty, return original content
+        logger.info(f"✅ Proofed content (recordId: {key}): {proofed_text}")
         return proofed_text if proofed_text else content
 
     except Exception as e:
@@ -166,34 +147,15 @@ def process(event, context):
         if corrected_content.strip() != content.strip():
             proofed_flag = True
 
-        # Check if this item is from an HTML table by checking for "row" in the table data.
-        if table_data.get(key, {}).get("row"):
-            # For form questions (HTML), update the table row.
-            row_info = table_data.get(key)
-            if row_info:
-                row = row_info["row"]
-                record_id = row_info["record_id"]
-
-                content_cell = row.find_all("td")[1]
-                content_cell.clear()
-                content_cell.append(corrected_content)
-                updated_html = str(row)
-
-                proofed_entries.append({"recordId": record_id, "content": updated_html})
-                original_text += f"\n\n### {key} ###\n{content}\n"
-                proofed_text += f"\n\n### {key} ###\n{corrected_content}\n"
-            else:
-                logger.warning(f"⚠️ No table data found for header: {key}")
+        # Here, since we rely on recordId, simply update using that key.
+        rec_data = table_data.get(key)
+        if rec_data:
+            record_id = rec_data["record_id"]
+            proofed_entries.append({"recordId": record_id, "content": corrected_content})
+            original_text += f"\n\n### {record_id} ###\n{content}\n"
+            proofed_text += f"\n\n### {record_id} ###\n{corrected_content}\n"
         else:
-            # For actions (plain text), the key is the recordId.
-            rec_data = table_data.get(key)
-            if rec_data:
-                record_id = rec_data["record_id"]
-                proofed_entries.append({"recordId": record_id, "content": corrected_content})
-                original_text += f"\n\n### {record_id} ###\n{content}\n"
-                proofed_text += f"\n\n### {record_id} ###\n{corrected_content}\n"
-            else:
-                logger.warning(f"⚠️ No table data found for action record: {key}")
+            logger.warning(f"⚠️ No table data found for recordId: {key}")
 
     status_flag = "Proofed" if proofed_flag else "Original"
     logger.info(f"Work order flagged as: {status_flag}")
