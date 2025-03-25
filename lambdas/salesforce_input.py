@@ -3,7 +3,7 @@ import boto3
 import logging
 import uuid
 import time
-from bs4 import BeautifulSoup  # for HTML parsing
+from bs4 import BeautifulSoup
 
 # Initialise logger
 logger = logging.getLogger()
@@ -28,55 +28,102 @@ def strip_html(html):
         logger.error(f"Error stripping HTML: {str(e)}")
         return html
 
-def extract_header_content(html):
+def proof_table_content(html, record_id):
     """
-    Extracts the section header and the proofing content from a table HTML.
-    Assumes the HTML structure is a table with one row and two cells:
-      - The first cell contains the header.
-      - The second cell contains the content to be proofed.
-    Returns a tuple: (header, content)
+    Processes an entire HTML table.
+    
+    1. Parses the table and iterates over all rows.
+    2. Extracts the content from each row's second cell.
+    3. Joins these texts with a unique delimiter and sends the full block for proofing.
+    4. Splits the returned corrected text by the delimiter.
+    5. Replaces each row's second cell with the corresponding corrected text.
+    
+    Returns:
+        - The updated HTML (with corrected content)
+        - A list of log entries containing header, original text and proofed text.
     """
     try:
         soup = BeautifulSoup(html, "html.parser")
         table = soup.find("table")
-        if table:
-            tr = table.find("tr")
-            if tr:
-                tds = tr.find_all("td")
-                if len(tds) >= 2:
-                    header = tds[0].get_text(separator=" ", strip=True)
-                    # Use decode_contents to get inner HTML of the content cell
-                    content = tds[1].decode_contents()
-                    return header, content
+        if not table:
+            logger.warning("No table found in HTML. Skipping proofing for record " + record_id)
+            return html, []
+        
+        rows = table.find_all("tr")
+        if not rows:
+            logger.warning("No rows found in table for record " + record_id)
+            return html, []
+        
+        original_texts = []
+        for row in rows:
+            tds = row.find_all("td")
+            if len(tds) >= 2:
+                original_texts.append(tds[1].get_text(separator=" ", strip=True))
+            else:
+                original_texts.append("")
+        
+        # Use a unique delimiter to join the texts from all rows.
+        delimiter = "|||ROW_DELIM|||"
+        joined_content = delimiter.join(original_texts)
+        plain_text = joined_content  # Already plain text
+        
+        logger.info(f"Proofing record {record_id}. Joined content: {plain_text}")
+        
+        payload = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "messages": [{
+                "role": "user",
+                "content": (
+                    "Proofread and correct the following text while ensuring:\n"
+                    "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
+                    "- Headings, section titles, and structure remain unchanged.\n"
+                    "- Do NOT remove any words or phrases from the original content.\n"
+                    "- Do NOT split, merge, or add any new sentences or content.\n"
+                    "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
+                    "- Ensure that lists, bullet points, and standalone words remain intact.\n"
+                    "- If the text contains the delimiter `||`, do NOT remove, alter, or add spaces around it.\n"
+                    "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
+                    "Correct this text: " + plain_text
+                )
+            }],
+            "max_tokens": 512,
+            "temperature": 0.3
+        }
+        
+        logger.info("Sending payload to Bedrock: " + json.dumps(payload, indent=2))
+        
+        response = bedrock_client.invoke_model(
+            modelId=BEDROCK_MODEL_ID,
+            contentType="application/json",
+            accept="application/json",
+            body=json.dumps(payload)
+        )
+        
+        response_body = json.loads(response["body"].read().decode("utf-8"))
+        proofed_text = " ".join(
+            [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
+        ).strip()
+        
+        # Split the proofed result back into segments.
+        corrected_contents = proofed_text.split(delimiter)
+        if len(corrected_contents) != len(original_texts):
+            logger.warning(f"Expected {len(original_texts)} proofed segments, got {len(corrected_contents)} for record {record_id}")
+        
+        log_entries = []
+        # Replace each row's second cell with the corresponding corrected text.
+        for idx, row in enumerate(rows):
+            tds = row.find_all("td")
+            if len(tds) >= 2:
+                corrected = corrected_contents[idx] if idx < len(corrected_contents) else tds[1].get_text()
+                tds[1].clear()
+                tds[1].append(corrected)
+                header = tds[0].get_text(separator=" ", strip=True)
+                logger.info(f"Record {record_id} row {idx+1} header: {header}. Original: {original_texts[idx]}. Proofed: {corrected}")
+                log_entries.append({"header": header, "original": original_texts[idx], "proofed": corrected})
+        return str(soup), log_entries
     except Exception as e:
-        logger.error(f"Error extracting header and content: {str(e)}")
-    # Fallback if expected structure is not found
-    return "", html
-
-def reintegrate_html(original_html, corrected_content):
-    """
-    Reintegrates the corrected proofed text back into the original HTML.
-    It locates the content cell in the table and replaces its contents with the corrected text,
-    preserving the original table structure.
-    """
-    try:
-        soup = BeautifulSoup(original_html, "html.parser")
-        table = soup.find("table")
-        if table:
-            tr = table.find("tr")
-            if tr:
-                tds = tr.find_all("td")
-                if len(tds) >= 2:
-                    tds[1].clear()
-                    # Insert corrected content as HTML fragment
-                    new_fragment = BeautifulSoup(corrected_content, "html.parser")
-                    for element in new_fragment.contents:
-                        tds[1].append(element)
-                    return str(soup)
-    except Exception as e:
-        logger.error(f"Error reintegrating corrected content: {str(e)}")
-    # Fallback: if table structure not found, return the corrected content alone.
-    return corrected_content
+        logger.error(f"Error proofing table content for record {record_id}: {str(e)}")
+        return html, []
 
 def store_in_s3(text, filename, folder):
     s3_key = f"{folder}/{filename}.txt"
@@ -107,7 +154,6 @@ def load_payload(event):
     """
     try:
         raw_body = event.get("body", "")
-        # Log the raw body once
         logger.info("Raw payload body received: " + raw_body)
         body = json.loads(raw_body)
         content_type = body.get("contentType", "Unknown")
@@ -122,7 +168,6 @@ def load_payload(event):
             if not record_id or not content:
                 logger.warning(f"Skipping entry with missing recordId or content: {entry}")
                 continue
-            # Trim any extraneous spaces
             proofing_requests[record_id] = content.strip()
             table_data[record_id] = {"content": content.strip(), "record_id": record_id}
         
@@ -131,53 +176,6 @@ def load_payload(event):
     except Exception as e:
         logger.error(f"Unexpected error in load_payload: {e}")
         return None, None, {}, {}
-
-def proof_html_with_bedrock(record_id, content):
-    """
-    Sends content for proofing and retrieves the corrected version.
-    Only the extracted content (without the header) should be sent.
-    """
-    plain_text = strip_html(content)
-    try:
-        logger.info(f"Proofing record {record_id}. Original (raw): {plain_text}")
-        payload = {
-            "anthropic_version": "bedrock-2023-05-31",
-            "messages": [{
-                "role": "user",
-                "content": (
-                    "Proofread and correct the following text while ensuring:\n"
-                    "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
-                    "- Headings, section titles, and structure remain unchanged.\n"
-                    "- Do NOT remove any words or phrases from the original content.\n"
-                    "- Do NOT split, merge, or add any new sentences or content.\n"
-                    "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
-                    "- Ensure that lists, bullet points, and standalone words remain intact.\n"
-                    "- If the text contains the delimiter `||`, do NOT remove, alter, or add spaces around it.\n"
-                    "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
-                    "Correct this text: " + plain_text
-                )
-            }],
-            "max_tokens": 512,
-            "temperature": 0.3
-        }
-        logger.info("Sending payload to Bedrock: " + json.dumps(payload, indent=2))
-
-        response = bedrock_client.invoke_model(
-            modelId=BEDROCK_MODEL_ID,
-            contentType="application/json",
-            accept="application/json",
-            body=json.dumps(payload)
-        )
-        response_body = json.loads(response["body"].read().decode("utf-8"))
-        proofed_text = " ".join(
-            [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
-        ).strip()
-        logger.info(f"Proofed output for record {record_id} (raw): {strip_html(proofed_text)}")
-        return proofed_text if proofed_text else content
-
-    except Exception as e:
-        logger.error(f"Bedrock API Error for record {record_id}: {str(e)}")
-        return content
 
 def process(event, context):
     """Main processing function"""
@@ -196,35 +194,30 @@ def process(event, context):
     proofed_entries = []
     original_text_log = "=== ORIGINAL TEXT ===\n"
     proofed_text_log = "=== PROOFED TEXT ===\n"
-    proofed_flag = False
+    overall_proofed_flag = False
 
     for record_id, html in proofing_requests.items():
-        # Extract header and the actual content (from the right cell)
-        header, content_to_proof = extract_header_content(html)
-        original_plain = strip_html(content_to_proof)
-        corrected_text = proof_html_with_bedrock(record_id, content_to_proof)
-        corrected_plain = strip_html(corrected_text)
-        # Reintegrate the corrected text back into the original HTML table
-        final_html = reintegrate_html(html, corrected_text)
-
-        if corrected_plain != original_plain:
-            proofed_flag = True
-            logger.info(f"Record {record_id} was proofed. Header: {header}. Original: {original_plain}. Proofed: {corrected_plain}")
-            original_text_log += f"\n\n### {record_id} - {header} ###\n{original_plain}\n"
-            proofed_text_log += f"\n\n### {record_id} - {header} ###\n{corrected_plain}\n"
-        else:
-            logger.info(f"Record {record_id} did not need proofing. Header: {header}. Output: {original_plain}")
-            original_text_log += f"\n\n### {record_id} - {header} ###\nNo changes needed: {original_plain}\n"
-            proofed_text_log += f"\n\n### {record_id} - {header} ###\nNo changes made.\n"
-
+        # Proof the entire table content
+        updated_html, log_entries = proof_table_content(html, record_id)
+        
+        # Log each row's details.
+        for entry in log_entries:
+            if entry["original"] != entry["proofed"]:
+                overall_proofed_flag = True
+                original_text_log += f"\n\n### {record_id} - {entry['header']} ###\n{entry['original']}\n"
+                proofed_text_log += f"\n\n### {record_id} - {entry['header']} ###\n{entry['proofed']}\n"
+            else:
+                original_text_log += f"\n\n### {record_id} - {entry['header']} ###\nNo changes needed: {entry['original']}\n"
+                proofed_text_log += f"\n\n### {record_id} - {entry['header']} ###\nNo changes made.\n"
+        
         rec_data = table_data.get(record_id)
         if rec_data:
-            # Update the content with the reintegrated HTML table
-            proofed_entries.append({"recordId": record_id, "content": final_html})
+            # Save the updated HTML table.
+            proofed_entries.append({"recordId": record_id, "content": updated_html})
         else:
             logger.warning(f"No table data found for record {record_id}")
 
-    status_flag = "Proofed" if proofed_flag else "Original"
+    status_flag = "Proofed" if overall_proofed_flag else "Original"
     logger.info(f"Work order flagged as: {status_flag}")
     logger.info("Storing proofed files in S3...")
 
@@ -232,7 +225,7 @@ def process(event, context):
     proofed_s3_key = store_in_s3(proofed_text_log, f"{workorder_id}_proofed", "proofed")
     store_metadata(workorder_id, original_s3_key, proofed_s3_key, status_flag)
 
-    # Remove duplicate records if any
+    # Remove duplicates if any
     unique_proofed_entries = {entry["recordId"]: entry for entry in proofed_entries}
     final_response = {
         "workOrderId": workorder_id,
