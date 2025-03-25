@@ -97,6 +97,7 @@ def proof_html_with_bedrock(record_id, content):
                     "- Do NOT split, merge, or add any new sentences or content.\n"
                     "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
+                    "- If the text contains the delimiter `||`, do NOT remove, alter, or add spaces around it.\n"
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
                     "Correct this text: " + content
                 )
@@ -104,6 +105,8 @@ def proof_html_with_bedrock(record_id, content):
             "max_tokens": 512,
             "temperature": 0.3
         }
+        logger.info("Sending payload to Bedrock: " + json.dumps(payload, indent=2))
+
         response = bedrock_client.invoke_model(
             modelId=BEDROCK_MODEL_ID,
             contentType="application/json",
@@ -123,9 +126,6 @@ def proof_html_with_bedrock(record_id, content):
 
 def process(event, context):
     """Main processing function"""
-    # Log the full event once at the beginning
-    logger.info("Full event received: " + json.dumps(event))
-    
     try:
         workorder_id, content_type, proofing_requests, table_data = load_payload(event)
         if not workorder_id:
