@@ -19,6 +19,15 @@ BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 BUCKET_NAME = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
 TABLE_NAME = "ProofingMetadata"
 
+def strip_html(html):
+    """Strip HTML tags from a string and return only text."""
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        return soup.get_text(separator=" ", strip=True)
+    except Exception as e:
+        logger.error(f"Error stripping HTML: {str(e)}")
+        return html
+
 def store_in_s3(text, filename, folder):
     s3_key = f"{folder}/{filename}.txt"
     s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=text)
@@ -36,82 +45,6 @@ def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
         }
     )
 
-def strip_html(html):
-    """Strip HTML tags from a string and return only text."""
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-        return soup.get_text(separator=" ", strip=True)
-    except Exception as e:
-        logger.error(f"Error stripping HTML: {str(e)}")
-        return html
-
-def call_bedrock_for_text(text):
-    """Proofs a given text (plain text) using Bedrock."""
-    payload = {
-        "anthropic_version": "bedrock-2023-05-31",
-        "messages": [{
-            "role": "user",
-            "content": (
-                "Proofread and correct the following text while ensuring:\n"
-                "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
-                "- Headings, section titles, and structure remain unchanged.\n"
-                "- Do NOT remove any words or phrases from the original content.\n"
-                "- Do NOT split, merge, or add any new sentences or content.\n"
-                "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
-                "- Ensure that lists, bullet points, and standalone words remain intact.\n"
-                "- If the text contains the delimiter `||`, do NOT remove, alter, or add spaces around it.\n"
-                "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
-                "Correct this text: " + text
-            )
-        }],
-        "max_tokens": 512,
-        "temperature": 0.3
-    }
-    logger.info("Sending payload to Bedrock for text: " + json.dumps(payload, indent=2))
-    response = bedrock_client.invoke_model(
-        modelId=BEDROCK_MODEL_ID,
-        contentType="application/json",
-        accept="application/json",
-        body=json.dumps(payload)
-    )
-    response_body = json.loads(response["body"].read().decode("utf-8"))
-    proofed_text = " ".join(
-        [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
-    ).strip()
-    return proofed_text if proofed_text else text
-
-def proof_html_with_bedrock(record_id, content):
-    """
-    If the content is HTML (an HTML table), extract the text in each <td> cell,
-    proof each cell's text, and reassemble the table with the updated text.
-    Otherwise, proof the plain text as before.
-    """
-    # Check if the content appears to be HTML (e.g., starts with a table tag)
-    if content.strip().lower().startswith("<table"):
-        logger.info(f"Record {record_id} appears to be HTML. Processing table cells individually.")
-        soup = BeautifulSoup(content, "html.parser")
-        # Iterate through all table data cells
-        tds = soup.find_all("td")
-        for td in tds:
-            original_cell_text = td.get_text(separator=" ", strip=True)
-            if original_cell_text:
-                proofed_cell_text = call_bedrock_for_text(original_cell_text)
-                logger.info(f"Record {record_id} - Cell original: {original_cell_text} | Proofed: {proofed_cell_text}")
-                td.clear()
-                td.append(proofed_cell_text)
-        # Reassemble the updated HTML table
-        corrected_html = str(soup)
-        logger.info(f"Proofed output for record {record_id} (HTML reassembled): {strip_html(corrected_html)}")
-        return corrected_html
-    else:
-        # For non-HTML content, proof the stripped plain text
-        plain_text = strip_html(content)
-        logger.info(f"Proofing record {record_id}. Original (plain text): {plain_text}")
-        proofed_text = call_bedrock_for_text(plain_text)
-        logger.info(f"Proofed output for record {record_id} (plain text): {proofed_text}")
-        # Optionally, if the content was not HTML, return the proofed text directly.
-        return proofed_text if proofed_text else content
-
 def load_payload(event):
     """
     Extracts payload from the incoming event.
@@ -124,6 +57,7 @@ def load_payload(event):
     """
     try:
         raw_body = event.get("body", "")
+        # Log the raw body once
         logger.info("Raw payload body received: " + raw_body)
         body = json.loads(raw_body)
         content_type = body.get("contentType", "Unknown")
@@ -147,6 +81,51 @@ def load_payload(event):
         logger.error(f"Unexpected error in load_payload: {e}")
         return None, None, {}, {}
 
+def proof_html_with_bedrock(record_id, content):
+    """Sends content for proofing and retrieves corrected version"""
+
+    plain_text = strip_html(content)
+    try:
+        logger.info(f"Proofing record {record_id}. Original (raw): {strip_html(content)}")
+        payload = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "messages": [{
+                "role": "user",
+                "content": (
+                    "Proofread and correct the following text while ensuring:\n"
+                    "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
+                    "- Headings, section titles, and structure remain unchanged.\n"
+                    "- Do NOT remove any words or phrases from the original content.\n"
+                    "- Do NOT split, merge, or add any new sentences or content.\n"
+                    "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
+                    "- Ensure that lists, bullet points, and standalone words remain intact.\n"
+                    "- If the text contains the delimiter `||`, do NOT remove, alter, or add spaces around it.\n"
+                    "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
+                    "Correct this text: " + content
+                )
+            }],
+            "max_tokens": 512,
+            "temperature": 0.3
+        }
+        logger.info("Sending payload to Bedrock: " + json.dumps(payload, indent=2))
+
+        response = bedrock_client.invoke_model(
+            modelId=BEDROCK_MODEL_ID,
+            contentType="application/json",
+            accept="application/json",
+            body=json.dumps(payload)
+        )
+        response_body = json.loads(response["body"].read().decode("utf-8"))
+        proofed_text = " ".join(
+            [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
+        ).strip()
+        logger.info(f"Proofed output for record {record_id} (raw): {strip_html(proofed_text)}")
+        return proofed_text if proofed_text else content
+
+    except Exception as e:
+        logger.error(f"Bedrock API Error for record {record_id}: {str(e)}")
+        return content
+
 def process(event, context):
     """Main processing function"""
     try:
@@ -167,6 +146,7 @@ def process(event, context):
     proofed_flag = False
 
     for record_id, content in proofing_requests.items():
+        # Strip HTML to get plain text for logging
         original_plain = strip_html(content)
         corrected_content = proof_html_with_bedrock(record_id, content)
         corrected_plain = strip_html(corrected_content)
