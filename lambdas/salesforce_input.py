@@ -125,6 +125,50 @@ def proof_table_content(html, record_id):
         logger.error(f"Error proofing table content for record {record_id}: {str(e)}")
         return html, []
 
+def proof_plain_text(text, record_id):
+    """
+    Proofreads plain text content.
+    This function is used when the incoming content is not an HTML table (e.g. for actions).
+    """
+    plain_text = strip_html(text)
+    try:
+        logger.info(f"Proofing record {record_id}. Plain text: {plain_text}")
+        payload = {
+            "anthropic_version": "bedrock-2023-05-31",
+            "messages": [{
+                "role": "user",
+                "content": (
+                    "Proofread and correct the following text while ensuring:\n"
+                    "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
+                    "- Headings, section titles, and structure remain unchanged.\n"
+                    "- Do NOT remove any words or phrases from the original content.\n"
+                    "- Do NOT split, merge, or add any new sentences or content.\n"
+                    "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
+                    "- Ensure that lists, bullet points, and standalone words remain intact.\n"
+                    "- If the text contains the delimiter `||`, do NOT remove, alter, or add spaces around it.\n"
+                    "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
+                    "Correct this text: " + plain_text
+                )
+            }],
+            "max_tokens": 512,
+            "temperature": 0.3
+        }
+        logger.info("Sending payload to Bedrock: " + json.dumps(payload, indent=2))
+        response = bedrock_client.invoke_model(
+            modelId=BEDROCK_MODEL_ID,
+            contentType="application/json",
+            accept="application/json",
+            body=json.dumps(payload)
+        )
+        response_body = json.loads(response["body"].read().decode("utf-8"))
+        proofed_text = " ".join(
+            [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
+        ).strip()
+        return proofed_text if proofed_text else text
+    except Exception as e:
+        logger.error(f"Error proofing plain text for record {record_id}: {e}")
+        return text
+
 def store_in_s3(text, filename, folder):
     s3_key = f"{folder}/{filename}.txt"
     s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=text)
@@ -148,7 +192,7 @@ def load_payload(event):
     Expected JSON structure:
       {
         "workOrderId": "...",
-        "contentType": "FormQuestion" or "Action",
+        "contentType": "FormQuestion" or "Action_Observation" or "Action_Required",
         "sectionContents": [ { "recordId": "...", "content": "..." }, ... ]
       }
     """
@@ -196,26 +240,37 @@ def process(event, context):
     proofed_text_log = "=== PROOFED TEXT ===\n"
     overall_proofed_flag = False
 
-    for record_id, html in proofing_requests.items():
-        # Proof the entire table content
-        updated_html, log_entries = proof_table_content(html, record_id)
-        
-        # Log each row's details.
-        for entry in log_entries:
-            if entry["original"] != entry["proofed"]:
-                overall_proofed_flag = True
-                original_text_log += f"\n\n### {record_id} - {entry['header']} ###\n{entry['original']}\n"
-                proofed_text_log += f"\n\n### {record_id} - {entry['header']} ###\n{entry['proofed']}\n"
+    # Process each record. Use different logic based on contentType.
+    for record_id, content in proofing_requests.items():
+        if content_type == "FormQuestion":
+            # Process HTML table content.
+            updated_html, log_entries = proof_table_content(content, record_id)
+            for entry in log_entries:
+                if entry["original"] != entry["proofed"]:
+                    overall_proofed_flag = True
+                    original_text_log += f"\n\n### {record_id} - {entry['header']} ###\n{entry['original']}\n"
+                    proofed_text_log += f"\n\n### {record_id} - {entry['header']} ###\n{entry['proofed']}\n"
+                else:
+                    original_text_log += f"\n\n### {record_id} - {entry['header']} ###\nNo changes needed: {entry['original']}\n"
+                    proofed_text_log += f"\n\n### {record_id} - {entry['header']} ###\nNo changes made.\n"
+            rec_data = table_data.get(record_id)
+            if rec_data:
+                proofed_entries.append({"recordId": record_id, "content": updated_html})
             else:
-                original_text_log += f"\n\n### {record_id} - {entry['header']} ###\nNo changes needed: {entry['original']}\n"
-                proofed_text_log += f"\n\n### {record_id} - {entry['header']} ###\nNo changes made.\n"
-        
-        rec_data = table_data.get(record_id)
-        if rec_data:
-            # Save the updated HTML table.
-            proofed_entries.append({"recordId": record_id, "content": updated_html})
+                logger.warning(f"No table data found for record {record_id}")
         else:
-            logger.warning(f"No table data found for record {record_id}")
+            # For Action_Observation or Action_Required, treat content as plain text.
+            corrected_text = proof_plain_text(content, record_id)
+            orig_text = strip_html(content)
+            corr_text = strip_html(corrected_text)
+            if corr_text != orig_text:
+                overall_proofed_flag = True
+                original_text_log += f"\n\n### {record_id} ###\n{orig_text}\n"
+                proofed_text_log += f"\n\n### {record_id} ###\n{corr_text}\n"
+            else:
+                original_text_log += f"\n\n### {record_id} ###\nNo changes needed: {orig_text}\n"
+                proofed_text_log += f"\n\n### {record_id} ###\nNo changes made.\n"
+            proofed_entries.append({"recordId": record_id, "content": corrected_text})
 
     status_flag = "Proofed" if overall_proofed_flag else "Original"
     logger.info(f"Work order flagged as: {status_flag}")
@@ -225,7 +280,6 @@ def process(event, context):
     proofed_s3_key = store_in_s3(proofed_text_log, f"{workorder_id}_proofed", "proofed")
     store_metadata(workorder_id, original_s3_key, proofed_s3_key, status_flag)
 
-    # Remove duplicates if any
     unique_proofed_entries = {entry["recordId"]: entry for entry in proofed_entries}
     final_response = {
         "workOrderId": workorder_id,
