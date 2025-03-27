@@ -28,37 +28,15 @@ def strip_html(html):
         logger.error(f"Error stripping HTML: {str(e)}")
         return html
 
-# --- New helper functions for preserving <br> tags ---
-
-def replace_br_with_placeholder(html):
-    """Replace <br> tags in HTML with a unique placeholder."""
-    return html.replace("<br>", "___BR___").replace("<br/>", "___BR___").replace("<br />", "___BR___")
-
-def restore_placeholder_to_br(text):
-    """Restore the placeholder back to <br> tags."""
-    return text.replace("___BR___", "<br>")
-
-def extract_text_with_placeholder(td):
-    """
-    Extracts the inner HTML of a table cell, replaces <br> tags
-    with a placeholder, and then returns the plain text.
-    """
-    content_html = td.decode_contents()
-    content_html = replace_br_with_placeholder(content_html)
-    return BeautifulSoup(content_html, "html.parser").get_text(separator=" ", strip=True)
-
-# --- End helper functions ---
-
 def proof_table_content(html, record_id):
     """
     Processes an entire HTML table.
     
     1. Parses the table and iterates over all rows.
     2. Extracts the content from each row's second cell.
-       (Uses a helper to preserve any <br> tags via a placeholder.)
     3. Joins these texts with a unique delimiter and sends the full block for proofing.
     4. Splits the returned corrected text by the delimiter.
-    5. Restores the <br> placeholders and replaces each row's second cell with the corresponding corrected text.
+    5. Replaces each row's second cell with the corresponding corrected text.
     
     Returns:
         - The updated HTML (with corrected content)
@@ -80,8 +58,7 @@ def proof_table_content(html, record_id):
         for row in rows:
             tds = row.find_all("td")
             if len(tds) >= 2:
-                # Use helper function to preserve <br> tags with a placeholder.
-                original_texts.append(extract_text_with_placeholder(tds[1]))
+                original_texts.append(tds[1].get_text(separator=" ", strip=True))
             else:
                 original_texts.append("")
         
@@ -138,8 +115,6 @@ def proof_table_content(html, record_id):
             tds = row.find_all("td")
             if len(tds) >= 2:
                 corrected = corrected_contents[idx] if idx < len(corrected_contents) else tds[1].get_text()
-                # Restore any <br> placeholders back to <br> tags.
-                corrected = restore_placeholder_to_br(corrected)
                 tds[1].clear()
                 tds[1].append(corrected)
                 header = tds[0].get_text(separator=" ", strip=True)
@@ -214,6 +189,7 @@ def update_s3_file(text, filename, folder):
     # Write (or overwrite) the file in S3.
     s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=new_text)
     return s3_key
+
 
 def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
     table = dynamodb.Table(TABLE_NAME)
