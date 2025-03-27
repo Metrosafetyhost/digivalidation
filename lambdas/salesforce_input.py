@@ -28,9 +28,10 @@ def strip_html(html):
         logger.error(f"Error stripping HTML: {str(e)}")
         return html
 
+# --- New helper functions for preserving <br> tags ---
+
 def replace_br_with_placeholder(html):
     """Replace <br> tags in HTML with a unique placeholder."""
-    # This replaces common variants of <br>
     return html.replace("<br>", "___BR___").replace("<br/>", "___BR___").replace("<br />", "___BR___")
 
 def restore_placeholder_to_br(text):
@@ -42,19 +43,19 @@ def extract_text_with_placeholder(td):
     Extracts the inner HTML of a table cell, replaces <br> tags
     with a placeholder, and then returns the plain text.
     """
-    # Get the inner HTML of the td
     content_html = td.decode_contents()
-    # Replace any <br> tags with the placeholder.
     content_html = replace_br_with_placeholder(content_html)
-    # Convert to plain text while preserving the placeholder.
     return BeautifulSoup(content_html, "html.parser").get_text(separator=" ", strip=True)
+
+# --- End helper functions ---
 
 def proof_table_content(html, record_id):
     """
     Processes an entire HTML table.
     
     1. Parses the table and iterates over all rows.
-    2. Extracts the content from each row's second cell – preserving <br> markers via a placeholder.
+    2. Extracts the content from each row's second cell.
+       (Uses a helper to preserve any <br> tags via a placeholder.)
     3. Joins these texts with a unique delimiter and sends the full block for proofing.
     4. Splits the returned corrected text by the delimiter.
     5. Restores the <br> placeholders and replaces each row's second cell with the corresponding corrected text.
@@ -79,7 +80,7 @@ def proof_table_content(html, record_id):
         for row in rows:
             tds = row.find_all("td")
             if len(tds) >= 2:
-                # Use our helper function to extract text while preserving <br> placeholders.
+                # Use helper function to preserve <br> tags with a placeholder.
                 original_texts.append(extract_text_with_placeholder(tds[1]))
             else:
                 original_texts.append("")
@@ -103,7 +104,7 @@ def proof_table_content(html, record_id):
                     "- Do NOT split, merge, or add any new sentences or content.\n"
                     "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
-                    "- Proofread the text while preserving the exact sequence ‘|||ROW_DELIM|||’ as a marker. Additionally, if a list is detected (i.e. multiple standalone words), insert a newline between them only after the marker.\n"
+                    "- Proofread the text while preserving the exact sequence ‘|||ROW_DELIM|||’ as a marker. Additionally, if a list is detected (i.e. multiple standalone words), insert a newline between them only after the marker. \n"
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
                     "Correct this text: " + plain_text
                 )
