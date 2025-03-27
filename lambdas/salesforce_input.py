@@ -81,7 +81,7 @@ def proof_table_content(html, record_id):
                     "- Do NOT split, merge, or add any new sentences or content.\n"
                     "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
-                    "- If the text contains the delimiter `||`, do NOT remove, alter, or add spaces around it.\n"
+                    "- If content appear to be in a list, add a new line between each of the items"
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
                     "Correct this text: " + plain_text
                 )
@@ -145,7 +145,6 @@ def proof_plain_text(text, record_id):
                     "- Do NOT split, merge, or add any new sentences or content.\n"
                     "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
-                    "- If the text contains the delimiter `||`, do NOT remove, alter, or add spaces around it.\n"
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
                     "Correct this text: " + plain_text
                 )
@@ -276,8 +275,15 @@ def process(event, context):
     logger.info(f"Work order flagged as: {status_flag}")
     logger.info("Storing proofed files in S3...")
 
-    original_s3_key = store_in_s3(original_text_log, f"{workorder_id}_original", "original")
-    proofed_s3_key = store_in_s3(proofed_text_log, f"{workorder_id}_proofed", "proofed")
+    timestamp = int(time.time())
+    unique_id = str(uuid.uuid4())[:8]
+    
+    # Build unique filenames for each run
+    original_filename = f"{workorder_id}_original_{timestamp}_{unique_id}"
+    proofed_filename = f"{workorder_id}_proofed_{timestamp}_{unique_id}"
+    
+    original_s3_key = store_in_s3(original_text_log, original_filename, "original")
+    proofed_s3_key = store_in_s3(proofed_text_log, proofed_filename, "proofed")
     store_metadata(workorder_id, original_s3_key, proofed_s3_key, status_flag)
 
     unique_proofed_entries = {entry["recordId"]: entry for entry in proofed_entries}
