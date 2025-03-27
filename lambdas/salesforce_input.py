@@ -173,8 +173,8 @@ def store_in_s3(text, filename, folder):
     s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=text)
     return s3_key
 
-def update_s3_file(text, filename):
-    s3_key = f"{filename}.txt"
+def update_s3_file(text, filename, folder):
+    s3_key = f"{folder}/{filename}.txt"
     try:
         # Attempt to get the existing file.
         existing_obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
@@ -298,8 +298,8 @@ def process(event, context):
     original_filename = f"{workorder_id}_original_{event_time}"
     proofed_filename = f"{workorder_id}_proofed_{event_time}"
 
-    original_s3_key = update_s3_file(original_text_log, original_filename)
-    proofed_s3_key = update_s3_file(proofed_text_log, proofed_filename)
+    original_s3_key = update_s3_file(original_text_log, original_filename, "original")
+    proofed_s3_key = update_s3_file(proofed_text_log, proofed_filename, "proofed")
 
     store_metadata(workorder_id, original_s3_key, proofed_s3_key, status_flag)
 
