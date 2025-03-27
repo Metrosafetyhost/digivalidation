@@ -81,7 +81,7 @@ def proof_table_content(html, record_id):
                     "- Do NOT split, merge, or add any new sentences or content.\n"
                     "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
-                    "- If content DOES NOT have '|||ROW_DELIM|||' in the text but appears so ifto be in a list, add a new line between each of the items"
+                    # "- If content DOES NOT have '|||ROW_DELIM|||' in the text but appears so ifto be in a list, add a new line between each of the items"
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
                     "Correct this text: " + plain_text
                 )
