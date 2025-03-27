@@ -81,7 +81,7 @@ def proof_table_content(html, record_id):
                     "- Do NOT split, merge, or add any new sentences or content.\n"
                     "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
-                    "- If content appear to be in a list, add a new line between each of the items"
+                    "- If content DOES NOT have '|||ROW_DELIM|||' in the text but appears so ifto be in a list, add a new line between each of the items"
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
                     "Correct this text: " + plain_text
                 )
@@ -172,6 +172,24 @@ def store_in_s3(text, filename, folder):
     s3_key = f"{folder}/{filename}.txt"
     s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=text)
     return s3_key
+
+def update_s3_file(text, filename):
+    s3_key = f"{filename}.txt"
+    try:
+        # Attempt to get the existing file.
+        existing_obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
+        existing_text = existing_obj["Body"].read().decode("utf-8")
+        # Since it's the same event, merge the new text with the existing text.
+        # You can choose to add a separator if needed.
+        new_text = existing_text + "\n" + text
+    except s3_client.exceptions.NoSuchKey:
+        # File doesn't exist, so use the new text as-is.
+        new_text = text
+
+    # Write (or overwrite) the file in S3.
+    s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=new_text)
+    return s3_key
+
 
 def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
     table = dynamodb.Table(TABLE_NAME)
@@ -275,15 +293,14 @@ def process(event, context):
     logger.info(f"Work order flagged as: {status_flag}")
     logger.info("Storing proofed files in S3...")
 
-    timestamp = int(time.time())
-    unique_id = str(uuid.uuid4())[:8]
-    
-    # Build unique filenames for each run
-    original_filename = f"{workorder_id}_original_{timestamp}_{unique_id}"
-    proofed_filename = f"{workorder_id}_proofed_{timestamp}_{unique_id}"
-    
-    original_s3_key = store_in_s3(original_text_log, original_filename, "original")
-    proofed_s3_key = store_in_s3(proofed_text_log, proofed_filename, "proofed")
+    # Use minute granularity as an event identifier.
+    event_time = int(time.time() // 120)
+    original_filename = f"{workorder_id}_original_{event_time}"
+    proofed_filename = f"{workorder_id}_proofed_{event_time}"
+
+    original_s3_key = update_s3_file(original_text_log, original_filename)
+    proofed_s3_key = update_s3_file(proofed_text_log, proofed_filename)
+
     store_metadata(workorder_id, original_s3_key, proofed_s3_key, status_flag)
 
     unique_proofed_entries = {entry["recordId"]: entry for entry in proofed_entries}
