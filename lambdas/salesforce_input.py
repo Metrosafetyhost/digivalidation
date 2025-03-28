@@ -28,26 +28,19 @@ def strip_html(html):
         logger.error(f"Error stripping HTML: {str(e)}")
         return html
 
-# --- New Helper Functions for Preserving <br> Tags as Newlines ---
-def preserve_line_breaks(content, placeholder="__BR__"):
-    """
-    Replaces <br> and <br/> with a unique placeholder.
-    """
-    content_with_placeholder = content.replace("<br>", placeholder).replace("<br/>", placeholder)
-    return content_with_placeholder, placeholder
-
-def restore_line_breaks(text, placeholder="__BR__"):
-    """
-    Restores the unique placeholder back to newline characters.
-    """
-    return text.replace(placeholder, "\n")
-
-# --- Updated proof_table_content Function ---
 def proof_table_content(html, record_id):
     """
     Processes an entire HTML table.
-    This version checks each cell for <br> tags and preserves them via a placeholder,
-    then restores them as newline characters.
+    
+    1. Parses the table and iterates over all rows.
+    2. Extracts the content from each row's second cell.
+    3. Joins these texts with a unique delimiter and sends the full block for proofing.
+    4. Splits the returned corrected text by the delimiter.
+    5. Replaces each row's second cell with the corresponding corrected text.
+    
+    Returns:
+        - The updated HTML (with corrected content)
+        - A list of log entries containing header, original text and proofed text.
     """
     try:
         soup = BeautifulSoup(html, "html.parser")
@@ -62,28 +55,19 @@ def proof_table_content(html, record_id):
             return html, []
         
         original_texts = []
-        placeholders = []  # Track placeholder for each cell if applicable.
         for row in rows:
             tds = row.find_all("td")
             if len(tds) >= 2:
-                # Get the inner HTML rather than plain text.
-                cell_html = tds[1].decode_contents()
-                if "<br>" in cell_html or "<br/>" in cell_html:
-                    cell_with_placeholder, placeholder = preserve_line_breaks(cell_html)
-                    original_texts.append(cell_with_placeholder)
-                    placeholders.append(placeholder)
-                else:
-                    original_texts.append(cell_html)
-                    placeholders.append(None)
+                original_texts.append(tds[1].get_text(separator=" ", strip=True))
             else:
                 original_texts.append("")
-                placeholders.append(None)
         
         # Use a unique delimiter to join the texts from all rows.
         delimiter = "|||ROW_DELIM|||"
         joined_content = delimiter.join(original_texts)
+        plain_text = joined_content  # Already plain text
         
-        logger.info(f"Proofing record {record_id}. Joined content: {joined_content}")
+        logger.info(f"Proofing record {record_id}. Joined content: {plain_text}")
         
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
@@ -97,9 +81,9 @@ def proof_table_content(html, record_id):
                     "- Do NOT split, merge, or add any new sentences or content.\n"
                     "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
-                    "- Proofread the text while preserving the exact sequence ‘|||ROW_DELIM|||’ as a marker. Additionally, if a list is detected (i.e. multiple standalone words), insert a newline between them only after the marker.\n"
+                    "- Proofread the text while preserving the exact sequence ‘|||ROW_DELIM|||’ as a marker. Additionally, if a list is detected (i.e. multiple standalone words), insert a newline between them only after the marker."
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
-                    "Correct this text: " + joined_content
+                    "Correct this text: " + plain_text
                 )
             }],
             "max_tokens": 512,
@@ -131,9 +115,6 @@ def proof_table_content(html, record_id):
             tds = row.find_all("td")
             if len(tds) >= 2:
                 corrected = corrected_contents[idx] if idx < len(corrected_contents) else tds[1].get_text()
-                # Restore any preserved line breaks as newline characters.
-                if placeholders[idx]:
-                    corrected = restore_line_breaks(corrected, placeholders[idx])
                 tds[1].clear()
                 tds[1].append(corrected)
                 header = tds[0].get_text(separator=" ", strip=True)
@@ -144,20 +125,12 @@ def proof_table_content(html, record_id):
         logger.error(f"Error proofing table content for record {record_id}: {str(e)}")
         return html, []
 
-# --- Updated proof_plain_text Function ---
 def proof_plain_text(text, record_id):
     """
     Proofreads plain text content.
-    This version checks for <br> tags and preserves them via a placeholder if present,
-    then restores them as newline characters.
+    This function is used when the incoming content is not an HTML table (e.g. for actions).
     """
-    # Check for <br> tags in the incoming text.
-    if "<br>" in text or "<br/>" in text:
-        text_with_placeholder, placeholder = preserve_line_breaks(text)
-        plain_text = strip_html(text_with_placeholder)
-    else:
-        plain_text = strip_html(text)
-    
+    plain_text = strip_html(text)
     try:
         logger.info(f"Proofing record {record_id}. Plain text: {plain_text}")
         payload = {
@@ -190,14 +163,10 @@ def proof_plain_text(text, record_id):
         proofed_text = " ".join(
             [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
         ).strip()
-        # If a placeholder was used, restore newline characters.
-        if "<br>" in text or "<br/>" in text:
-            proofed_text = restore_line_breaks(proofed_text, placeholder)
         return proofed_text if proofed_text else text
     except Exception as e:
         logger.error(f"Error proofing plain text for record {record_id}: {e}")
         return text
-
 
 def store_in_s3(text, filename, folder):
     s3_key = f"{folder}/{filename}.txt"
@@ -220,6 +189,7 @@ def update_s3_file(text, filename, folder):
     # Write (or overwrite) the file in S3.
     s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=new_text)
     return s3_key
+
 
 def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
     table = dynamodb.Table(TABLE_NAME)
