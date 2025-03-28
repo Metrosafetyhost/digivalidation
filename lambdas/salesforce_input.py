@@ -233,7 +233,9 @@ def load_payload(event):
         return None, None, {}, {}
 
 def process(event, context):
-    """Main processing function"""
+    # Log the entire event to inspect its structure
+    logger.info("Received event: " + json.dumps(event))
+    
     try:
         workorder_id, content_type, proofing_requests, table_data = load_payload(event)
         if not workorder_id:
