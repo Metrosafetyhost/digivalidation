@@ -31,19 +31,16 @@ def strip_html(html):
 def proof_table_content(html, record_id):
     """
     Processes an entire HTML table.
-    
-    1. Parses the table and iterates over all rows.
-    2. Extracts the content from each row's second cell.
-    3. Joins these texts with a unique delimiter and sends the full block for proofing.
-    4. Splits the returned corrected text by the delimiter.
-    5. Replaces each row's second cell with the corresponding corrected text.
-    
-    Returns:
-        - The updated HTML (with corrected content)
-        - A list of log entries containing header, original text and proofed text.
     """
     try:
+        # Log the raw HTML (first 500 characters for brevity)
+        logger.info(f"Record {record_id} - Received HTML (first 500 chars): {html[:500]}")
+        
         soup = BeautifulSoup(html, "html.parser")
+        
+        # Log the parsed HTML structure for debugging purposes.
+        logger.info(f"Record {record_id} - Parsed HTML structure:\n{soup.prettify()}")
+        
         table = soup.find("table")
         if not table:
             logger.warning("No table found in HTML. Skipping proofing for record " + record_id)
@@ -62,10 +59,9 @@ def proof_table_content(html, record_id):
             else:
                 original_texts.append("")
         
-        # Use a unique delimiter to join the texts from all rows.
         delimiter = "|||ROW_DELIM|||"
         joined_content = delimiter.join(original_texts)
-        plain_text = joined_content  # Already plain text
+        plain_text = joined_content
         
         logger.info(f"Proofing record {record_id}. Joined content: {plain_text}")
         
@@ -104,13 +100,11 @@ def proof_table_content(html, record_id):
             [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
         ).strip()
         
-        # Split the proofed result back into segments.
         corrected_contents = proofed_text.split(delimiter)
         if len(corrected_contents) != len(original_texts):
             logger.warning(f"Expected {len(original_texts)} proofed segments, got {len(corrected_contents)} for record {record_id}")
         
         log_entries = []
-        # Replace each row's second cell with the corresponding corrected text.
         for idx, row in enumerate(rows):
             tds = row.find_all("td")
             if len(tds) >= 2:
