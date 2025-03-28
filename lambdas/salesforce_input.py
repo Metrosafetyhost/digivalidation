@@ -255,6 +255,7 @@ def process(event, context):
 
     # Process each record. Use different logic based on contentType.
     for record_id, content in proofing_requests.items():
+        logger.info(f"Processing record {record_id} with content_type: '{content_type}'")
         if content_type == "FormQuestion":
             # Process HTML table content.
             updated_html, log_entries = proof_table_content(content, record_id)
@@ -272,6 +273,8 @@ def process(event, context):
             else:
                 logger.warning(f"No table data found for record {record_id}")
         else:
+            logger.info("Not FormQuestion, using plain text proofing.")
+
             # For Action_Observation or Action_Required, treat content as plain text.
             corrected_text = proof_plain_text(content, record_id)
             orig_text = strip_html(content)
