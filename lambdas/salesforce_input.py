@@ -28,7 +28,7 @@ def strip_html(html):
         logger.error(f"Error stripping HTML: {str(e)}")
         return html
 
-# --- New Helper Functions for Preserving <br> Tags ---
+# --- New Helper Functions for Preserving <br> Tags as Newlines ---
 def preserve_line_breaks(content, placeholder="__BR__"):
     """
     Replaces <br> and <br/> with a unique placeholder.
@@ -38,15 +38,16 @@ def preserve_line_breaks(content, placeholder="__BR__"):
 
 def restore_line_breaks(text, placeholder="__BR__"):
     """
-    Restores the unique placeholder back to <br> tags.
+    Restores the unique placeholder back to newline characters.
     """
-    return text.replace(placeholder, "<br>")
+    return text.replace(placeholder, "\n")
 
 # --- Updated proof_table_content Function ---
 def proof_table_content(html, record_id):
     """
     Processes an entire HTML table.
-    This version checks each cell for <br> tags and preserves them via a placeholder.
+    This version checks each cell for <br> tags and preserves them via a placeholder,
+    then restores them as newline characters.
     """
     try:
         soup = BeautifulSoup(html, "html.parser")
@@ -130,7 +131,7 @@ def proof_table_content(html, record_id):
             tds = row.find_all("td")
             if len(tds) >= 2:
                 corrected = corrected_contents[idx] if idx < len(corrected_contents) else tds[1].get_text()
-                # Restore any preserved <br> tags if needed.
+                # Restore any preserved line breaks as newline characters.
                 if placeholders[idx]:
                     corrected = restore_line_breaks(corrected, placeholders[idx])
                 tds[1].clear()
@@ -147,7 +148,8 @@ def proof_table_content(html, record_id):
 def proof_plain_text(text, record_id):
     """
     Proofreads plain text content.
-    This version checks for <br> tags and preserves them via a placeholder if present.
+    This version checks for <br> tags and preserves them via a placeholder if present,
+    then restores them as newline characters.
     """
     # Check for <br> tags in the incoming text.
     if "<br>" in text or "<br/>" in text:
@@ -188,7 +190,7 @@ def proof_plain_text(text, record_id):
         proofed_text = " ".join(
             [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
         ).strip()
-        # If a placeholder was used, restore <br> tags.
+        # If a placeholder was used, restore newline characters.
         if "<br>" in text or "<br/>" in text:
             proofed_text = restore_line_breaks(proofed_text, placeholder)
         return proofed_text if proofed_text else text
@@ -218,7 +220,6 @@ def update_s3_file(text, filename, folder):
     # Write (or overwrite) the file in S3.
     s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=new_text)
     return s3_key
-
 
 def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
     table = dynamodb.Table(TABLE_NAME)
