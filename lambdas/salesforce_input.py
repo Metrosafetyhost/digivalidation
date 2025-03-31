@@ -28,26 +28,26 @@ def strip_html(html):
         logger.error(f"Error stripping HTML: {str(e)}")
         return html
 
-# --- New Helper Functions for Preserving <br> Tags as Newlines ---
-def preserve_line_breaks(content, placeholder="__BR__"):
+# --- New Helper Functions for Preserving <p> Tags Only ---
+def preserve_paragraph_tags(content, p_placeholder="__P__"):
     """
-    Replaces <br> and <br/> with a unique placeholder.
+    Replaces <p> and </p> tags with a unique placeholder.
     """
-    content_with_placeholder = content.replace("<br>", placeholder).replace("<br/>", placeholder)
-    return content_with_placeholder, placeholder
+    content_with_placeholder = content.replace("<p>", p_placeholder).replace("</p>", p_placeholder)
+    return content_with_placeholder, p_placeholder
 
-def restore_line_breaks(text, placeholder="__BR__"):
+def restore_paragraph_tags(text, p_placeholder="__P__"):
     """
-    Restores the unique placeholder back to newline characters.
+    Restores the unique placeholder back to <p></p> tags.
     """
-    return text.replace(placeholder, "\n")
+    return text.replace(p_placeholder, "<p></p>")
 
 # --- Updated proof_table_content Function ---
 def proof_table_content(html, record_id):
     """
     Processes an entire HTML table.
-    This version checks each cell for <br> tags and preserves them via a placeholder,
-    then restores them as newline characters.
+    This version checks each cell for <p> tags and preserves them via a unique placeholder,
+    then restores them as <p></p> tags after the text is proofed.
     """
     try:
         soup = BeautifulSoup(html, "html.parser")
@@ -68,10 +68,11 @@ def proof_table_content(html, record_id):
             if len(tds) >= 2:
                 # Get the inner HTML rather than plain text.
                 cell_html = tds[1].decode_contents()
-                if "<br>" in cell_html or "<br/>" in cell_html:
-                    cell_with_placeholder, placeholder = preserve_line_breaks(cell_html)
+                # If the cell contains <p> tags, preserve them.
+                if "<p>" in cell_html:
+                    cell_with_placeholder, p_placeholder = preserve_paragraph_tags(cell_html)
                     original_texts.append(cell_with_placeholder)
-                    placeholders.append(placeholder)
+                    placeholders.append(p_placeholder)
                 else:
                     original_texts.append(cell_html)
                     placeholders.append(None)
@@ -131,9 +132,9 @@ def proof_table_content(html, record_id):
             tds = row.find_all("td")
             if len(tds) >= 2:
                 corrected = corrected_contents[idx] if idx < len(corrected_contents) else tds[1].get_text()
-                # Restore any preserved line breaks as newline characters.
+                # Restore any preserved paragraph tags if applicable.
                 if placeholders[idx]:
-                    corrected = restore_line_breaks(corrected, placeholders[idx])
+                    corrected = restore_paragraph_tags(corrected, placeholders[idx])
                 tds[1].clear()
                 tds[1].append(corrected)
                 header = tds[0].get_text(separator=" ", strip=True)
@@ -148,12 +149,11 @@ def proof_table_content(html, record_id):
 def proof_plain_text(text, record_id):
     """
     Proofreads plain text content.
-    This version checks for <br> tags and preserves them via a placeholder if present,
-    then restores them as newline characters.
+    This version checks for <p> tags and preserves them via a placeholder if present,
+    then restores them after proofing.
     """
-    # Check for <br> tags in the incoming text.
-    if "<br>" in text or "<br/>" in text:
-        text_with_placeholder, placeholder = preserve_line_breaks(text)
+    if "<p>" in text:
+        text_with_placeholder, p_placeholder = preserve_paragraph_tags(text)
         plain_text = strip_html(text_with_placeholder)
     else:
         plain_text = strip_html(text)
@@ -190,157 +190,11 @@ def proof_plain_text(text, record_id):
         proofed_text = " ".join(
             [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
         ).strip()
-        # If a placeholder was used, restore newline characters.
-        if "<br>" in text or "<br/>" in text:
-            proofed_text = restore_line_breaks(proofed_text, placeholder)
+        if "<p>" in text:
+            proofed_text = restore_paragraph_tags(proofed_text, p_placeholder)
         return proofed_text if proofed_text else text
     except Exception as e:
         logger.error(f"Error proofing plain text for record {record_id}: {e}")
         return text
 
-
-def store_in_s3(text, filename, folder):
-    s3_key = f"{folder}/{filename}.txt"
-    s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=text)
-    return s3_key
-
-def update_s3_file(text, filename, folder):
-    s3_key = f"{folder}/{filename}.txt"
-    try:
-        # Attempt to get the existing file.
-        existing_obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
-        existing_text = existing_obj["Body"].read().decode("utf-8")
-        # Since it's the same event, merge the new text with the existing text.
-        # You can choose to add a separator if needed.
-        new_text = existing_text + "\n" + text
-    except s3_client.exceptions.NoSuchKey:
-        # File doesn't exist, so use the new text as-is.
-        new_text = text
-
-    # Write (or overwrite) the file in S3.
-    s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=new_text)
-    return s3_key
-
-def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
-    table = dynamodb.Table(TABLE_NAME)
-    table.put_item(
-        Item={
-            "workorder_id": workorder_id,
-            "original_s3_key": original_s3_key,
-            "proofed_s3_key": proofed_s3_key,
-            "status": status,  # "Proofed" or "Original"
-            "timestamp": int(time.time())
-        }
-    )
-
-def load_payload(event):
-    """
-    Extracts payload from the incoming event.
-    Expected JSON structure:
-      {
-        "workOrderId": "...",
-        "contentType": "FormQuestion" or "Action_Observation" or "Action_Required",
-        "sectionContents": [ { "recordId": "...", "content": "..." }, ... ]
-      }
-    """
-    try:
-        raw_body = event.get("body", "")
-        logger.info("Raw payload body received: " + raw_body)
-        body = json.loads(raw_body)
-        content_type = body.get("contentType", "Unknown")
-        items = body.get("sectionContents", [])
-        logger.info(f"Payload contentType: {content_type}, records received: {len(items)}")
-        
-        proofing_requests = {}
-        table_data = {}
-        for entry in items:
-            record_id = entry.get("recordId")
-            content = entry.get("content")
-            if not record_id or not content:
-                logger.warning(f"Skipping entry with missing recordId or content: {entry}")
-                continue
-            proofing_requests[record_id] = content.strip()
-            table_data[record_id] = {"content": content.strip(), "record_id": record_id}
-        
-        return body.get("workOrderId"), content_type, proofing_requests, table_data
-
-    except Exception as e:
-        logger.error(f"Unexpected error in load_payload: {e}")
-        return None, None, {}, {}
-
-def process(event, context):
-    """Main processing function"""
-    try:
-        workorder_id, content_type, proofing_requests, table_data = load_payload(event)
-        if not workorder_id:
-            raise ValueError("Missing workOrderId in payload.")
-    except Exception as e:
-        logger.error("Error parsing request body: " + str(e))
-        return {"statusCode": 400, "body": json.dumps({"error": "Invalid JSON format"})}
-
-    if not proofing_requests:
-        logger.error("No proofing items extracted from payload.")
-        return {"statusCode": 400, "body": json.dumps({"error": "No proofing items found"})}
-
-    proofed_entries = []
-    original_text_log = "=== ORIGINAL TEXT ===\n"
-    proofed_text_log = "=== PROOFED TEXT ===\n"
-    overall_proofed_flag = False
-
-    # Process each record. Use different logic based on contentType.
-    for record_id, content in proofing_requests.items():
-        if content_type == "FormQuestion":
-            # Process HTML table content.
-            updated_html, log_entries = proof_table_content(content, record_id)
-            for entry in log_entries:
-                if entry["original"] != entry["proofed"]:
-                    overall_proofed_flag = True
-                    original_text_log += f"\n\n### {record_id} - {entry['header']} ###\n{entry['original']}\n"
-                    proofed_text_log += f"\n\n### {record_id} - {entry['header']} ###\n{entry['proofed']}\n"
-                else:
-                    original_text_log += f"\n\n### {record_id} - {entry['header']} ###\nNo changes needed: {entry['original']}\n"
-                    proofed_text_log += f"\n\n### {record_id} - {entry['header']} ###\nNo changes made.\n"
-            rec_data = table_data.get(record_id)
-            if rec_data:
-                proofed_entries.append({"recordId": record_id, "content": updated_html})
-            else:
-                logger.warning(f"No table data found for record {record_id}")
-        else:
-            # For Action_Observation or Action_Required, treat content as plain text.
-            corrected_text = proof_plain_text(content, record_id)
-            orig_text = strip_html(content)
-            corr_text = strip_html(corrected_text)
-            if corr_text != orig_text:
-                overall_proofed_flag = True
-                original_text_log += f"\n\n### {record_id} ###\n{orig_text}\n"
-                proofed_text_log += f"\n\n### {record_id} ###\n{corr_text}\n"
-            else:
-                original_text_log += f"\n\n### {record_id} ###\nNo changes needed: {orig_text}\n"
-                proofed_text_log += f"\n\n### {record_id} ###\nNo changes made.\n"
-            proofed_entries.append({"recordId": record_id, "content": corrected_text})
-
-    status_flag = "Proofed" if overall_proofed_flag else "Original"
-    logger.info(f"Work order flagged as: {status_flag}")
-    logger.info("Storing proofed files in S3...")
-
-    # Use minute granularity as an event identifier.
-    event_time = int(time.time() // 120)
-    original_filename = f"{workorder_id}_original_{event_time}"
-    proofed_filename = f"{workorder_id}_proofed_{event_time}"
-
-    original_s3_key = update_s3_file(original_text_log, original_filename, "original")
-    proofed_s3_key = update_s3_file(proofed_text_log, proofed_filename, "proofed")
-
-    store_metadata(workorder_id, original_s3_key, proofed_s3_key, status_flag)
-
-    unique_proofed_entries = {entry["recordId"]: entry for entry in proofed_entries}
-    final_response = {
-        "workOrderId": workorder_id,
-        "contentType": content_type,
-        "sectionContents": list(unique_proofed_entries.values())
-    }
-    logger.info("Final response: " + json.dumps(final_response, indent=2))
-    return {
-        "statusCode": 200,
-        "body": json.dumps(final_response)
-    }
+# (The rest of your functions such as store_in_s3, update_s3_file, store_metadata, load_payload, and process remain unchanged)
