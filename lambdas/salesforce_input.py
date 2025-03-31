@@ -28,26 +28,27 @@ def strip_html(html):
         logger.error(f"Error stripping HTML: {str(e)}")
         return html
 
-# --- New Helper Functions for Preserving <p> Tags Only ---
-def preserve_paragraph_tags(content, p_placeholder="__P__"):
+def preserve_paragraph_tags(content):
     """
-    Replaces <p> and </p> tags with a unique placeholder.
+    Replaces <p> and </p> tags with unique placeholders.
     """
-    content_with_placeholder = content.replace("<p>", p_placeholder).replace("</p>", p_placeholder)
-    return content_with_placeholder, p_placeholder
+    # Use distinct placeholders for opening and closing tags.
+    content_with_placeholders = content.replace("<p>", "__P_OPEN__").replace("</p>", "__P_CLOSE__")
+    return content_with_placeholders
 
-def restore_paragraph_tags(text, p_placeholder="__P__"):
+def restore_paragraph_tags(text):
     """
-    Restores the unique placeholder back to newline characters.
+    Restores the unique placeholders back to <p> and </p> tags.
     """
-    return text.replace(p_placeholder, "\n")
+    text = text.replace("__P_OPEN__", "<p>").replace("__P_CLOSE__", "</p>")
+    return text
 
 # --- Updated proof_table_content Function ---
 def proof_table_content(html, record_id):
     """
     Processes an entire HTML table.
     This version checks each cell for <p> tags and preserves them via a unique placeholder,
-    then restores them as <p></p> tags after the text is proofed.
+    then restores them as /n after the text is proofed.
     """
     try:
         soup = BeautifulSoup(html, "html.parser")
