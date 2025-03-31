@@ -199,8 +199,8 @@ def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
 
 def load_payload(event):
     """
-    Extracts payload from the incoming event.
-    Expected JSON structure:
+    extracts payload from the incoming event.
+    expected JSON structure:
       {
         "workOrderId": "...",
         "contentType": "FormQuestion" or "Action_Observation" or "Action_Required",
