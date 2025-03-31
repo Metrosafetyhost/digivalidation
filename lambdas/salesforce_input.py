@@ -38,9 +38,9 @@ def preserve_paragraph_tags(content, p_placeholder="__P__"):
 
 def restore_paragraph_tags(text, p_placeholder="__P__"):
     """
-    Restores the unique placeholder back to <p></p> tags.
+    Restores the unique placeholder back to newline characters.
     """
-    return text.replace(p_placeholder, "<p></p>")
+    return text.replace(p_placeholder, "\n")
 
 # --- Updated proof_table_content Function ---
 def proof_table_content(html, record_id):
