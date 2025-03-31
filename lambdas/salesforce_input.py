@@ -135,7 +135,7 @@ def proof_table_content(html, record_id):
                 corrected = corrected_contents[idx] if idx < len(corrected_contents) else tds[1].get_text()
                 # Restore any preserved paragraph tags if applicable.
                 if placeholders[idx]:
-                    corrected = restore_paragraph_tags(corrected, placeholders[idx])
+                    corrected = restore_paragraph_tags(corrected)
                 tds[1].clear()
                 tds[1].append(corrected)
                 header = tds[0].get_text(separator=" ", strip=True)
