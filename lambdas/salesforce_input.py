@@ -197,4 +197,148 @@ def proof_plain_text(text, record_id):
         logger.error(f"Error proofing plain text for record {record_id}: {e}")
         return text
 
-# (The rest of your functions such as store_in_s3, update_s3_file, store_metadata, load_payload, and process remain unchanged)
+def store_in_s3(text, filename, folder):
+    s3_key = f"{folder}/{filename}.txt"
+    s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=text)
+    return s3_key
+
+def update_s3_file(text, filename, folder):
+    s3_key = f"{folder}/{filename}.txt"
+    try:
+        # Attempt to get the existing file.
+        existing_obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
+        existing_text = existing_obj["Body"].read().decode("utf-8")
+        # Since it's the same event, merge the new text with the existing text.
+        # You can choose to add a separator if needed.
+        new_text = existing_text + "\n" + text
+    except s3_client.exceptions.NoSuchKey:
+        # File doesn't exist, so use the new text as-is.
+        new_text = text
+
+    # Write (or overwrite) the file in S3.
+    s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=new_text)
+    return s3_key
+
+def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
+    table = dynamodb.Table(TABLE_NAME)
+    table.put_item(
+        Item={
+            "workorder_id": workorder_id,
+            "original_s3_key": original_s3_key,
+            "proofed_s3_key": proofed_s3_key,
+            "status": status,  # "Proofed" or "Original"
+            "timestamp": int(time.time())
+        }
+    )
+
+def load_payload(event):
+    """
+    Extracts payload from the incoming event.
+    Expected JSON structure:
+      {
+        "workOrderId": "...",
+        "contentType": "FormQuestion" or "Action_Observation" or "Action_Required",
+        "sectionContents": [ { "recordId": "...", "content": "..." }, ... ]
+      }
+    """
+    try:
+        raw_body = event.get("body", "")
+        logger.info("Raw payload body received: " + raw_body)
+        body = json.loads(raw_body)
+        content_type = body.get("contentType", "Unknown")
+        items = body.get("sectionContents", [])
+        logger.info(f"Payload contentType: {content_type}, records received: {len(items)}")
+        
+        proofing_requests = {}
+        table_data = {}
+        for entry in items:
+            record_id = entry.get("recordId")
+            content = entry.get("content")
+            if not record_id or not content:
+                logger.warning(f"Skipping entry with missing recordId or content: {entry}")
+                continue
+            proofing_requests[record_id] = content.strip()
+            table_data[record_id] = {"content": content.strip(), "record_id": record_id}
+        
+        return body.get("workOrderId"), content_type, proofing_requests, table_data
+
+    except Exception as e:
+        logger.error(f"Unexpected error in load_payload: {e}")
+        return None, None, {}, {}
+
+def process(event, context):
+    """Main processing function"""
+    try:
+        workorder_id, content_type, proofing_requests, table_data = load_payload(event)
+        if not workorder_id:
+            raise ValueError("Missing workOrderId in payload.")
+    except Exception as e:
+        logger.error("Error parsing request body: " + str(e))
+        return {"statusCode": 400, "body": json.dumps({"error": "Invalid JSON format"})}
+
+    if not proofing_requests:
+        logger.error("No proofing items extracted from payload.")
+        return {"statusCode": 400, "body": json.dumps({"error": "No proofing items found"})}
+
+    proofed_entries = []
+    original_text_log = "=== ORIGINAL TEXT ===\n"
+    proofed_text_log = "=== PROOFED TEXT ===\n"
+    overall_proofed_flag = False
+
+    # Process each record. Use different logic based on contentType.
+    for record_id, content in proofing_requests.items():
+        if content_type == "FormQuestion":
+            # Process HTML table content.
+            updated_html, log_entries = proof_table_content(content, record_id)
+            for entry in log_entries:
+                if entry["original"] != entry["proofed"]:
+                    overall_proofed_flag = True
+                    original_text_log += f"\n\n### {record_id} - {entry['header']} ###\n{entry['original']}\n"
+                    proofed_text_log += f"\n\n### {record_id} - {entry['header']} ###\n{entry['proofed']}\n"
+                else:
+                    original_text_log += f"\n\n### {record_id} - {entry['header']} ###\nNo changes needed: {entry['original']}\n"
+                    proofed_text_log += f"\n\n### {record_id} - {entry['header']} ###\nNo changes made.\n"
+            rec_data = table_data.get(record_id)
+            if rec_data:
+                proofed_entries.append({"recordId": record_id, "content": updated_html})
+            else:
+                logger.warning(f"No table data found for record {record_id}")
+        else:
+            # For Action_Observation or Action_Required, treat content as plain text.
+            corrected_text = proof_plain_text(content, record_id)
+            orig_text = strip_html(content)
+            corr_text = strip_html(corrected_text)
+            if corr_text != orig_text:
+                overall_proofed_flag = True
+                original_text_log += f"\n\n### {record_id} ###\n{orig_text}\n"
+                proofed_text_log += f"\n\n### {record_id} ###\n{corr_text}\n"
+            else:
+                original_text_log += f"\n\n### {record_id} ###\nNo changes needed: {orig_text}\n"
+                proofed_text_log += f"\n\n### {record_id} ###\nNo changes made.\n"
+            proofed_entries.append({"recordId": record_id, "content": corrected_text})
+
+    status_flag = "Proofed" if overall_proofed_flag else "Original"
+    logger.info(f"Work order flagged as: {status_flag}")
+    logger.info("Storing proofed files in S3...")
+
+    # Use minute granularity as an event identifier.
+    event_time = int(time.time() // 120)
+    original_filename = f"{workorder_id}_original_{event_time}"
+    proofed_filename = f"{workorder_id}_proofed_{event_time}"
+
+    original_s3_key = update_s3_file(original_text_log, original_filename, "original")
+    proofed_s3_key = update_s3_file(proofed_text_log, proofed_filename, "proofed")
+
+    store_metadata(workorder_id, original_s3_key, proofed_s3_key, status_flag)
+
+    unique_proofed_entries = {entry["recordId"]: entry for entry in proofed_entries}
+    final_response = {
+        "workOrderId": workorder_id,
+        "contentType": content_type,
+        "sectionContents": list(unique_proofed_entries.values())
+    }
+    logger.info("Final response: " + json.dumps(final_response, indent=2))
+    return {
+        "statusCode": 200,
+        "body": json.dumps(final_response)
+    }
