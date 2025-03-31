@@ -28,27 +28,11 @@ def strip_html(html):
         logger.error(f"Error stripping HTML: {str(e)}")
         return html
 
-def preserve_paragraph_tags(content):
-    """
-    Replaces <p> and </p> tags with unique placeholders.
-    """
-    # Use distinct placeholders for opening and closing tags.
-    content_with_placeholders = content.replace("<p>", "__P_OPEN__").replace("</p>", "__P_CLOSE__")
-    return content_with_placeholders
 
-def restore_paragraph_tags(text):
-    """
-    Restores the unique placeholders back to <p> and </p> tags.
-    """
-    text = text.replace("__P_OPEN__", "<p>").replace("__P_CLOSE__", "</p>")
-    return text
-
-# --- Updated proof_table_content Function ---
 def proof_table_content(html, record_id):
     """
     Processes an entire HTML table.
-    This version checks each cell for <p> tags and preserves them via a unique placeholder,
-    then restores them as /n after the text is proofed.
+    For rich text, we now leave any <p> tags intact so that Salesforce renders the content properly.
     """
     try:
         soup = BeautifulSoup(html, "html.parser")
@@ -63,23 +47,14 @@ def proof_table_content(html, record_id):
             return html, []
         
         original_texts = []
-        placeholders = []  # Track placeholder for each cell if applicable.
         for row in rows:
             tds = row.find_all("td")
             if len(tds) >= 2:
-                # Get the inner HTML rather than plain text.
+                # Get the inner HTML as-is; leave any <p> tags intact.
                 cell_html = tds[1].decode_contents()
-                # If the cell contains <p> tags, preserve them.
-                if "<p>" in cell_html:
-                    cell_with_placeholder, p_placeholder = preserve_paragraph_tags(cell_html)
-                    original_texts.append(cell_with_placeholder)
-                    placeholders.append(p_placeholder)
-                else:
-                    original_texts.append(cell_html)
-                    placeholders.append(None)
+                original_texts.append(cell_html)
             else:
                 original_texts.append("")
-                placeholders.append(None)
         
         # Use a unique delimiter to join the texts from all rows.
         delimiter = "|||ROW_DELIM|||"
@@ -133,11 +108,9 @@ def proof_table_content(html, record_id):
             tds = row.find_all("td")
             if len(tds) >= 2:
                 corrected = corrected_contents[idx] if idx < len(corrected_contents) else tds[1].get_text()
-                # Restore any preserved paragraph tags if applicable.
-                if placeholders[idx]:
-                    corrected = restore_paragraph_tags(corrected)
                 tds[1].clear()
-                tds[1].append(corrected)
+                # Append as HTML so that <p> tags are preserved for rich text rendering.
+                tds[1].append(BeautifulSoup(corrected, "html.parser"))
                 header = tds[0].get_text(separator=" ", strip=True)
                 logger.info(f"Record {record_id} row {idx+1} header: {header}. Original: {original_texts[idx]}. Proofed: {corrected}")
                 log_entries.append({"header": header, "original": original_texts[idx], "proofed": corrected})
@@ -150,12 +123,11 @@ def proof_table_content(html, record_id):
 def proof_plain_text(text, record_id):
     """
     Proofreads plain text content.
-    This version checks for <p> tags and preserves them via a placeholder if present,
-    then restores them after proofing.
+    If the text contains rich text formatting (e.g. <p> tags), we leave it intact.
     """
+    # If rich text formatting exists, do not strip it out.
     if "<p>" in text:
-        text_with_placeholder, p_placeholder = preserve_paragraph_tags(text)
-        plain_text = strip_html(text_with_placeholder)
+        plain_text = text
     else:
         plain_text = strip_html(text)
     
@@ -191,8 +163,6 @@ def proof_plain_text(text, record_id):
         proofed_text = " ".join(
             [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
         ).strip()
-        if "<p>" in text:
-            proofed_text = restore_paragraph_tags(proofed_text, p_placeholder)
         return proofed_text if proofed_text else text
     except Exception as e:
         logger.error(f"Error proofing plain text for record {record_id}: {e}")
