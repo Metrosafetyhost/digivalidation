@@ -15,7 +15,7 @@ s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
 
 # Configurations
-BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
+BEDROCK_MODEL_ID = "anthropic.claude-3-haiku-20240307-v1:0"
 BUCKET_NAME = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
 TABLE_NAME = "ProofingMetadata"
 
@@ -30,10 +30,6 @@ def strip_html(html):
 
 
 def proof_table_content(html, record_id):
-    """
-    Processes an entire HTML table.
-    For rich text, we now leave any <p> tags intact so that Salesforce renders the content properly.
-    """
     try:
         soup = BeautifulSoup(html, "html.parser")
         table = soup.find("table")
@@ -80,7 +76,7 @@ def proof_table_content(html, record_id):
                     "Correct this text: " + joined_content
                 )
             }],
-            "max_tokens": 512,
+            "max_tokens": 1000,
             "temperature": 0.3
         }
         
@@ -126,7 +122,7 @@ def proof_plain_text(text, record_id):
         plain_text = text
     else:
         plain_text = strip_html(text)
-        
+
     try:
         logger.info(f"Proofing record {record_id}. Plain text: {plain_text}")
         payload = {
@@ -145,7 +141,7 @@ def proof_plain_text(text, record_id):
                     "Correct this text: " + plain_text
                 )
             }],
-            "max_tokens": 512,
+            "max_tokens": 1000,
             "temperature": 0.3
         }
         logger.info("Sending payload to Bedrock: " + json.dumps(payload, indent=2))
