@@ -75,6 +75,7 @@ def proof_table_content(html, record_id):
                     "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
                     "- Proofread the text while preserving the exact sequence ‘|||ROW_DELIM|||’ as a marker. Additionally, if a list is detected (i.e. multiple standalone words), insert a newline between them only after the marker.\n"
+                    "- Do NOT remove or alter any HTML formatting tags (such as <p>, <ul>, <li>, and <u>)."
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
                     "Correct this text: " + joined_content
                 )
@@ -121,16 +122,11 @@ def proof_table_content(html, record_id):
 
 # --- Updated proof_plain_text Function ---
 def proof_plain_text(text, record_id):
-    """
-    Proofreads plain text content.
-    If the text contains rich text formatting (e.g. <p> tags), we leave it intact.
-    """
-    # If rich text formatting exists, do not strip it out.
-    if "<p>" in text:
+    if any(tag in text.lower() for tag in ['<p>', '<ul>', '<li>', '<u>']):
         plain_text = text
     else:
         plain_text = strip_html(text)
-    
+        
     try:
         logger.info(f"Proofing record {record_id}. Plain text: {plain_text}")
         payload = {
