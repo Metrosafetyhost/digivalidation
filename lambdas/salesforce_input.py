@@ -161,7 +161,7 @@ def proof_plain_text(text, record_id):
         return text
 
 def store_logs_csv(log_entries, filename, folder):
-    """Store a CSV file with log entries, each containing the record ID, header, original text, and proofed text."""
+    # Store a CSV file with log entries, each containing the record ID, header, original text, and proofed text.
     output = io.StringIO()
     writer = csv.writer(output)
     # Write header row – adjust columns as needed.
