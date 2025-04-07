@@ -160,12 +160,37 @@ def proof_plain_text(text, record_id):
         logger.error(f"Error proofing plain text for record {record_id}: {e}")
         return text
 
-def store_logs_csv(log_entries, filename, folder):
-    # Store a CSV file with log entries, each containing the record ID, header, original text, and proofed text.
+def update_logs_csv(log_entries, filename, folder):
+    """
+    Appends new log entries to a single CSV file in S3 (creating it if needed).
+    Each entry is a dict with keys: recordId, header, original, proofed.
+    """
+    s3_key = f"{folder}/{filename}.csv"
+
+    existing_rows = []
+    try:
+        # Attempt to read the existing CSV file from S3
+        existing_obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
+        existing_csv = existing_obj["Body"].read().decode("utf-8")
+        reader = csv.reader(io.StringIO(existing_csv))
+        existing_rows = list(reader)
+    except s3_client.exceptions.NoSuchKey:
+        # CSV file doesn't exist yet, so we'll create it fresh
+        pass
+
+    # Prepare a new CSV in memory
     output = io.StringIO()
     writer = csv.writer(output)
-    # Write header row – adjust columns as needed.
-    writer.writerow(["Record ID", "Header", "Original Text", "Proofed Text"])
+
+    if not existing_rows:
+        # Write header row if file didn't exist or was empty
+        writer.writerow(["Record ID", "Header", "Original Text", "Proofed Text"])
+    else:
+        # Rewrite existing rows so we keep all previous data
+        for row in existing_rows:
+            writer.writerow(row)
+
+    # Now write the new log entries
     for entry in log_entries:
         writer.writerow([
             entry.get("recordId", ""),
@@ -173,10 +198,12 @@ def store_logs_csv(log_entries, filename, folder):
             entry.get("original", ""),
             entry.get("proofed", "")
         ])
-    csv_data = output.getvalue()
+
+    # Upload the updated CSV to S3
+    new_csv_data = output.getvalue()
     output.close()
-    s3_key = f"{folder}/{filename}.csv"
-    s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=csv_data)
+    s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=new_csv_data)
+
     return s3_key
 
 def store_metadata(workorder_id, logs_s3_key, status):
@@ -284,13 +311,12 @@ def process(event, context):
 
     status_flag = "Proofed" if overall_proofed_flag else "Original"
     logger.info(f"Work order flagged as: {status_flag}")
-    logger.info("Storing proofed log CSV in S3...")
+    logger.info("Updating logs CSV in S3...")
 
-    # Use minute granularity as an event identifier.
-    event_time = int(time.time() // 120)
-    csv_filename = f"{workorder_id}_logs_{event_time}"
-    # Here we store all logs in one CSV file under the 'logs' folder.
-    csv_s3_key = store_logs_csv(csv_log_entries, csv_filename, "logs")
+    # Use a single file for all logs for this work order
+    csv_filename = f"{workorder_id}_logs"
+    # Store/append the new entries to the CSV
+    csv_s3_key = update_logs_csv(csv_log_entries, csv_filename, "logs")
     logger.info(f"CSV logs stored in S3 at key: {csv_s3_key}")
 
     store_metadata(workorder_id, csv_s3_key, status_flag)
