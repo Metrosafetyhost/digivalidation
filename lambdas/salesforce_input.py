@@ -3,6 +3,8 @@ import boto3
 import logging
 import uuid
 import time
+import io
+import csv
 from bs4 import BeautifulSoup
 
 # Initialise logger
@@ -27,7 +29,6 @@ def strip_html(html):
     except Exception as e:
         logger.error(f"Error stripping HTML: {str(e)}")
         return html
-
 
 def proof_table_content(html, record_id):
     try:
@@ -116,7 +117,6 @@ def proof_table_content(html, record_id):
         logger.error(f"Error proofing table content for record {record_id}: {str(e)}")
         return html, []
 
-# --- Updated proof_plain_text Function ---
 def proof_plain_text(text, record_id):
     if any(tag in text.lower() for tag in ['<p>', '<ul>', '<li>', '<u>']):
         plain_text = text
@@ -160,35 +160,31 @@ def proof_plain_text(text, record_id):
         logger.error(f"Error proofing plain text for record {record_id}: {e}")
         return text
 
-def store_in_s3(text, filename, folder):
-    s3_key = f"{folder}/{filename}.txt"
-    s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=text)
+def store_logs_csv(log_entries, filename, folder):
+    """Store a CSV file with log entries, each containing the record ID, header, original text, and proofed text."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    # Write header row – adjust columns as needed.
+    writer.writerow(["Record ID", "Header", "Original Text", "Proofed Text"])
+    for entry in log_entries:
+        writer.writerow([
+            entry.get("recordId", ""),
+            entry.get("header", ""),
+            entry.get("original", ""),
+            entry.get("proofed", "")
+        ])
+    csv_data = output.getvalue()
+    output.close()
+    s3_key = f"{folder}/{filename}.csv"
+    s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=csv_data)
     return s3_key
 
-def update_s3_file(text, filename, folder):
-    s3_key = f"{folder}/{filename}.txt"
-    try:
-        # Attempt to get the existing file.
-        existing_obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
-        existing_text = existing_obj["Body"].read().decode("utf-8")
-        # Since it's the same event, merge the new text with the existing text.
-        # You can choose to add a separator if needed.
-        new_text = existing_text + "\n" + text
-    except s3_client.exceptions.NoSuchKey:
-        # File doesn't exist, so use the new text as-is.
-        new_text = text
-
-    # Write (or overwrite) the file in S3.
-    s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=new_text)
-    return s3_key
-
-def store_metadata(workorder_id, original_s3_key, proofed_s3_key, status):
+def store_metadata(workorder_id, logs_s3_key, status):
     table = dynamodb.Table(TABLE_NAME)
     table.put_item(
         Item={
             "workorder_id": workorder_id,
-            "original_s3_key": original_s3_key,
-            "proofed_s3_key": proofed_s3_key,
+            "logs_s3_key": logs_s3_key,
             "status": status,  # "Proofed" or "Original"
             "timestamp": int(time.time())
         }
@@ -243,10 +239,9 @@ def process(event, context):
         logger.error("No proofing items extracted from payload.")
         return {"statusCode": 400, "body": json.dumps({"error": "No proofing items found"})}
 
-    proofed_entries = []
-    original_text_log = "=== ORIGINAL TEXT ===\n"
-    proofed_text_log = "=== PROOFED TEXT ===\n"
+    csv_log_entries = []
     overall_proofed_flag = False
+    proofed_entries = []
 
     # Process each record. Use different logic based on contentType.
     for record_id, content in proofing_requests.items():
@@ -254,13 +249,12 @@ def process(event, context):
             # Process HTML table content.
             updated_html, log_entries = proof_table_content(content, record_id)
             for entry in log_entries:
+                # Add record ID to each entry for logging.
+                entry["recordId"] = record_id
+                csv_log_entries.append(entry)
+                # Check if any changes were made.
                 if entry["original"] != entry["proofed"]:
                     overall_proofed_flag = True
-                    original_text_log += f"\n\n### {record_id} - {entry['header']} ###\n{entry['original']}\n"
-                    proofed_text_log += f"\n\n### {record_id} - {entry['header']} ###\n{entry['proofed']}\n"
-                else:
-                    original_text_log += f"\n\n### {record_id} - {entry['header']} ###\nNo changes needed: {entry['original']}\n"
-                    proofed_text_log += f"\n\n### {record_id} - {entry['header']} ###\nNo changes made.\n"
             rec_data = table_data.get(record_id)
             if rec_data:
                 proofed_entries.append({"recordId": record_id, "content": updated_html})
@@ -273,26 +267,33 @@ def process(event, context):
             corr_text = strip_html(corrected_text)
             if corr_text != orig_text:
                 overall_proofed_flag = True
-                original_text_log += f"\n\n### {record_id} ###\n{orig_text}\n"
-                proofed_text_log += f"\n\n### {record_id} ###\n{corr_text}\n"
+                csv_log_entries.append({
+                    "recordId": record_id,
+                    "header": "",
+                    "original": orig_text,
+                    "proofed": corr_text
+                })
             else:
-                original_text_log += f"\n\n### {record_id} ###\nNo changes needed: {orig_text}\n"
-                proofed_text_log += f"\n\n### {record_id} ###\nNo changes made.\n"
+                csv_log_entries.append({
+                    "recordId": record_id,
+                    "header": "",
+                    "original": "No changes needed: " + orig_text,
+                    "proofed": "No changes made."
+                })
             proofed_entries.append({"recordId": record_id, "content": corrected_text})
 
     status_flag = "Proofed" if overall_proofed_flag else "Original"
     logger.info(f"Work order flagged as: {status_flag}")
-    logger.info("Storing proofed files in S3...")
+    logger.info("Storing proofed log CSV in S3...")
 
     # Use minute granularity as an event identifier.
     event_time = int(time.time() // 120)
-    original_filename = f"{workorder_id}_original_{event_time}"
-    proofed_filename = f"{workorder_id}_proofed_{event_time}"
+    csv_filename = f"{workorder_id}_logs_{event_time}"
+    # Here we store all logs in one CSV file under the 'logs' folder.
+    csv_s3_key = store_logs_csv(csv_log_entries, csv_filename, "logs")
+    logger.info(f"CSV logs stored in S3 at key: {csv_s3_key}")
 
-    original_s3_key = update_s3_file(original_text_log, original_filename, "original")
-    proofed_s3_key = update_s3_file(proofed_text_log, proofed_filename, "proofed")
-
-    store_metadata(workorder_id, original_s3_key, proofed_s3_key, status_flag)
+    store_metadata(workorder_id, csv_s3_key, status_flag)
 
     unique_proofed_entries = {entry["recordId"]: entry for entry in proofed_entries}
     final_response = {
