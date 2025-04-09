@@ -1,3 +1,4 @@
+
 import json
 
 import pytest
@@ -8,10 +9,52 @@ import boto3
 mp = pytest.MonkeyPatch()
 mp.setenv("POWERTOOLS_METRICS_NAMESPACE", "testLambdas")
 
-# Mock AWS region and resources
-AWS_REGION = "us-east-1"
-BUCKET_NAME = "test-bucket"
-TABLE_NAME = "ProofingMetadata"
+@pytest.fixture(scope="session", autouse=True)
+def aws_credentials():
+    """Mocked AWS Credentials for moto."""
+    os.environ["AWS_ACCESS_KEY_ID"] = "testing"
+    os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
+    os.environ["AWS_SECURITY_TOKEN"] = "testing"
+    os.environ["AWS_SESSION_TOKEN"] = "testing"
+    os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
+    os.environ["AWS_REGION"] = "us-east-1"
+    os.environ["BUCKET_NAME"] = "test-bucket"
+    os.environ["TABLE_NAME"] = "ProofingMetdata"
+
+@pytest.fixture
+def s3_resource(aws_credentials):
+    with mock_aws():
+        yield boto3.resource("s3", region_name="us-east-1")
+
+@pytest.fixture
+def s3_client(aws_credentials):
+    with mock_aws():
+        yield boto3.client("s3", region_name="us-east-1")
+
+@pytest.fixture
+def dynamodb(aws_credentials):
+    with mock_aws():
+        yield boto3.client("dynamodb")
+
+# @pytest.fixture
+# @mock_aws
+# def dynamodb(aws_credentials):
+#     return boto3.resource("dynamodb")
+
+@pytest.fixture
+def events(aws_credentials):
+    with mock_aws():
+        yield boto3.client("events")
+
+@pytest.fixture
+def sqs_client(aws_credentials):
+    with mock_aws():
+        yield boto3.client("sqs", region_name="us-east-1")
+
+@pytest.fixture
+def bedrock_client(aws_credentials):
+    with mock_aws():
+        yield boto3.client("bedrock-runtime", region_name="us-east-1")
 
 @pytest.fixture
 def lambda_context():
@@ -23,27 +66,6 @@ def lambda_context():
             self.aws_request_id = "899856cb-83d1-40d7-8611-9e78f15f32f4"
 
     return LambdaContext()
-
-@pytest.fixture(scope="function", autouse=True)
-def aws_credentials():
-    """Mocked AWS Credentials for moto."""
-    os.environ["AWS_ACCESS_KEY_ID"] = "testing"
-    os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
-    os.environ["AWS_SECURITY_TOKEN"] = "testing"
-    os.environ["AWS_SESSION_TOKEN"] = "testing"
-    os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
-    os.environ["AWS_REGION"] = AWS_REGION
-    os.environ["BUCKET_NAME"] = BUCKET_NAME
-    os.environ["TABLE_NAME"] = TABLE_NAME
-
-# @pytest.fixture(scope="function")
-# def s3_mock():
-#     """Mocked S3 setup using Moto 5's mock_aws."""
-#     s3 = boto3.client("s3", region_name=AWS_REGION)
-#     s3.create_bucket(Bucket=BUCKET_NAME,
-#                      CreateBucketConfiguration={"LocationConstraint": AWS_REGION})
-#     return s3
-
 
 # @pytest.fixture(scope="function")
 # def dynamodb_mock():
@@ -105,4 +127,3 @@ def sqs_event():
             ],
         },
     }
-
