@@ -106,6 +106,6 @@ resource "aws_iam_policy" "lambda_textract_policy" {
 
 # Attach the Textract policy to your Lambda role
 resource "aws_iam_role_policy_attachment" "attach_textract_to_lambda" {
-  role       = aws_iam_role.bedrock-lambda-checklist.name
+  role = aws_iam_role.bedrock_lambda_checklist.name
   policy_arn = aws_iam_policy.lambda_textract_policy.arn
 }
