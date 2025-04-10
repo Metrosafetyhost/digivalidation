@@ -32,14 +32,24 @@ def s3_client(aws_credentials):
         yield boto3.client("s3", region_name="us-east-1")
 
 @pytest.fixture
-def dynamodb(aws_credentials):
+def dynamodb(aws_credentials, monkeypatch):
+    monkeypatch.setenv("TABLE_NAME", "TestTable")
     with mock_aws():
-        yield boto3.client("dynamodb")
+        yield boto3.resource("dynamodb", region_name="us-west-2")
 
-# @pytest.fixture
-# @mock_aws
-# def dynamodb(aws_credentials):
-#     return boto3.resource("dynamodb")
+@pytest.fixture
+def ddb_table(aws_credentials, monkeypatch):
+    monkeypatch.setenv("TABLE_NAME", "TestTable")
+    with mock_aws():
+        ddb = boto3.resource("dynamodb", region_name="us-west-2")
+	# Ensure table is created inside the mock context
+        table = ddb.create_table(
+            TableName="TestTable",
+            KeySchema=[{"AttributeName": "workorder_id", "KeyType": "HASH"}],
+            AttributeDefinitions=[{"AttributeName": "workorder_id", "AttributeType": "S"}],
+            ProvisionedThroughput={"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
+	)
+        yield table
 
 @pytest.fixture
 def events(aws_credentials):
@@ -66,19 +76,6 @@ def lambda_context():
             self.aws_request_id = "899856cb-83d1-40d7-8611-9e78f15f32f4"
 
     return LambdaContext()
-
-# @pytest.fixture(scope="function")
-# def dynamodb_mock():
-#     """Mocked DynamoDB setup using Moto 5's mock_aws."""
-#     dynamodb = boto3.resource("dynamodb", region_name=AWS_REGION)
-#     table = dynamodb.create_table(
-#         TableName=TABLE_NAME,
-#         KeySchema=[{"AttributeName": "workorder_id", "KeyType": "HASH"}],
-#         AttributeDefinitions=[{"AttributeName": "workorder_id", "AttributeType": "S"}],
-#         ProvisionedThroughput={"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
-#     )
-#     table.wait_until_exists()
-#     return dynamodb
 
 @pytest.fixture(scope="module")
 def sqs_event():
