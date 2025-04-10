@@ -65,6 +65,10 @@ resource "aws_iam_role_policy_attachment" "lambda_s3" {
 }
 
 
+#############################
+# Unified Lambda Execution Role
+#############################
+
 resource "aws_iam_role" "bedrock_lambda_checklist" {
   name = "bedrock-lambda-checklist"
 
@@ -85,27 +89,67 @@ resource "aws_iam_role" "bedrock_lambda_checklist" {
 EOF
 }
 
-# Create a policy document granting permission to use Textract
-data "aws_iam_policy_document" "lambda_textract" {
+#############################
+# Textract Policy for Lambda
+#############################
+
+resource "aws_iam_policy" "lambda_textract_policy" {
+  name   = "LambdaTextractPolicy"
+  policy = jsonencode({
+    Version   = "2012-10-17",
+    Statement = [
+      {
+        Effect   = "Allow",
+        Action   = [
+          "textract:AnalyzeDocument",
+          "textract:StartDocumentAnalysis",
+          "textract:GetDocumentAnalysis"
+        ],
+        Resources = ["*"]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "attach_textract_to_lambda" {
+  role       = aws_iam_role.bedrock_lambda_checklist.name
+  policy_arn = aws_iam_policy.lambda_textract_policy.arn
+}
+
+#############################
+# S3 Read Policy for Lambda
+#############################
+
+data "aws_iam_policy_document" "lambda_s3_read" {
   statement {
+    sid    = "AllowLambdaS3Read"
     effect = "Allow"
     actions = [
-      "textract:AnalyzeDocument",
-      "textract:StartDocumentAnalysis",
-      "textract:GetDocumentAnalysis"
+      "s3:GetObject",
+      "s3:HeadObject",
+      "s3:ListBucket"
     ]
-    resources = ["*"]
+    resources = [
+      "arn:aws:s3:::metrosafetyprodfiles",
+      "arn:aws:s3:::metrosafetyprodfiles/*"
+    ]
   }
 }
 
-# Create the IAM policy based on the document
-resource "aws_iam_policy" "lambda_textract_policy" {
-  name   = "LambdaTextractPolicy"
-  policy = data.aws_iam_policy_document.lambda_textract.json
+resource "aws_iam_policy" "lambda_s3_read_policy" {
+  name   = "LambdaS3ReadPolicy"
+  policy = data.aws_iam_policy_document.lambda_s3_read.json
 }
 
-# Attach the Textract policy to your Lambda role
-resource "aws_iam_role_policy_attachment" "attach_textract_to_lambda" {
-  role = aws_iam_role.bedrock_lambda_checklist.name
-  policy_arn = aws_iam_policy.lambda_textract_policy.arn
+resource "aws_iam_role_policy_attachment" "attach_lambda_s3_read" {
+  role       = aws_iam_role.bedrock_lambda_checklist.name
+  policy_arn = aws_iam_policy.lambda_s3_read_policy.arn
+}
+
+#############################
+# Output the Lambda Role Name
+#############################
+
+output "lambda_role_name" {
+  value = aws_iam_role.bedrock_lambda_checklist.name
 }
