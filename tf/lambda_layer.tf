@@ -63,3 +63,28 @@ resource "aws_iam_role_policy_attachment" "lambda_s3" {
   policy_arn = aws_iam_policy.lambda_s3_access.arn
   role       = "bedrock-lambda-salesforce_input"
 }
+
+# Create a policy document granting permission to use Textract
+data "aws_iam_policy_document" "lambda_textract" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "textract:AnalyzeDocument",
+      "textract:StartDocumentAnalysis",
+      "textract:GetDocumentAnalysis"
+    ]
+    resources = ["*"]
+  }
+}
+
+# Create the IAM policy based on the document
+resource "aws_iam_policy" "lambda_textract_policy" {
+  name   = "LambdaTextractPolicy"
+  policy = data.aws_iam_policy_document.lambda_textract.json
+}
+
+# Attach the Textract policy to your Lambda role
+resource "aws_iam_role_policy_attachment" "attach_textract_to_lambda" {
+  role       = aws_iam_role.bedrock-lambda-checklist.name
+  policy_arn = aws_iam_policy.lambda_textract_policy.arn
+}
