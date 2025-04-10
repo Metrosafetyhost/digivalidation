@@ -127,5 +127,5 @@ if __name__ == "__main__":
         "document_key": "test.pdf"  # Adjust the path as needed (e.g., "folder1/test.pdf")
     }
     # For local testing, context can be None.
-    result = lambda_handler(test_event, None)
+    result = process(test_event, None)
     print(json.dumps(result, indent=4))
