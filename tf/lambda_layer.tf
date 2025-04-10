@@ -145,11 +145,3 @@ resource "aws_iam_role_policy_attachment" "attach_lambda_s3_read" {
   role       = aws_iam_role.bedrock_lambda_checklist.name
   policy_arn = aws_iam_policy.lambda_s3_read_policy.arn
 }
-
-#############################
-# Output the Lambda Role Name
-#############################
-
-output "lambda_role_name" {
-  value = aws_iam_role.bedrock_lambda_checklist.name
-}
