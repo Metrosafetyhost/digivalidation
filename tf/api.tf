@@ -3,13 +3,11 @@ resource "aws_apigatewayv2_api" "lambda_api" {
   protocol_type = "HTTP"
 }
 
-
 resource "aws_apigatewayv2_integration" "lambda_integration" {
   api_id           = aws_apigatewayv2_api.lambda_api.id
   integration_type = "AWS_PROXY"
   integration_uri  = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-salesforce_input"
 }
-
 
 resource "aws_apigatewayv2_route" "proofing_route" {
   api_id    = aws_apigatewayv2_api.lambda_api.id
@@ -60,7 +58,3 @@ resource "aws_lambda_permission" "apigw_lambda" {
 
   source_arn = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
 }
-
-# output "api_gateway_url" {
-#   value = "${aws_apigatewayv2_api.lambda_api.api_endpoint}/${aws_apigatewayv2_stage.lambda_stage.name}"
-# }
