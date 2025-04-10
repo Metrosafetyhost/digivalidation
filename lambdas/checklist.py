@@ -2,19 +2,14 @@ import boto3
 import json
 import re
 
-# Initialise the Textract client
-textract = boto3.client('textract')
+textract = boto3.client('textract', region_name='eu-west-2')
 
 def process(event, context):
     """
-    Test event should include:
-    {
-        "bucket": "your-bucket-name",
-        "document_key": "folder1/folder2/test.pdf"
-    }
+
     """
     bucket = event.get('bucket', 'metrosafetyprodfiles')
-    document_key = event.get('document_key', 'WorkOrders/0WOSk0000036JRFOA2/065339~15-02-2025# b&m st nicholas hs unit b  st nicholas dr_tbp_v1_final.p.pdf')
+    document_key = event.get('document_key', 'WorkOrders/0WOSk0000036JRFOA2/065339-15-02-2025-b-and-m-st-nicholas-hs-unit-b-st-nicholas-dr_tbp_v1_final.pdf')
     
     try:
         # Call Textract to analyze the document; using TABLES and FORMS as extra features (adjust if needed)
