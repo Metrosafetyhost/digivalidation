@@ -69,24 +69,25 @@ resource "aws_iam_role_policy_attachment" "lambda_s3" {
 # Unified Lambda Execution Role
 #############################
 
-resource "aws_iam_policy" "lambda_textract_policy" {
-  name   = "LambdaTextractPolicy"
-  policy = jsonencode({
-    Version   = "2012-10-17",
-    Statement = [
-      {
-        Effect   = "Allow",
-        Action   = [
-          "textract:AnalyzeDocument",
-          "textract:StartDocumentAnalysis",
-          "textract:GetDocumentAnalysis"
-        ],
-        Resource = ["*"]
-      }
-    ]
-  })
-}
+resource "aws_iam_role" "bedrock_lambda_checklist" {
+  name = "bedrock-lambda-checklist"
 
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": "sts:AssumeRole",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Effect": "Allow",
+      "Sid": ""
+    }
+  ]
+}
+EOF
+}
 
 #############################
 # Textract Policy for Lambda
@@ -104,7 +105,7 @@ resource "aws_iam_policy" "lambda_textract_policy" {
           "textract:StartDocumentAnalysis",
           "textract:GetDocumentAnalysis"
         ],
-        Resources = ["*"]
+        Resource = ["*"]
       }
     ]
   })
