@@ -64,6 +64,27 @@ resource "aws_iam_role_policy_attachment" "lambda_s3" {
   role       = "bedrock-lambda-salesforce_input"
 }
 
+
+resource "aws_iam_role" "bedrock_lambda_checklist" {
+  name = "bedrock-lambda-checklist"
+
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": "sts:AssumeRole",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Effect": "Allow",
+      "Sid": ""
+    }
+  ]
+}
+EOF
+}
+
 # Create a policy document granting permission to use Textract
 data "aws_iam_policy_document" "lambda_textract" {
   statement {
