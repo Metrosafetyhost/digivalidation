@@ -1,54 +1,40 @@
 import boto3
 import json
-import os
-import fitz  # PyMuPDF
+import re
 
-# Create S3 client and Textract client
-s3 = boto3.client('s3')
 textract = boto3.client('textract', region_name='eu-west-2')
 
-def flatten_pdf(input_path, output_path):
-    """Opens a PDF and saves a flattened copy."""
-    doc = fitz.open(input_path)
-    # The 'clean' and 'deflate' options generally help in removing form fields and annotations.
-    doc.save(output_path, garbage=4, deflate=True, clean=True)
-    doc.close()
-
 def process(event, context):
+    """
+
+    """
     bucket = event.get('bucket', 'metrosafetyprodfiles')
     document_key = event.get('document_key', 'WorkOrders/0WOSk0000036JRFOA2/065339-15-02-2025-b-and-m-st-nicholas-hs-unit-b-st-nicholas-dr_tbp_v1_final.pdf')
-
+    
     try:
-        # Download the file from S3 to /tmp directory (Lambda's temporary storage)
-        local_input = f"/tmp/input.pdf"
-        local_flattened = f"/tmp/flattened.pdf"
-        s3.download_file(bucket, document_key, local_input)
-
-        # Flatten the PDF
-        flatten_pdf(local_input, local_flattened)
-
-        # Now call Textract on the flattened PDF by uploading it back to S3 or reading bytes.
-        # Option A: Upload the flattened PDF back to S3 (if you want to reuse it later)
-        flattened_key = "flattened/" + os.path.basename(document_key)
-        s3.upload_file(local_flattened, bucket, flattened_key)
-
-        # Use Textract analyze_document on the S3 object (flattened PDF)
+        # Call Textract to analyze the document; using TABLES and FORMS as extra features (adjust if needed)
         response = textract.analyze_document(
             Document={
                 'S3Object': {
                     'Bucket': bucket,
-                    'Name': flattened_key
+                    'Name': document_key
                 }
             },
             FeatureTypes=['TABLES', 'FORMS']
         )
-
-        # Process the Textract response as needed (this part of your code remains the same)
+        
+        # First, process the raw Textract output to group text lines per page
         pages_text = process_textract_output(response)
+        
+        # Combine pages (ordered by page number) into one large text
         combined_text = combine_pages(pages_text)
+        
+        # Now parse the combined text into sections based on detected headings
         sections = parse_sections(combined_text)
-
+        
+        # For testing, print the grouped sections in JSON format
         print(json.dumps(sections, indent=4))
+        
         return {
             'statusCode': 200,
             'body': json.dumps(sections)
@@ -130,10 +116,11 @@ def parse_sections(text):
     return sections
 
 if __name__ == "__main__":
-    # Local test event
+    # For local testing only; simulate an event.
     test_event = {
-        "bucket": "metrosafetyprodfiles",
-        "document_key": "WorkOrders/0WOSk0000036JRFOA2/065339-15-02-2025-b-and-m-st-nicholas-hs-unit-b-st-nicholas-dr_tbp_v1_final.pdf"
+        "bucket": "your-bucket-name",
+        "document_key": "test.pdf"  # Adjust the path as needed (e.g., "folder1/test.pdf")
     }
+    # For local testing, context can be None.
     result = process(test_event, None)
     print(json.dumps(result, indent=4))
