@@ -1,50 +1,76 @@
 import boto3
 import json
-import re
+import time
 
 textract = boto3.client('textract', region_name='eu-west-2')
 
 def process(event, context):
     """
-
+    Starts an asynchronous Textract document analysis job.
     """
     bucket = event.get('bucket', 'metrosafetyprodfiles')
-    document_key = event.get('document_key', 'WorkOrders/0WOSk0000036JRFOA2/065339-15-02-2025-b-and-m-st-nicholas-hs-unit-b-st-nicholas-dr_tbp_v1_final.pdf')
+    document_key = event.get('document_key', 'WorkOrders/your-document.pdf')
+    
+    # Replace these with your actual SNS Topic ARN and the IAM Role ARN (the one created for Textract)
+    sns_topic_arn = event.get('sns_topic_arn', 'arn:aws:sns:eu-west-2:837329614132:textract-job-notifications')
+    textract_role_arn = event.get('textract_role_arn', 'arn:aws:iam::837329614132:role/bedrock-lambda-checklist')
     
     try:
-        # Call Textract to analyze the document; using TABLES and FORMS as extra features (adjust if needed)
-        response = textract.analyze_document(
-            Document={
+        # Start the asynchronous document analysis job with notification channel details.
+        response = textract.start_document_analysis(
+            DocumentLocation={
                 'S3Object': {
                     'Bucket': bucket,
                     'Name': document_key
                 }
             },
-            FeatureTypes=['TABLES', 'FORMS']
+            FeatureTypes=['TABLES', 'FORMS'],
+            NotificationChannel={
+                'SNSTopicArn': sns_topic_arn,
+                'RoleArn': textract_role_arn
+            }
         )
         
-        # First, process the raw Textract output to group text lines per page
-        pages_text = process_textract_output(response)
+        job_id = response['JobId']
+        print(f"Started Textract job with ID: {job_id}")
         
-        # Combine pages (ordered by page number) into one large text
-        combined_text = combine_pages(pages_text)
-        
-        # Now parse the combined text into sections based on detected headings
-        sections = parse_sections(combined_text)
-        
-        # For testing, print the grouped sections in JSON format
-        print(json.dumps(sections, indent=4))
-        
-        return {
-            'statusCode': 200,
-            'body': json.dumps(sections)
-        }
+        # Optional: poll for job completion (or use the SNS notification to trigger your next step)
+        result = poll_for_job_completion(job_id)
+        if result:
+            pages_text = process_textract_output(result)
+            combined_text = combine_pages(pages_text)
+            sections = parse_sections(combined_text)
+            
+            print(json.dumps(sections, indent=4))
+            
+            return {
+                'statusCode': 200,
+                'body': json.dumps(sections)
+            }
+        else:
+            raise Exception("Textract job did not complete successfully")
+    
     except Exception as e:
         print("Error processing document:", e)
         return {
             'statusCode': 500,
             'body': json.dumps({'error': str(e)})
         }
+
+def poll_for_job_completion(job_id, max_tries=20, delay=5):
+    """
+    Poll the Textract get_document_analysis endpoint until job completes (or max_tries are reached).
+    """
+    for _ in range(max_tries):
+        response = textract.get_document_analysis(JobId=job_id)
+        status = response.get('JobStatus')
+        print(f"Job Status: {status}")
+        if status == 'SUCCEEDED':
+            return response
+        elif status == 'FAILED':
+            raise Exception("Textract job failed")
+        time.sleep(delay)
+    raise Exception("Textract job did not complete in the expected time.")
 
 def process_textract_output(textract_response):
     """
@@ -54,14 +80,12 @@ def process_textract_output(textract_response):
     pages = {}
     for block in textract_response.get('Blocks', []):
         if block.get('BlockType') == 'LINE':
-            # Some multi-page documents have a "Page" attribute; default to 1 if not present
             page_number = block.get('Page', 1)
             if page_number not in pages:
                 pages[page_number] = []
             top_val = block.get('Geometry', {}).get('BoundingBox', {}).get('Top', 0)
             pages[page_number].append((top_val, block.get('Text', '')))
     
-    # Sort and concatenate the lines for each page
     structured_pages = {}
     for page_num, lines in pages.items():
         sorted_lines = sorted(lines, key=lambda x: x[0])
@@ -75,31 +99,19 @@ def combine_pages(pages_text):
     """
     combined = ""
     for page in sorted(pages_text.keys()):
-        # Optionally, you can add page breaks for clarity.
         combined += f"\n\n--- Page {page} ---\n\n"
         combined += pages_text[page]
     return combined
 
 def parse_sections(text):
     """
-    Parse the combined text into sections using regular expression matching.
-    
-    We assume section headings start with patterns like:
-      - "1.0 Executive Summary"
-      - "1.1 Areas Identified Requiring Remedial Actions"
-      - "2.0 Risk Dashboard" etc.
-    Also, headings for appendices like "APPENDIX A - Duty Holder's Responsibilities" are captured.
-    
-    Returns a dictionary where keys are section headings and values are the body text of that section.
+    Parse the combined text into sections using regex for section headings.
     """
-    # Regex pattern to capture typical section headers.
-    # This pattern matches lines that start with digits and a dot OR lines that start with "APPENDIX".
+    import re
     pattern = re.compile(r'^(?P<section>(?:\d+\.\d+(?:\.\d+)?\s+.*|APPENDIX\s+[A-Z]+\s*-\s*.*))$', re.MULTILINE)
-    
     matches = list(pattern.finditer(text))
     sections = {}
     
-    # If no section headings are found, return the whole text as one section.
     if not matches:
         sections["Entire Document"] = text.strip()
         return sections
@@ -119,8 +131,9 @@ if __name__ == "__main__":
     # For local testing only; simulate an event.
     test_event = {
         "bucket": "your-bucket-name",
-        "document_key": "test.pdf"  # Adjust the path as needed (e.g., "folder1/test.pdf")
+        "document_key": "test.pdf",
+        "sns_topic_arn": "arn:aws:sns:eu-west-2:123456789012:textract-job-notifications",
+        "textract_role_arn": "arn:aws:iam::123456789012:role/TextractServiceRole"
     }
-    # For local testing, context can be None.
     result = process(test_event, None)
     print(json.dumps(result, indent=4))
