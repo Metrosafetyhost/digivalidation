@@ -13,7 +13,7 @@ def process(event, context):
     
     # Replace these with your actual SNS Topic ARN and the IAM Role ARN (the one created for Textract)
     sns_topic_arn = event.get('sns_topic_arn', 'arn:aws:sns:eu-west-2:837329614132:textract-job-notifications')
-    textract_role_arn = event.get('textract_role_arn', 'arn:aws:iam::837329614132:role/bedrock-lambda-checklist')
+    textract_role_arn = event.get('textract_role_arn', 'arn:aws:iam::837329614132:role/TextractServiceRole')
     
     try:
         # Start the asynchronous document analysis job with notification channel details.
