@@ -11,7 +11,8 @@ def process(event, context):
     """
     Starts an asynchronous Textract document analysis job and processes the output.
     """
-    bucket = event.get('bucket', 'metrosafetyprodfiles')
+    # Set default bucket name to "textrack output"
+    bucket = event.get('bucket', 'textrack output')
     document_key = event.get('document_key', 'WorkOrders/your-document.pdf')
     
     sns_topic_arn = event.get('sns_topic_arn', 'arn:aws:sns:eu-west-2:837329614132:textract-job-notifications')
@@ -211,7 +212,7 @@ def process_all_data(textract_response):
 def generate_csv(data):
     """
     Generates CSV content (as a string) from the extracted data.
-    The CSV includes three sections: text, tables, and form_data.
+    The CSV includes three sections: plain text, tables, and form_data.
     """
     output = StringIO()
     writer = csv.writer(output)
@@ -222,7 +223,6 @@ def generate_csv(data):
     pages = data["text"].split("\n\n--- Page ")
     for page in pages:
         if page.strip():
-            # Remove any extraneous markers and split header from text
             header_split = page.split("---", 1)
             if len(header_split) == 2:
                 page_header = header_split[0].strip()
@@ -231,14 +231,13 @@ def generate_csv(data):
                 page_header = ""
                 page_text = header_split[0].strip()
             writer.writerow([f"Page {page_header}", page_text])
-    writer.writerow([])  # empty line between sections
-
+    writer.writerow([])  # empty line
+    
     # Section 2: Tables
     writer.writerow(["=== Tables ==="])
     for idx, table in enumerate(data["tables"], start=1):
         writer.writerow([f"Table {idx}"])
         for row in table:
-            # Write each row in the table as a single CSV row.
             writer.writerow(row)
         writer.writerow([])  # blank row after each table
 
@@ -252,15 +251,15 @@ def generate_csv(data):
 
 def store_output_to_s3(bucket, key, content):
     """
-    Stores the given content (CSV string) to S3.
+    Stores the given CSV string to S3.
     """
     s3 = boto3.client('s3', region_name='eu-west-2')
     s3.put_object(Bucket=bucket, Key=key, Body=content, ContentType='text/csv')
 
 if __name__ == "__main__":
-    # For local testing only; simulate an event.
+    # For local testing; simulate an event.
     test_event = {
-        "bucket": "your-bucket-name",
+        "bucket": "textrack output",
         "document_key": "test.pdf",
         "sns_topic_arn": "arn:aws:sns:eu-west-2:123456789012:textract-job-notifications",
         "textract_role_arn": "arn:aws:iam::123456789012:role/TextractServiceRole"
