@@ -219,7 +219,7 @@ resource "aws_s3_object" "create_folders" {
 }
 
 resource "aws_s3_bucket" "textract_output" {
-  bucket = "textract-output"
+  bucket = "textract-output-digival"
 
   tags = merge(var.common_tags, {
     Name    = "Textract Output Bucket",
