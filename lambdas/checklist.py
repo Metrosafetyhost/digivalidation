@@ -2,6 +2,8 @@ import boto3
 import json
 import time
 import re
+import csv
+from io import StringIO
 
 textract = boto3.client('textract', region_name='eu-west-2')
 
@@ -38,12 +40,15 @@ def process(event, context):
             all_data = process_all_data(result)
             print(json.dumps(all_data, indent=4))
             
-            # Optional: save processed data to S3 or another data store
-            # store_output_to_s3(bucket, f"processed/{document_key.split('/')[-1].replace('.pdf', '.json')}", all_data)
+            # Write the extracted data to a CSV file and store to S3.
+            csv_content = generate_csv(all_data)
+            csv_key = f"processed/{document_key.split('/')[-1].replace('.pdf', '.csv')}"
+            store_output_to_s3(bucket, csv_key, csv_content)
+            print(f"CSV output saved to s3://{bucket}/{csv_key}")
             
             return {
                 'statusCode': 200,
-                'body': json.dumps(all_data)
+                'body': json.dumps({"message": "Success", "csv_s3_key": csv_key})
             }
         else:
             raise Exception("Textract job did not complete successfully")
@@ -93,7 +98,7 @@ def process_textract_output(textract_response):
 
 def combine_pages(pages_text):
     """
-    Combines pages into a full document text.
+    Combines pages into a single text string.
     """
     combined = ""
     for page in sorted(pages_text.keys()):
@@ -104,18 +109,18 @@ def combine_pages(pages_text):
 def extract_tables(blocks):
     """
     Extracts table data from Textract blocks.
-    Returns a list of tables, each table is a list of rows and each row is a list of cell texts.
+    Returns a list of tables; each table is a list of rows and each row is a list of cell texts.
     """
     tables = []
     for block in blocks:
         if block.get("BlockType") == "TABLE":
             table = []
-            # Collect all CELL blocks belonging to this table
+            # Collect all CELL blocks belonging to this table.
             cell_blocks = []
             for rel in block.get("Relationships", []):
                 if rel.get("Type") == "CHILD":
                     cell_blocks.extend([b for b in blocks if b["Id"] in rel.get("Ids", []) and b["BlockType"] == "CELL"])
-            # Group cells by their RowIndex
+            # Group cells by their RowIndex.
             rows = {}
             for cell in cell_blocks:
                 row_index = cell.get("RowIndex", 0)
@@ -123,7 +128,7 @@ def extract_tables(blocks):
                     rows[row_index] = []
                 cell_text = get_text_from_cell(cell, blocks)
                 rows[row_index].append(cell_text)
-            # Append rows sorted by row index to the table
+            # Append rows sorted by row index to the table.
             for row in sorted(rows.keys()):
                 table.append(rows[row])
             tables.append(table)
@@ -131,7 +136,7 @@ def extract_tables(blocks):
 
 def get_text_from_cell(cell, blocks):
     """
-    Extracts text contained in a table cell from its child WORD or LINE blocks.
+    Extracts text from a table cell from its child WORD or LINE blocks.
     """
     text = ""
     for rel in cell.get("Relationships", []):
@@ -144,14 +149,13 @@ def get_text_from_cell(cell, blocks):
 
 def extract_key_values(blocks):
     """
-    Extracts key-value pair data from Textract blocks.
-    Returns a dictionary where keys are the field names and values are the corresponding values.
+    Extracts key-value data from Textract blocks.
+    Returns a dictionary mapping keys to their corresponding values.
     """
     key_map = {}
     value_map = {}
     kvs = {}
     
-    # Separate key and value blocks
     for block in blocks:
         if block.get("BlockType") == "KEY_VALUE_SET" and "EntityTypes" in block:
             if "KEY" in block.get("EntityTypes", []):
@@ -159,7 +163,6 @@ def extract_key_values(blocks):
             elif "VALUE" in block.get("EntityTypes", []):
                 value_map[block["Id"]] = block
 
-    # Link keys to values
     for key_id, key_block in key_map.items():
         key_text = get_text_for_block(key_block, blocks)
         associated_value_text = ""
@@ -175,7 +178,7 @@ def extract_key_values(blocks):
 
 def get_text_for_block(block, blocks):
     """
-    Helper function to extract text from a block by aggregating the text from its child WORD/LINE blocks.
+    Helper to aggregate text for a block from its child WORD/LINE blocks.
     """
     text = ""
     if "Relationships" in block:
@@ -189,7 +192,8 @@ def get_text_for_block(block, blocks):
 
 def process_all_data(textract_response):
     """
-    Processes the Textract JSON response to extract plain text, tables and key-value pairs.
+    Processes the Textract response and extracts pages of text, tables and key-value pairs.
+    Returns a dictionary with keys: "text", "tables", and "form_data".
     """
     blocks = textract_response.get("Blocks", [])
     line_pages = process_textract_output(textract_response)
@@ -204,11 +208,55 @@ def process_all_data(textract_response):
     }
     return output
 
-# Optional: function to store output to S3 if required.
-# def store_output_to_s3(bucket, key, data):
-#     s3 = boto3.client('s3', region_name='eu-west-2')
-#     s3.put_object(Bucket=bucket, Key=key, Body=json.dumps(data))
+def generate_csv(data):
+    """
+    Generates CSV content (as a string) from the extracted data.
+    The CSV includes three sections: text, tables, and form_data.
+    """
+    output = StringIO()
+    writer = csv.writer(output)
     
+    # Section 1: Plain Text from pages
+    writer.writerow(["=== Plain Text (Grouped by Page) ==="])
+    # Split the combined text by pages (using the separator added in combine_pages)
+    pages = data["text"].split("\n\n--- Page ")
+    for page in pages:
+        if page.strip():
+            # Remove any extraneous markers and split header from text
+            header_split = page.split("---", 1)
+            if len(header_split) == 2:
+                page_header = header_split[0].strip()
+                page_text = header_split[1].strip()
+            else:
+                page_header = ""
+                page_text = header_split[0].strip()
+            writer.writerow([f"Page {page_header}", page_text])
+    writer.writerow([])  # empty line between sections
+
+    # Section 2: Tables
+    writer.writerow(["=== Tables ==="])
+    for idx, table in enumerate(data["tables"], start=1):
+        writer.writerow([f"Table {idx}"])
+        for row in table:
+            # Write each row in the table as a single CSV row.
+            writer.writerow(row)
+        writer.writerow([])  # blank row after each table
+
+    # Section 3: Form Data (Key-Value Pairs)
+    writer.writerow(["=== Form Data (Key-Value Pairs) ==="])
+    writer.writerow(["Field", "Value"])
+    for key, value in data["form_data"].items():
+        writer.writerow([key, value])
+    
+    return output.getvalue()
+
+def store_output_to_s3(bucket, key, content):
+    """
+    Stores the given content (CSV string) to S3.
+    """
+    s3 = boto3.client('s3', region_name='eu-west-2')
+    s3.put_object(Bucket=bucket, Key=key, Body=content, ContentType='text/csv')
+
 if __name__ == "__main__":
     # For local testing only; simulate an event.
     test_event = {
