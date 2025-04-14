@@ -217,3 +217,12 @@ resource "aws_s3_object" "create_folders" {
   bucket = aws_s3_bucket.this.id
   key    = "${each.value}/"  # creats empty folders
 }
+
+resource "aws_s3_bucket" "textract_output" {
+  bucket = "textract-output"
+
+  tags = merge(var.common_tags, {
+    Name    = "Textract Output Bucket",
+    git_file = "s3/main.tf"
+  })
+}

@@ -9,20 +9,23 @@ textract = boto3.client('textract', region_name='eu-west-2')
 
 def process(event, context):
     """
-    Starts an asynchronous Textract document analysis job and processes the output.
+    Starts an asynchronous Textract document analysis job on a PDF stored in the input bucket,
+    processes the output, and stores the resulting CSV in a separate output bucket.
     """
-    # Set default bucket name to "textrack output"
-    bucket = event.get('bucket', 'textrack output')
+    # Retrieve input parameters:
+    input_bucket = event.get('bucket', 'metrosafetyprodfiles')
     document_key = event.get('document_key', 'WorkOrders/your-document.pdf')
+    output_bucket = event.get('output_bucket', 'textrack-output')
     
     sns_topic_arn = event.get('sns_topic_arn', 'arn:aws:sns:eu-west-2:837329614132:textract-job-notifications')
     textract_role_arn = event.get('textract_role_arn', 'arn:aws:iam::837329614132:role/TextractServiceRole')
     
     try:
+        # Start the asynchronous Textract analysis on the input document.
         response = textract.start_document_analysis(
             DocumentLocation={
                 'S3Object': {
-                    'Bucket': bucket,
+                    'Bucket': input_bucket,
                     'Name': document_key
                 }
             },
@@ -41,11 +44,11 @@ def process(event, context):
             all_data = process_all_data(result)
             print(json.dumps(all_data, indent=4))
             
-            # Write the extracted data to a CSV file and store to S3.
+            # Generate CSV content and store it in the output bucket.
             csv_content = generate_csv(all_data)
             csv_key = f"processed/{document_key.split('/')[-1].replace('.pdf', '.csv')}"
-            store_output_to_s3(bucket, csv_key, csv_content)
-            print(f"CSV output saved to s3://{bucket}/{csv_key}")
+            store_output_to_s3(output_bucket, csv_key, csv_content)
+            print(f"CSV output saved to s3://{output_bucket}/{csv_key}")
             
             return {
                 'statusCode': 200,
@@ -78,8 +81,8 @@ def poll_for_job_completion(job_id, max_tries=20, delay=5):
 
 def process_textract_output(textract_response):
     """
-    Process LINE blocks and groups them by page.
-    Returns a dictionary with page numbers as keys and text as values.
+    Processes LINE blocks and groups them by page.
+    Returns a dictionary with page numbers as keys and their aggregated text as values.
     """
     pages = {}
     for block in textract_response.get('Blocks', []):
@@ -99,7 +102,7 @@ def process_textract_output(textract_response):
 
 def combine_pages(pages_text):
     """
-    Combines pages into a single text string.
+    Combines pages into a single string with page separators.
     """
     combined = ""
     for page in sorted(pages_text.keys()):
@@ -110,18 +113,16 @@ def combine_pages(pages_text):
 def extract_tables(blocks):
     """
     Extracts table data from Textract blocks.
-    Returns a list of tables; each table is a list of rows and each row is a list of cell texts.
+    Returns a list of tables; each table is a list of rows (each row is a list of cell texts).
     """
     tables = []
     for block in blocks:
         if block.get("BlockType") == "TABLE":
             table = []
-            # Collect all CELL blocks belonging to this table.
             cell_blocks = []
             for rel in block.get("Relationships", []):
                 if rel.get("Type") == "CHILD":
                     cell_blocks.extend([b for b in blocks if b["Id"] in rel.get("Ids", []) and b["BlockType"] == "CELL"])
-            # Group cells by their RowIndex.
             rows = {}
             for cell in cell_blocks:
                 row_index = cell.get("RowIndex", 0)
@@ -129,7 +130,6 @@ def extract_tables(blocks):
                     rows[row_index] = []
                 cell_text = get_text_from_cell(cell, blocks)
                 rows[row_index].append(cell_text)
-            # Append rows sorted by row index to the table.
             for row in sorted(rows.keys()):
                 table.append(rows[row])
             tables.append(table)
@@ -137,7 +137,7 @@ def extract_tables(blocks):
 
 def get_text_from_cell(cell, blocks):
     """
-    Extracts text from a table cell from its child WORD or LINE blocks.
+    Extracts the text from a table cell using its child WORD or LINE blocks.
     """
     text = ""
     for rel in cell.get("Relationships", []):
@@ -179,7 +179,7 @@ def extract_key_values(blocks):
 
 def get_text_for_block(block, blocks):
     """
-    Helper to aggregate text for a block from its child WORD/LINE blocks.
+    Helper function to extract aggregated text for a block from its child WORD/LINE blocks.
     """
     text = ""
     if "Relationships" in block:
@@ -193,7 +193,7 @@ def get_text_for_block(block, blocks):
 
 def process_all_data(textract_response):
     """
-    Processes the Textract response and extracts pages of text, tables and key-value pairs.
+    Processes the Textract response to extract plain text, tables, and key-value pairs.
     Returns a dictionary with keys: "text", "tables", and "form_data".
     """
     blocks = textract_response.get("Blocks", [])
@@ -211,15 +211,14 @@ def process_all_data(textract_response):
 
 def generate_csv(data):
     """
-    Generates CSV content (as a string) from the extracted data.
-    The CSV includes three sections: plain text, tables, and form_data.
+    Generates a CSV string from the extracted data with three sections:
+    plain text (grouped by page), tables, and form data.
     """
     output = StringIO()
     writer = csv.writer(output)
     
-    # Section 1: Plain Text from pages
+    # Section 1: Plain Text from pages.
     writer.writerow(["=== Plain Text (Grouped by Page) ==="])
-    # Split the combined text by pages (using the separator added in combine_pages)
     pages = data["text"].split("\n\n--- Page ")
     for page in pages:
         if page.strip():
@@ -231,17 +230,17 @@ def generate_csv(data):
                 page_header = ""
                 page_text = header_split[0].strip()
             writer.writerow([f"Page {page_header}", page_text])
-    writer.writerow([])  # empty line
+    writer.writerow([])  # Empty line
     
-    # Section 2: Tables
+    # Section 2: Tables.
     writer.writerow(["=== Tables ==="])
     for idx, table in enumerate(data["tables"], start=1):
         writer.writerow([f"Table {idx}"])
         for row in table:
             writer.writerow(row)
-        writer.writerow([])  # blank row after each table
+        writer.writerow([])  # Blank row after each table
 
-    # Section 3: Form Data (Key-Value Pairs)
+    # Section 3: Form Data (Key-Value Pairs).
     writer.writerow(["=== Form Data (Key-Value Pairs) ==="])
     writer.writerow(["Field", "Value"])
     for key, value in data["form_data"].items():
@@ -251,7 +250,7 @@ def generate_csv(data):
 
 def store_output_to_s3(bucket, key, content):
     """
-    Stores the given CSV string to S3.
+    Stores the given CSV string (content) to the specified S3 bucket.
     """
     s3 = boto3.client('s3', region_name='eu-west-2')
     s3.put_object(Bucket=bucket, Key=key, Body=content, ContentType='text/csv')
@@ -259,10 +258,11 @@ def store_output_to_s3(bucket, key, content):
 if __name__ == "__main__":
     # For local testing; simulate an event.
     test_event = {
-        "bucket": "textrack output",
-        "document_key": "test.pdf",
+        "bucket": "metrosafetyprodfiles",  # Input bucket for the PDF
+        "document_key": "WorkOrders/0WOSk0000036JRFOA2/065339-15-02-2025-b-and-m-st-nicholas-hs-unit-b-st-nicholas-dr_tbp_v1_final.pdf",
         "sns_topic_arn": "arn:aws:sns:eu-west-2:123456789012:textract-job-notifications",
-        "textract_role_arn": "arn:aws:iam::123456789012:role/TextractServiceRole"
+        "textract_role_arn": "arn:aws:iam::123456789012:role/TextractServiceRole",
+        # Optionally, you could pass "output_bucket": "desired-output-bucket" if you want a different name.
     }
     result = process(test_event, None)
     print(json.dumps(result, indent=4))
