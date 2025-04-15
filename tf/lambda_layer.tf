@@ -80,7 +80,7 @@ resource "aws_iam_role" "bedrock_lambda_checklist" {
       "Action": "sts:AssumeRole",
       "Principal": {
         "Service": "lambda.amazonaws.com"
-        
+
       },
       "Effect": "Allow",
       "Sid": ""
@@ -183,4 +183,26 @@ resource "aws_iam_policy" "textract_sns_policy" {
 resource "aws_iam_role_policy_attachment" "attach_textract_sns" {
   role       = aws_iam_role.textract_service_role.name
   policy_arn = aws_iam_policy.textract_sns_policy.arn
+}
+
+resource "aws_iam_policy" "bedrock_lambda_s3_policy" {
+  name        = "bedrock-lambda-s3-policy"
+  description = "Allows Lambda to put objects in the textract-output-digival bucket under the processed/ prefix."
+  policy = jsonencode({
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AllowLambdaPutObject",
+        "Effect": "Allow",
+        "Action": "s3:PutObject",
+        "Resource": "arn:aws:s3:::textract-output-digival/processed/*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_policy_attachment" "bedrock_lambda_s3_policy_attachment" {
+  name       = "bedrock-lambda-s3-policy-attachment"
+  policy_arn = aws_iam_policy.bedrock_lambda_s3_policy.arn
+  roles      = [ "bedrock-lambda-checklist" ]
 }

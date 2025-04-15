@@ -15,7 +15,7 @@ def process(event, context):
     # Retrieve input parameters:
     input_bucket = event.get('bucket', 'metrosafetyprodfiles')
     document_key = event.get('document_key', 'WorkOrders/your-document.pdf')
-    output_bucket = event.get('output_bucket', 'textrack-output-digival')
+    output_bucket = event.get('output_bucket', 'textract-output-digival')
     
     sns_topic_arn = event.get('sns_topic_arn', 'arn:aws:sns:eu-west-2:837329614132:textract-job-notifications')
     textract_role_arn = event.get('textract_role_arn', 'arn:aws:iam::837329614132:role/TextractServiceRole')
