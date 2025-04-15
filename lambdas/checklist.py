@@ -39,14 +39,14 @@ def process(event, context):
         job_id = response['JobId']
         print(f"Started Textract job with ID: {job_id}")
         
-        # Poll for job completion.
+        # Poll for job completion; this returns a combined response across all pages.
         result = poll_for_job_completion(job_id)
         
-        # Log the raw Textract JSON response so you can see what you're receiving.
-        print("Raw Textract JSON response:")
+        # Log the full Textract JSON (all accumulated blocks) so you can inspect it.
+        print("Raw Textract JSON response (all pages):")
         print(json.dumps(result, indent=4, default=str))
         
-        # Process the Textract output into a more manageable form.
+        # Process the Textract output into a more manageable structure.
         all_data = process_all_data(result)
         print("Processed Textract data:")
         print(json.dumps(all_data, indent=4, default=str))
@@ -72,17 +72,38 @@ def process(event, context):
 def poll_for_job_completion(job_id, max_tries=20, delay=5):
     """
     Poll the Textract get_document_analysis endpoint until the job completes.
+    Once the job status is SUCCEEDED, use the helper get_all_pages() to retrieve all pages.
     """
     for _ in range(max_tries):
         response = textract.get_document_analysis(JobId=job_id)
         status = response.get('JobStatus')
         print(f"Job Status: {status}")
         if status == 'SUCCEEDED':
-            return response
+            # The job is complete, now retrieve all pages.
+            return get_all_pages(job_id)
         elif status == 'FAILED':
             raise Exception("Textract job failed")
         time.sleep(delay)
     raise Exception("Textract job did not complete in the expected time.")
+
+def get_all_pages(job_id):
+    """
+    Retrieve all pages from Textract after the job has completed.
+    This function accumulates the 'Blocks' from all pages using NextToken.
+    """
+    all_blocks = []
+    next_token = None
+    while True:
+        if next_token:
+            response = textract.get_document_analysis(JobId=job_id, NextToken=next_token)
+        else:
+            response = textract.get_document_analysis(JobId=job_id)
+        print(f"Fetching page with NextToken: {next_token}")
+        all_blocks.extend(response.get("Blocks", []))
+        next_token = response.get("NextToken")
+        if not next_token:
+            break
+    return {"Blocks": all_blocks}
 
 def process_textract_output(textract_response):
     """
@@ -119,15 +140,18 @@ def extract_tables(blocks):
     """
     Extracts table data from Textract blocks.
     Returns a list of tables; each table is a list of rows (each row is a list of cell texts).
+    Includes debug logs to show what is being processed.
     """
     tables = []
     for block in blocks:
         if block.get("BlockType") == "TABLE":
+            print(f"Found TABLE block with Id: {block.get('Id')}, Relationships: {block.get('Relationships')}")
             table = []
             cell_blocks = []
             for rel in block.get("Relationships", []):
                 if rel.get("Type") == "CHILD":
                     cell_blocks.extend([b for b in blocks if b["Id"] in rel.get("Ids", []) and b["BlockType"] == "CELL"])
+            print(f"Extracted {len(cell_blocks)} CELL blocks for TABLE Id: {block.get('Id')}")
             rows = {}
             for cell in cell_blocks:
                 row_index = cell.get("RowIndex", 0)
