@@ -39,23 +39,28 @@ def process(event, context):
         job_id = response['JobId']
         print(f"Started Textract job with ID: {job_id}")
         
+        # Poll for job completion.
         result = poll_for_job_completion(job_id)
-        if result:
-            all_data = process_all_data(result)
-            print(json.dumps(all_data, indent=4))
+        
+        # Log the raw Textract JSON response so you can see what you're receiving.
+        print("Raw Textract JSON response:")
+        print(json.dumps(result, indent=4, default=str))
+        
+        # Process the Textract output into a more manageable form.
+        all_data = process_all_data(result)
+        print("Processed Textract data:")
+        print(json.dumps(all_data, indent=4, default=str))
             
-            # Generate CSV content and store it in the output bucket.
-            csv_content = generate_csv(all_data)
-            csv_key = f"processed/{document_key.split('/')[-1].replace('.pdf', '.csv')}"
-            store_output_to_s3(output_bucket, csv_key, csv_content)
-            print(f"CSV output saved to s3://{output_bucket}/{csv_key}")
+        # Generate CSV content and store it in the output bucket.
+        csv_content = generate_csv(all_data)
+        csv_key = f"processed/{document_key.split('/')[-1].replace('.pdf', '.csv')}"
+        store_output_to_s3(output_bucket, csv_key, csv_content)
+        print(f"CSV output saved to s3://{output_bucket}/{csv_key}")
             
-            return {
-                'statusCode': 200,
-                'body': json.dumps({"message": "Success", "csv_s3_key": csv_key})
-            }
-        else:
-            raise Exception("Textract job did not complete successfully")
+        return {
+            'statusCode': 200,
+            'body': json.dumps({"message": "Success", "csv_s3_key": csv_key})
+        }
     
     except Exception as e:
         print("Error processing document:", e)
@@ -265,4 +270,4 @@ if __name__ == "__main__":
         # Optionally, you could pass "output_bucket": "desired-output-bucket" if you want a different name.
     }
     result = process(test_event, None)
-    print(json.dumps(result, indent=4))
+    print(json.dumps(result, indent=4, default=str))
