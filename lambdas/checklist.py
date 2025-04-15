@@ -10,7 +10,7 @@ textract = boto3.client('textract', region_name='eu-west-2')
 def process(event, context):
     """
     Starts an asynchronous Textract document analysis job on a PDF stored in the input bucket,
-    processes the output, structures the text by sections, and stores the resulting CSV in a separate output bucket.
+    processes the output, and stores the resulting CSV in a separate output bucket.
     """
     # Retrieve input parameters:
     input_bucket = event.get('bucket', 'metrosafetyprodfiles')
@@ -39,28 +39,23 @@ def process(event, context):
         job_id = response['JobId']
         print(f"Started Textract job with ID: {job_id}")
         
-        # Poll for job completion and retrieve all pages.
+        # Poll for job completion; this returns a combined response across all pages.
         result = poll_for_job_completion(job_id)
         
-        # Log the raw Textract JSON response (all pages)
+        # Log the full Textract JSON (all accumulated blocks) so you can inspect it.
         print("Raw Textract JSON response (all pages):")
         print(json.dumps(result, indent=4, default=str))
         
-        # Process the Textract output into combined plain text.
+        # Process the Textract output into a more manageable structure.
         all_data = process_all_data(result)
-        print("Processed Textract plain text:")
-        print(all_data["text"])
-        
-        # STRUCTURE THE DOCUMENT
-        structured_doc = structure_document(all_data["text"])
-        print("Structured Document (by section):")
-        print(json.dumps(structured_doc, indent=4, default=str))
+        print("Processed Textract data:")
+        print(json.dumps(all_data, indent=4, default=str))
             
-        # Generate a CSV from the structured text.
-        csv_content = generate_structured_csv(structured_doc)
-        csv_key = f"processed/{document_key.split('/')[-1].replace('.pdf', '_structured.csv')}"
+        # Generate CSV content and store it in the output bucket.
+        csv_content = generate_csv(all_data)
+        csv_key = f"processed/{document_key.split('/')[-1].replace('.pdf', '.csv')}"
         store_output_to_s3(output_bucket, csv_key, csv_content)
-        print(f"Structured CSV output saved to s3://{output_bucket}/{csv_key}")
+        print(f"CSV output saved to s3://{output_bucket}/{csv_key}")
             
         return {
             'statusCode': 200,
@@ -77,13 +72,14 @@ def process(event, context):
 def poll_for_job_completion(job_id, max_tries=20, delay=5):
     """
     Poll the Textract get_document_analysis endpoint until the job completes.
-    Once complete, retrieve all pages.
+    Once the job status is SUCCEEDED, use the helper get_all_pages() to retrieve all pages.
     """
     for _ in range(max_tries):
         response = textract.get_document_analysis(JobId=job_id)
         status = response.get('JobStatus')
         print(f"Job Status: {status}")
         if status == 'SUCCEEDED':
+            # The job is complete, now retrieve all pages.
             return get_all_pages(job_id)
         elif status == 'FAILED':
             raise Exception("Textract job failed")
@@ -93,7 +89,7 @@ def poll_for_job_completion(job_id, max_tries=20, delay=5):
 def get_all_pages(job_id):
     """
     Retrieve all pages from Textract after the job has completed.
-    Accumulates all Blocks from all pages using NextToken.
+    This function accumulates the 'Blocks' from all pages using NextToken.
     """
     all_blocks = []
     next_token = None
@@ -242,74 +238,10 @@ def process_all_data(textract_response):
     }
     return output
 
-def structure_document(text):
-    """
-    Splits the combined text into sections based on known headings.  
-    Adjust the list of headings as needed for your PDF's layout.
-    Returns a dictionary with each section heading as key and the corresponding text as value.
-    """
-    # Define a list of common headings (use exact text if possible or a regex pattern)
-    headings = [
-        "1.0 Executive Summary",
-        "1.1 Areas Identified Requiring Remedial Actions",
-        "1.2 Building Description",
-        "1.3 Water Scope",
-        "2.0 Risk Dashboard",
-        "2.1 Current Risk Ratings",
-        "3.0 Management Responsibilities",
-        "4.0 Legionella Control Programme of Preventative Works",
-        "5.0 Audit Detail",
-        "6.0 Additional Photos",
-        "7.0 System Asset Register",
-        "8.0 Water Assets",
-        "9.0 Appendices"
-    ]
-    
-    structured = {}
-    # Start with a "Preface" section for any text before the first known heading.
-    current_heading = "Preface"
-    structured[current_heading] = []
-    
-    # Split text into lines.
-    lines = text.splitlines()
-    for line in lines:
-        # Check if this line contains one of the headings.
-        found = False
-        for heading in headings:
-            # Using a simple 'in' check; you can enhance this with regex if needed.
-            if heading.lower() in line.lower():
-                current_heading = heading
-                if current_heading not in structured:
-                    structured[current_heading] = []
-                found = True
-                break
-        if not found:
-            structured[current_heading].append(line)
-    
-    # Join lines back together for each section.
-    for heading in structured:
-        structured[heading] = "\n".join(structured[heading]).strip()
-    return structured
-
-def generate_structured_csv(structured_doc):
-    """
-    Generates a CSV string from the structured document.
-    Each row represents a section with two columns: Section and Content.
-    """
-    output = StringIO()
-    writer = csv.writer(output)
-    
-    # Write header row.
-    writer.writerow(["Section", "Content"])
-    
-    for section, content in structured_doc.items():
-        writer.writerow([section, content])
-    
-    return output.getvalue()
-
 def generate_csv(data):
     """
-    (Existing function to generate a CSV from unstructured data.)
+    Generates a CSV string from the extracted data with three sections:
+    plain text (grouped by page), tables, and form data.
     """
     output = StringIO()
     writer = csv.writer(output)
@@ -356,9 +288,10 @@ if __name__ == "__main__":
     # For local testing; simulate an event.
     test_event = {
         "bucket": "metrosafetyprodfiles",  # Input bucket for the PDF
-        "document_key": "WorkOrders/0WOSk0000036JRFOA2/065339-15-02-2025-b-and-m-st-nicholas-dr_tbp_v1_final.pdf",
+        "document_key": "WorkOrders/0WOSk0000036JRFOA2/065339-15-02-2025-b-and-m-st-nicholas-hs-unit-b-st-nicholas-dr_tbp_v1_final.pdf",
         "sns_topic_arn": "arn:aws:sns:eu-west-2:123456789012:textract-job-notifications",
-        "textract_role_arn": "arn:aws:iam::123456789012:role/TextractServiceRole"
+        "textract_role_arn": "arn:aws:iam::123456789012:role/TextractServiceRole",
+        # Optionally, you could pass "output_bucket": "desired-output-bucket" if you want a different name.
     }
     result = process(test_event, None)
     print(json.dumps(result, indent=4, default=str))
