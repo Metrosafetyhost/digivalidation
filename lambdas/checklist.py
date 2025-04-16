@@ -136,34 +136,6 @@ def combine_pages(pages_text):
         combined += pages_text[page]
     return combined.strip()
 
-def extract_tables(blocks):
-    """
-    Extracts table data from Textract blocks.
-    Returns a list of tables; each table is a list of rows (each row is a list of cell texts).
-    Includes debug logs to show what is being processed.
-    """
-    tables = []
-    for block in blocks:
-        if block.get("BlockType") == "TABLE":
-            print(f"Found TABLE block with Id: {block.get('Id')}, Relationships: {block.get('Relationships')}")
-            table = []
-            cell_blocks = []
-            for rel in block.get("Relationships", []):
-                if rel.get("Type") == "CHILD":
-                    cell_blocks.extend([b for b in blocks if b["Id"] in rel.get("Ids", []) and b["BlockType"] == "CELL"])
-            print(f"Extracted {len(cell_blocks)} CELL blocks for TABLE Id: {block.get('Id')}")
-            rows = {}
-            for cell in cell_blocks:
-                row_index = cell.get("RowIndex", 0)
-                if row_index not in rows:
-                    rows[row_index] = []
-                cell_text = get_text_from_cell(cell, blocks)
-                rows[row_index].append(cell_text)
-            for row in sorted(rows.keys()):
-                table.append(rows[row])
-            tables.append(table)
-    return tables
-
 def get_text_from_cell(cell, blocks):
     """
     Extracts the text from a table cell using its child WORD or LINE blocks.
@@ -220,6 +192,53 @@ def get_text_for_block(block, blocks):
                         text += child.get("Text", "") + " "
     return text.strip()
 
+def extract_tables(blocks, line_blocks):
+    """
+    Extracts table data from Textract blocks and attempts to capture a nearby heading.
+    Returns a list of dictionaries, each containing:
+        - "rows": the table data (list of rows),
+        - "header": the extracted heading text (or None if not found),
+        - "page": the page number of the table,
+        - "top": the top coordinate of the table's bounding box.
+    """
+    tables = []
+    for block in blocks:
+        if block.get("BlockType") == "TABLE":
+            print(f"Found TABLE block with Id: {block.get('Id')}, Relationships: {block.get('Relationships')}")
+            table_info = {}
+            table_info["rows"] = []
+            table_info["page"] = block.get("Page", 1)
+            table_info["top"] = block.get("Geometry", {}).get("BoundingBox", {}).get("Top")
+            cell_blocks = []
+            for rel in block.get("Relationships", []):
+                if rel.get("Type") == "CHILD":
+                    cell_blocks.extend([b for b in blocks if b["Id"] in rel.get("Ids", []) and b["BlockType"] == "CELL"])
+            print(f"Extracted {len(cell_blocks)} CELL blocks for TABLE Id: {block.get('Id')}")
+            rows = {}
+            for cell in cell_blocks:
+                row_index = cell.get("RowIndex", 0)
+                if row_index not in rows:
+                    rows[row_index] = []
+                cell_text = get_text_from_cell(cell, blocks)
+                rows[row_index].append(cell_text)
+            for row in sorted(rows.keys()):
+                table_info["rows"].append(rows[row])
+            
+            # Determine the heading from nearby LINE blocks on the same page.
+            candidate_lines = []
+            for line in line_blocks:
+                if line.get("Page", 1) == table_info["page"]:
+                    line_top = line.get("Geometry", {}).get("BoundingBox", {}).get("Top")
+                    if line_top is not None and table_info["top"] is not None and line_top < table_info["top"]:
+                        candidate_lines.append((line_top, line.get("Text", "")))
+            if candidate_lines:
+                header_text = max(candidate_lines, key=lambda x: x[0])[1]
+                table_info["header"] = header_text
+            else:
+                table_info["header"] = None
+            tables.append(table_info)
+    return tables
+
 def process_all_data(textract_response):
     """
     Processes the Textract response to extract plain text, tables, and key-value pairs.
@@ -228,7 +247,9 @@ def process_all_data(textract_response):
     blocks = textract_response.get("Blocks", [])
     line_pages = process_textract_output(textract_response)
     combined_text = combine_pages(line_pages)
-    tables = extract_tables(blocks)
+    # Create a list of all LINE blocks to use for extracting table headings.
+    line_blocks = [b for b in blocks if b.get("BlockType") == "LINE"]
+    tables = extract_tables(blocks, line_blocks)
     key_values = extract_key_values(blocks)
     
     output = {
@@ -242,6 +263,7 @@ def generate_csv(data):
     """
     Generates a CSV string from the extracted data with three sections:
     plain text (grouped by page), tables, and form data.
+    For tables, if a header was extracted dynamically, it will be used in place of a generic "Table {number}".
     """
     output = StringIO()
     writer = csv.writer(output)
@@ -263,9 +285,11 @@ def generate_csv(data):
     
     # Section 2: Tables.
     writer.writerow(["=== Tables ==="])
-    for idx, table in enumerate(data["tables"], start=1):
-        writer.writerow([f"Table {idx}"])
-        for row in table:
+    for idx, table_info in enumerate(data["tables"], start=1):
+        # Use the extracted header if available, otherwise fall back to "Table {idx}"
+        header_text = table_info.get("header") or f"Table {idx}"
+        writer.writerow([header_text])
+        for row in table_info.get("rows", []):
             writer.writerow(row)
         writer.writerow([])  # Blank row after each table
 
