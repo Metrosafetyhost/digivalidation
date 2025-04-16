@@ -212,58 +212,80 @@ def extract_tables_grouped(blocks):
         "Audit Detail",
         "System Asset Register",
         "Water Assets",
-        "Appendices"
+        "Appendices",
+        "Risk Assessment Checklist",
+        "Legionella Control Programme of Preventative Works",
     ]
 
     def is_major_heading(text):
-        for phrase in important_headings:
-            if phrase.lower() in text.lower():
-                return True
-        return False
+        txt = text.lower().strip()
+        return any(phrase.lower() in txt for phrase in important_headings)
+
+    # Pre‑collect all the LINE blocks so we can do a spatial lookup
+    line_blocks = [
+        b for b in blocks
+        if b.get("BlockType") == "LINE" and "Geometry" in b
+    ]
+
+    def find_heading_for_table(tbl):
+        # Find the closest LINE block whose bottom edge sits just above this table's top.
+        top = tbl["Geometry"]["BoundingBox"]["Top"]
+        candidates = []
+        for ln in line_blocks:
+            bbox = ln["Geometry"]["BoundingBox"]
+            bottom = bbox["Top"] + bbox["Height"]
+            gap = top - bottom
+            # only consider lines that are above the table (gap > 0), within a small threshold
+            if 0 < gap < 0.03:
+                candidates.append((gap, ln["Text"].strip()))
+        if not candidates:
+            return None
+        # smallest vertical gap → the heading
+        return min(candidates, key=lambda x: x[0])[1]
 
     # Build a page map of LINE and TABLE blocks.
     page_map = {}
     for b in blocks:
         page = b.get("Page", 1)
-        if page not in page_map:
-            page_map[page] = []
-        if b.get("BlockType") in ["LINE", "TABLE"]:
-            bbox = b.get("Geometry", {}).get("BoundingBox", {})
-            top = bbox.get("Top", 0)
-            entry = {"type": b.get("BlockType"), "top": top, "block": b}
-            if b.get("BlockType") == "LINE":
-                entry["text"] = b.get("Text", "").strip()
-            page_map[page].append(entry)
+        if b.get("BlockType") in ("LINE", "TABLE"):
+            page_map.setdefault(page, []).append(b)
 
     output_tables = []
+    # iterate page by page
     for page, items in page_map.items():
-        items.sort(key=lambda x: x["top"])
+        # sort by vertical position
+        items.sort(key=lambda b: b["Geometry"]["BoundingBox"]["Top"])
         current_heading = None
-        for item in items:
-            if item["type"] == "LINE":
-                if is_major_heading(item.get("text", "")):
-                    current_heading = item["text"]
-            elif item["type"] == "TABLE":
-                table_block = item["block"]
-                table_dict = {
-                    "page": page,
-                    "header": current_heading,
-                    "rows": []
-                }
+
+        for b in items:
+            if b["BlockType"] == "LINE":
+                txt = b.get("Text", "").strip()
+                if is_major_heading(txt):
+                    current_heading = txt
+            else:  # TABLE
+                # First try to grab a hard‐matched heading,
+                # else fall back to spatially finding the nearest line above the table.
+                header = current_heading or find_heading_for_table(b)
+
+                # now extract the table cells as before
+                table_dict = {"page": page, "header": header, "rows": []}
                 cell_blocks = []
-                for rel in table_block.get("Relationships", []):
+                for rel in b.get("Relationships", []):
                     if rel.get("Type") == "CHILD":
-                        cell_blocks.extend([b for b in blocks if b["Id"] in rel.get("Ids", []) and b["BlockType"] == "CELL"])
+                        cell_blocks.extend(
+                            [blk for blk in blocks
+                             if blk["Id"] in rel["Ids"] and blk["BlockType"] == "CELL"]
+                        )
+
                 rows = {}
                 for cell in cell_blocks:
-                    row_index = cell.get("RowIndex", 0)
-                    if row_index not in rows:
-                        rows[row_index] = []
-                    cell_text = get_text_from_cell(cell, blocks)
-                    rows[row_index].append(cell_text)
-                for r in sorted(rows.keys()):
-                    table_dict["rows"].append(rows[r])
+                    ridx = cell.get("RowIndex", 0)
+                    rows.setdefault(ridx, []).append(get_text_from_cell(cell, blocks))
+                for ridx in sorted(rows):
+                    table_dict["rows"].append(rows[ridx])
+
                 output_tables.append(table_dict)
+
     return output_tables
 
 def process_all_data(textract_response):
