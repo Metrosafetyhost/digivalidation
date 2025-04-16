@@ -201,23 +201,45 @@ def extract_tables(blocks, line_blocks):
         - "page": the page number of the table,
         - "top": the top coordinate of the table's bounding box.
     """
-    # Lower threshold for a line to be considered large enough to be a heading.
-    # You might need to adjust this value based on your PDF's formatting.
-    HEADING_HEIGHT_THRESHOLD = 0.015
+    # Define a threshold for non-whitelisted candidates.
+    HEIGHT_THRESHOLD = 0.02
+
+    # List of key phrases (important headings in QCC reports).
+    important_headings = [
+        "Executive Summary",
+        "Areas Identified Requiring Remedial Actions",
+        "Building Description",
+        "Water Scope",
+        "Risk Dashboard",
+        "Management Responsibilities",
+        "Legionella Control Programme",
+        "Audit Detail",
+        "Significant Findings and Action Plan",
+        "System Asset Register",
+        "Water Assets",
+        "Appendices"
+    ]
 
     def is_probably_heading(line):
         bbox = line.get("Geometry", {}).get("BoundingBox", {})
         height = bbox.get("Height", 0)
         text = line.get("Text", "").strip()
-        # Exclude if the text starts with "table"
+
+        # Immediately accept candidates that contain any of the important phrases.
+        for phrase in important_headings:
+            if phrase.lower() in text.lower():
+                return True
+
+        # Otherwise, ignore generic Table labels.
         if text.lower().startswith("table"):
             return False
-        # Exclude if the text is too short (i.e. less than 3 words)
-        words = text.split()
-        if len(words) < 3:
+
+        # Reject very short text.
+        if len(text.split()) < 3:
             return False
-        # Accept the candidate if it meets the threshold
-        return height >= HEADING_HEIGHT_THRESHOLD
+
+        # Accept if the bounding box height exceeds the threshold.
+        return height >= HEIGHT_THRESHOLD
 
     tables = []
     for block in blocks:
@@ -242,7 +264,7 @@ def extract_tables(blocks, line_blocks):
             for row in sorted(rows.keys()):
                 table_info["rows"].append(rows[row])
             
-            # Look for candidate headings among LINE blocks on the same page that occur above the table.
+            # Look for candidate headings from LINE blocks on the same page above the table.
             candidate_lines = []
             for line in line_blocks:
                 if line.get("Page", 1) == table_info["page"]:
@@ -251,7 +273,7 @@ def extract_tables(blocks, line_blocks):
                     if line_top is not None and table_info["top"] is not None and line_top < table_info["top"]:
                         if is_probably_heading(line):
                             candidate_lines.append((line_top, line.get("Text", "").strip()))
-            # If candidates exist, choose the one closest to the table.
+            # Choose the candidate closest to the table (the one with the largest Top value)
             if candidate_lines:
                 header_text = max(candidate_lines, key=lambda x: x[0])[1]
                 table_info["header"] = header_text
@@ -259,6 +281,7 @@ def extract_tables(blocks, line_blocks):
                 table_info["header"] = None
             tables.append(table_info)
     return tables
+
 
 def process_all_data(textract_response):
     """
