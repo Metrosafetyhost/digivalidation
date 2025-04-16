@@ -201,6 +201,19 @@ def extract_tables(blocks, line_blocks):
         - "page": the page number of the table,
         - "top": the top coordinate of the table's bounding box.
     """
+    # Define a threshold for a line to be considered “large” (a potential heading).
+    HEADING_HEIGHT_THRESHOLD = 0.03
+
+    def is_probably_heading(line):
+        # Get bounding box details.
+        bbox = line.get("Geometry", {}).get("BoundingBox", {})
+        height = bbox.get("Height", 0)
+        text = line.get("Text", "").strip()
+        # Reject if the text starts with "Table" (case insensitive).
+        if text.lower().startswith("table"):
+            return False
+        return height >= HEADING_HEIGHT_THRESHOLD
+
     tables = []
     for block in blocks:
         if block.get("BlockType") == "TABLE":
@@ -224,13 +237,17 @@ def extract_tables(blocks, line_blocks):
             for row in sorted(rows.keys()):
                 table_info["rows"].append(rows[row])
             
-            # Determine the heading from nearby LINE blocks on the same page.
+            # Gather candidate headings from the LINE blocks on the same page,
+            # filtering out candidates that do not appear "large" enough.
             candidate_lines = []
             for line in line_blocks:
                 if line.get("Page", 1) == table_info["page"]:
-                    line_top = line.get("Geometry", {}).get("BoundingBox", {}).get("Top")
+                    bbox = line.get("Geometry", {}).get("BoundingBox", {})
+                    line_top = bbox.get("Top")
                     if line_top is not None and table_info["top"] is not None and line_top < table_info["top"]:
-                        candidate_lines.append((line_top, line.get("Text", "")))
+                        if is_probably_heading(line):
+                            candidate_lines.append((line_top, line.get("Text", "").strip()))
+            # Choose the candidate that is closest to the table (largest line_top value)
             if candidate_lines:
                 header_text = max(candidate_lines, key=lambda x: x[0])[1]
                 table_info["header"] = header_text
