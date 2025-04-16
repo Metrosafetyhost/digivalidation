@@ -201,17 +201,22 @@ def extract_tables(blocks, line_blocks):
         - "page": the page number of the table,
         - "top": the top coordinate of the table's bounding box.
     """
-    # Define a threshold for a line to be considered “large” (a potential heading).
-    HEADING_HEIGHT_THRESHOLD = 0.03
+    # Lower threshold for a line to be considered large enough to be a heading.
+    # You might need to adjust this value based on your PDF's formatting.
+    HEADING_HEIGHT_THRESHOLD = 0.015
 
     def is_probably_heading(line):
-        # Get bounding box details.
         bbox = line.get("Geometry", {}).get("BoundingBox", {})
         height = bbox.get("Height", 0)
         text = line.get("Text", "").strip()
-        # Reject if the text starts with "Table" (case insensitive).
+        # Exclude if the text starts with "table"
         if text.lower().startswith("table"):
             return False
+        # Exclude if the text is too short (i.e. less than 3 words)
+        words = text.split()
+        if len(words) < 3:
+            return False
+        # Accept the candidate if it meets the threshold
         return height >= HEADING_HEIGHT_THRESHOLD
 
     tables = []
@@ -237,8 +242,7 @@ def extract_tables(blocks, line_blocks):
             for row in sorted(rows.keys()):
                 table_info["rows"].append(rows[row])
             
-            # Gather candidate headings from the LINE blocks on the same page,
-            # filtering out candidates that do not appear "large" enough.
+            # Look for candidate headings among LINE blocks on the same page that occur above the table.
             candidate_lines = []
             for line in line_blocks:
                 if line.get("Page", 1) == table_info["page"]:
@@ -247,7 +251,7 @@ def extract_tables(blocks, line_blocks):
                     if line_top is not None and table_info["top"] is not None and line_top < table_info["top"]:
                         if is_probably_heading(line):
                             candidate_lines.append((line_top, line.get("Text", "").strip()))
-            # Choose the candidate that is closest to the table (largest line_top value)
+            # If candidates exist, choose the one closest to the table.
             if candidate_lines:
                 header_text = max(candidate_lines, key=lambda x: x[0])[1]
                 table_info["header"] = header_text
