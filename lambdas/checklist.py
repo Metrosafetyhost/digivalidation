@@ -202,7 +202,7 @@ def extract_tables(blocks, line_blocks):
         - "top": the top coordinate of the table's bounding box.
     """
     # Define a threshold for non-whitelisted candidates.
-    HEIGHT_THRESHOLD = 0.02
+    HEIGHT_THRESHOLD = 0.01
 
     # List of key phrases (important headings in QCC reports).
     important_headings = [
