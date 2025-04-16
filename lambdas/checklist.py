@@ -178,35 +178,22 @@ def extract_key_values(blocks):
         kvs[key_text] = associated_value_text.strip()
     return kvs
 
-def get_text_for_block(block, blocks):
+def extract_tables_with_grouping(blocks):
     """
-    Helper function to extract aggregated text for a block from its child WORD/LINE blocks.
+    Groups tables under the 'last seen' heading on each page.
+    Returns a list of table dictionaries, each with:
+      - 'header': The heading text that applies to that table (or None).
+      - 'rows': The data for the table.
+      - 'page': The page number of the table.
     """
-    text = ""
-    if "Relationships" in block:
-        for rel in block["Relationships"]:
-            if rel.get("Type") == "CHILD":
-                for child_id in rel.get("Ids", []):
-                    child = next((b for b in blocks if b["Id"] == child_id), None)
-                    if child and child.get("BlockType") in ["WORD", "LINE"]:
-                        text += child.get("Text", "") + " "
-    return text.strip()
 
-def extract_tables(blocks, line_blocks):
-    """
-    Extracts table data from Textract blocks and attempts to capture a nearby heading.
-    Returns a list of dictionaries, each containing:
-        - "rows": the table data (list of rows),
-        - "header": the extracted heading text (or None if not found),
-        - "page": the page number of the table,
-        - "top": the top coordinate of the table's bounding box.
-    """
-    # Define a threshold for non-whitelisted candidates.
-    HEIGHT_THRESHOLD = 0.01
-
-    # List of key phrases (important headings in QCC reports).
-    important_headings = [
-        "Executive Summary",
+    # A helper function to check if a line is a 'major heading'.
+    def is_major_heading(line_text):
+        # Use your heuristics here:
+        # e.g., check if "Significant Findings and Action Plan" is in text,
+        # or bounding box height is in a certain range, etc.
+        # For example:
+        KEY_PHRASES = ["Executive Summary",
         "Areas Identified Requiring Remedial Actions",
         "Building Description",
         "Water Scope",
@@ -216,71 +203,88 @@ def extract_tables(blocks, line_blocks):
         "Audit Detail",
         "Significant Findings and Action Plan",
         "System Asset Register",
-        "Water Assets",
-        "Appendices"
-    ]
-
-    def is_probably_heading(line):
-        bbox = line.get("Geometry", {}).get("BoundingBox", {})
-        height = bbox.get("Height", 0)
-        text = line.get("Text", "").strip()
-
-        # Immediately accept candidates that contain any of the important phrases.
-        for phrase in important_headings:
-            if phrase.lower() in text.lower():
+        "Water Assets", ]
+        
+        text_lower = line_text.lower()
+        for phrase in KEY_PHRASES:
+            if phrase.lower() in text_lower:
                 return True
+        return False
 
-        # Otherwise, ignore generic Table labels.
-        if text.lower().startswith("table"):
-            return False
+    # Collect lines and tables, storing them in a structure that tracks
+    # block type, bounding box top, text, etc. We’ll sort them by 'top'.
+    page_map = {}
+    for b in blocks:
+        page_number = b.get("Page", 1)
+        if page_number not in page_map:
+            page_map[page_number] = []
+        bbox = b.get("Geometry", {}).get("BoundingBox", {})
+        top = bbox.get("Top", 0)
+        # Distinguish between tables and lines:
+        if b.get("BlockType") == "TABLE":
+            page_map[page_number].append({
+                "type": "TABLE",
+                "top": top,
+                "block": b
+            })
+        elif b.get("BlockType") == "LINE":
+            # We'll store the line text so we can check if it's a heading
+            line_text = b.get("Text", "").strip()
+            page_map[page_number].append({
+                "type": "LINE",
+                "top": top,
+                "text": line_text,
+                "block": b
+            })
 
-        # Reject very short text.
-        if len(text.split()) < 3:
-            return False
+    # Now process each page in ascending order of 'top'.
+    output_tables = []
+    for page_number, items in page_map.items():
+        # Sort all items on the page top→bottom
+        items.sort(key=lambda x: x["top"])
+        
+        # We'll track the 'current heading' as we walk down the page
+        current_heading = None
 
-        # Accept if the bounding box height exceeds the threshold.
-        return height >= HEIGHT_THRESHOLD
+        for item in items:
+            if item["type"] == "LINE":
+                # If it qualifies as a major heading, update current_heading
+                if is_major_heading(item["text"]):
+                    current_heading = item["text"]
 
-    tables = []
-    for block in blocks:
-        if block.get("BlockType") == "TABLE":
-            print(f"Found TABLE block with Id: {block.get('Id')}, Relationships: {block.get('Relationships')}")
-            table_info = {}
-            table_info["rows"] = []
-            table_info["page"] = block.get("Page", 1)
-            table_info["top"] = block.get("Geometry", {}).get("BoundingBox", {}).get("Top")
-            cell_blocks = []
-            for rel in block.get("Relationships", []):
-                if rel.get("Type") == "CHILD":
-                    cell_blocks.extend([b for b in blocks if b["Id"] in rel.get("Ids", []) and b["BlockType"] == "CELL"])
-            print(f"Extracted {len(cell_blocks)} CELL blocks for TABLE Id: {block.get('Id')}")
-            rows = {}
-            for cell in cell_blocks:
-                row_index = cell.get("RowIndex", 0)
-                if row_index not in rows:
-                    rows[row_index] = []
-                cell_text = get_text_from_cell(cell, blocks)
-                rows[row_index].append(cell_text)
-            for row in sorted(rows.keys()):
-                table_info["rows"].append(rows[row])
-            
-            # Look for candidate headings from LINE blocks on the same page above the table.
-            candidate_lines = []
-            for line in line_blocks:
-                if line.get("Page", 1) == table_info["page"]:
-                    bbox = line.get("Geometry", {}).get("BoundingBox", {})
-                    line_top = bbox.get("Top")
-                    if line_top is not None and table_info["top"] is not None and line_top < table_info["top"]:
-                        if is_probably_heading(line):
-                            candidate_lines.append((line_top, line.get("Text", "").strip()))
-            # Choose the candidate closest to the table (the one with the largest Top value)
-            if candidate_lines:
-                header_text = max(candidate_lines, key=lambda x: x[0])[1]
-                table_info["header"] = header_text
-            else:
-                table_info["header"] = None
-            tables.append(table_info)
-    return tables
+            elif item["type"] == "TABLE":
+                # Build the table rows (similar to your existing logic)
+                table_block = item["block"]
+                table_dict = {
+                    "header": current_heading,  # inherit the last heading we saw
+                    "page": page_number,
+                    "rows": []
+                }
+                # Extract the cells from 'Relationships'
+                cell_blocks = []
+                for rel in table_block.get("Relationships", []):
+                    if rel.get("Type") == "CHILD":
+                        cell_blocks.extend([
+                            b for b in blocks
+                            if b["Id"] in rel.get("Ids", [])
+                            and b["BlockType"] == "CELL"
+                        ])
+                # Build the row data
+                rows_map = {}
+                for cell in cell_blocks:
+                    row_idx = cell.get("RowIndex", 0)
+                    if row_idx not in rows_map:
+                        rows_map[row_idx] = []
+                    # your existing get_text_from_cell function
+                    cell_text = get_text_from_cell(cell, blocks)
+                    rows_map[row_idx].append(cell_text)
+                for r in sorted(rows_map.keys()):
+                    table_dict["rows"].append(rows_map[r])
+
+                output_tables.append(table_dict)
+
+    return output_tables
+
 
 
 def process_all_data(textract_response):
