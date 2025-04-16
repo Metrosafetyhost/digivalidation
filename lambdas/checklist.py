@@ -149,6 +149,20 @@ def get_text_from_cell(cell, blocks):
                     text += child.get("Text", "") + " "
     return text.strip()
 
+def get_text_for_block(block, blocks):
+    """
+    Helper function to extract aggregated text for a block from its child WORD/LINE blocks.
+    """
+    text = ""
+    if "Relationships" in block:
+        for rel in block["Relationships"]:
+            if rel.get("Type") == "CHILD":
+                for child_id in rel.get("Ids", []):
+                    child = next((b for b in blocks if b["Id"] == child_id), None)
+                    if child and child.get("BlockType") in ["WORD", "LINE"]:
+                        text += child.get("Text", "") + " "
+    return text.strip()
+
 def extract_key_values(blocks):
     """
     Extracts key-value data from Textract blocks.
@@ -178,22 +192,17 @@ def extract_key_values(blocks):
         kvs[key_text] = associated_value_text.strip()
     return kvs
 
-def extract_tables_with_grouping(blocks):
+def extract_tables_grouped(blocks):
     """
-    Groups tables under the 'last seen' heading on each page.
-    Returns a list of table dictionaries, each with:
-      - 'header': The heading text that applies to that table (or None).
-      - 'rows': The data for the table.
-      - 'page': The page number of the table.
+    Extracts table data from Textract blocks, grouping tables under the last seen major heading per page.
+    Returns a list of dictionaries, each containing:
+        - 'rows': the table data (list of rows),
+        - 'header': the inherited heading text for that table (or None),
+        - 'page': the page number.
     """
-
-    # A helper function to check if a line is a 'major heading'.
-    def is_major_heading(line_text):
-        # Use your heuristics here:
-        # e.g., check if "Significant Findings and Action Plan" is in text,
-        # or bounding box height is in a certain range, etc.
-        # For example:
-        KEY_PHRASES = ["Executive Summary",
+    important_headings = [
+        "Significant Findings and Action Plan",
+        "Executive Summary",
         "Areas Identified Requiring Remedial Actions",
         "Building Description",
         "Water Scope",
@@ -201,91 +210,61 @@ def extract_tables_with_grouping(blocks):
         "Management Responsibilities",
         "Legionella Control Programme",
         "Audit Detail",
-        "Significant Findings and Action Plan",
         "System Asset Register",
-        "Water Assets", ]
-        
-        text_lower = line_text.lower()
-        for phrase in KEY_PHRASES:
-            if phrase.lower() in text_lower:
+        "Water Assets",
+        "Appendices"
+    ]
+
+    def is_major_heading(text):
+        for phrase in important_headings:
+            if phrase.lower() in text.lower():
                 return True
         return False
 
-    # Collect lines and tables, storing them in a structure that tracks
-    # block type, bounding box top, text, etc. We’ll sort them by 'top'.
+    # Build a page map of LINE and TABLE blocks.
     page_map = {}
     for b in blocks:
-        page_number = b.get("Page", 1)
-        if page_number not in page_map:
-            page_map[page_number] = []
-        bbox = b.get("Geometry", {}).get("BoundingBox", {})
-        top = bbox.get("Top", 0)
-        # Distinguish between tables and lines:
-        if b.get("BlockType") == "TABLE":
-            page_map[page_number].append({
-                "type": "TABLE",
-                "top": top,
-                "block": b
-            })
-        elif b.get("BlockType") == "LINE":
-            # We'll store the line text so we can check if it's a heading
-            line_text = b.get("Text", "").strip()
-            page_map[page_number].append({
-                "type": "LINE",
-                "top": top,
-                "text": line_text,
-                "block": b
-            })
+        page = b.get("Page", 1)
+        if page not in page_map:
+            page_map[page] = []
+        if b.get("BlockType") in ["LINE", "TABLE"]:
+            bbox = b.get("Geometry", {}).get("BoundingBox", {})
+            top = bbox.get("Top", 0)
+            entry = {"type": b.get("BlockType"), "top": top, "block": b}
+            if b.get("BlockType") == "LINE":
+                entry["text"] = b.get("Text", "").strip()
+            page_map[page].append(entry)
 
-    # Now process each page in ascending order of 'top'.
     output_tables = []
-    for page_number, items in page_map.items():
-        # Sort all items on the page top→bottom
+    for page, items in page_map.items():
         items.sort(key=lambda x: x["top"])
-        
-        # We'll track the 'current heading' as we walk down the page
         current_heading = None
-
         for item in items:
             if item["type"] == "LINE":
-                # If it qualifies as a major heading, update current_heading
-                if is_major_heading(item["text"]):
+                if is_major_heading(item.get("text", "")):
                     current_heading = item["text"]
-
             elif item["type"] == "TABLE":
-                # Build the table rows (similar to your existing logic)
                 table_block = item["block"]
                 table_dict = {
-                    "header": current_heading,  # inherit the last heading we saw
-                    "page": page_number,
+                    "page": page,
+                    "header": current_heading,
                     "rows": []
                 }
-                # Extract the cells from 'Relationships'
                 cell_blocks = []
                 for rel in table_block.get("Relationships", []):
                     if rel.get("Type") == "CHILD":
-                        cell_blocks.extend([
-                            b for b in blocks
-                            if b["Id"] in rel.get("Ids", [])
-                            and b["BlockType"] == "CELL"
-                        ])
-                # Build the row data
-                rows_map = {}
+                        cell_blocks.extend([b for b in blocks if b["Id"] in rel.get("Ids", []) and b["BlockType"] == "CELL"])
+                rows = {}
                 for cell in cell_blocks:
-                    row_idx = cell.get("RowIndex", 0)
-                    if row_idx not in rows_map:
-                        rows_map[row_idx] = []
-                    # your existing get_text_from_cell function
+                    row_index = cell.get("RowIndex", 0)
+                    if row_index not in rows:
+                        rows[row_index] = []
                     cell_text = get_text_from_cell(cell, blocks)
-                    rows_map[row_idx].append(cell_text)
-                for r in sorted(rows_map.keys()):
-                    table_dict["rows"].append(rows_map[r])
-
+                    rows[row_index].append(cell_text)
+                for r in sorted(rows.keys()):
+                    table_dict["rows"].append(rows[r])
                 output_tables.append(table_dict)
-
     return output_tables
-
-
 
 def process_all_data(textract_response):
     """
@@ -295,9 +274,8 @@ def process_all_data(textract_response):
     blocks = textract_response.get("Blocks", [])
     line_pages = process_textract_output(textract_response)
     combined_text = combine_pages(line_pages)
-    # Create a list of all LINE blocks to use for extracting table headings.
-    line_blocks = [b for b in blocks if b.get("BlockType") == "LINE"]
-    tables = extract_tables(blocks, line_blocks)
+    # Use the new grouped table extraction function.
+    tables = extract_tables_grouped(blocks)
     key_values = extract_key_values(blocks)
     
     output = {
@@ -334,7 +312,6 @@ def generate_csv(data):
     # Section 2: Tables.
     writer.writerow(["=== Tables ==="])
     for idx, table_info in enumerate(data["tables"], start=1):
-        # Use the extracted header if available, otherwise fall back to "Table {idx}"
         header_text = table_info.get("header") or f"Table {idx}"
         writer.writerow([header_text])
         for row in table_info.get("rows", []):
