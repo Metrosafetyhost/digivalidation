@@ -4,10 +4,11 @@ import time
 import re
 from io import StringIO
 
+# AWS clients
 textract = boto3.client('textract', region_name='eu-west-2')
 s3 = boto3.client('s3')
 
-# List of headings to detect as section boundaries
+# Headings that define sections
 IMPORTANT_HEADINGS = [
     "Significant Findings and Action Plan",
     "Executive Summary",
@@ -25,12 +26,12 @@ IMPORTANT_HEADINGS = [
     "Legionella Control Programme of Preventative Works",
 ]
 
-
 def normalize(text):
+    """Lowercases and strips non-alphanumeric characters"""
     return re.sub(r'[^a-z0-9 ]+', ' ', text.lower()).strip()
 
-
 def is_major_heading(text):
+    """Returns True if the line matches one of the important headings"""
     norm = normalize(text)
     for phrase in IMPORTANT_HEADINGS:
         words = phrase.lower().split()
@@ -38,8 +39,8 @@ def is_major_heading(text):
             return True
     return False
 
-
 def poll_for_job_completion(job_id, max_tries=20, delay=5):
+    """Poll Textract until the document analysis job completes"""
     for _ in range(max_tries):
         resp = textract.get_document_analysis(JobId=job_id)
         status = resp.get('JobStatus')
@@ -48,10 +49,10 @@ def poll_for_job_completion(job_id, max_tries=20, delay=5):
         if status == 'FAILED':
             raise Exception("Textract job failed")
         time.sleep(delay)
-    raise Exception("Job did not complete in time")
-
+    raise Exception("Textract job did not complete in time")
 
 def get_all_pages(job_id):
+    """Retrieve all pages of Textract analysis results"""
     all_blocks = []
     token = None
     while True:
@@ -65,26 +66,26 @@ def get_all_pages(job_id):
             break
     return all_blocks
 
-
 def extract_pages_text(blocks):
+    """Group LINE blocks by page, sorted by their vertical position"""
     pages = {}
     for b in blocks:
         if b['BlockType'] == 'LINE':
             pg = b.get('Page', 1)
             top = b['Geometry']['BoundingBox']['Top']
             pages.setdefault(pg, []).append((top, b['Text']))
+
     out = {}
     for pg, lines in pages.items():
         lines.sort(key=lambda x: x[0])
         out[pg] = [text for _, text in lines]
     return out
 
-
 def extract_tables_grouped(blocks):
-    # similar to existing logic, but include bounding boxes
+    """Extract tables, attach nearest heading and bounding box"""
     tables = []
-    # collect headings per page
     headings_per_page = {}
+    # collect headings
     for b in blocks:
         if b['BlockType'] == 'LINE' and 'Text' in b and is_major_heading(b['Text']):
             pg = b.get('Page', 1)
@@ -104,16 +105,16 @@ def extract_tables_grouped(blocks):
             rows = []
             for rel in b.get('Relationships', []):
                 if rel['Type'] == 'CHILD':
-                    cells = [blk for blk in blocks if blk['Id'] in rel['Ids'] and blk['BlockType']=='CELL']
+                    cells = [blk for blk in blocks if blk['Id'] in rel['Ids'] and blk['BlockType'] == 'CELL']
                     row_map = {}
                     for cell in cells:
                         ri = cell['RowIndex']
                         text = ''
                         for crel in cell.get('Relationships', []):
-                            if crel['Type']=='CHILD':
+                            if crel['Type'] == 'CHILD':
                                 for cid in crel['Ids']:
-                                    child = next((x for x in blocks if x['Id']==cid), None)
-                                    if child and child['BlockType'] in ['WORD','LINE']:
+                                    child = next((x for x in blocks if x['Id'] == cid), None)
+                                    if child and child['BlockType'] in ['WORD', 'LINE']:
                                         text += child['Text'] + ' '
                         row_map.setdefault(ri, []).append(text.strip())
                     for ri in sorted(row_map):
@@ -126,8 +127,8 @@ def extract_tables_grouped(blocks):
             })
     return tables
 
-
 def group_sections(pages_text, tables):
+    """Group paragraphs and tables into named sections"""
     sections = []
     for pg, lines in pages_text.items():
         current = None
@@ -146,40 +147,45 @@ def group_sections(pages_text, tables):
                     current['paragraphs'].append(line)
         if current:
             sections.append(current)
-    # attach tables
+    # attach tables to matching section
     for sec in sections:
-        sec['tables'] = [t for t in tables if t['page']==sec['page'] and t['header']==sec['name']]
+        sec['tables'] = [t for t in tables if t['page'] == sec['page'] and t['header'] == sec['name']]
     return sections
 
-
 def process(event, context):
-    # launch Textract
-    input_bucket = event['bucket']
-    key = event['document_key']
-    out_bucket = event['output_bucket']
+    """AWS Lambda entrypoint: runs Textract, structures output, saves JSON to S3"""
+    # Safely pull event parameters or use defaults
+    input_bucket   = event.get('bucket', 'metrosafetyprodfiles')
+    document_key   = event.get('document_key', 'WorkOrders/your-document.pdf')
+    output_bucket  = event.get('output_bucket', 'textract-output-digival')
+
+    # Kick off Textract analysis
     resp = textract.start_document_analysis(
-        DocumentLocation={'S3Object':{'Bucket':input_bucket,'Name':key}},
-        FeatureTypes=['TABLES','FORMS']
+        DocumentLocation={
+            'S3Object': {'Bucket': input_bucket, 'Name': document_key}
+        },
+        FeatureTypes=['TABLES', 'FORMS']
     )
     job_id = resp['JobId']
+
+    # Wait for completion
     blocks = poll_for_job_completion(job_id)
 
-    # extract structured data
+    # Build structured JSON
     pages_text = extract_pages_text(blocks)
-    tables = extract_tables_grouped(blocks)
-    sections = group_sections(pages_text, tables)
+    tables     = extract_tables_grouped(blocks)
+    sections   = group_sections(pages_text, tables)
 
-    # build final JSON
     result = {
-        'document': key,
+        'document': document_key,
         'sections': sections
     }
 
-    # save JSON to S3
-    out_key = f"processed/{key.rsplit('/',1)[-1].replace('.pdf','.json')}"
-    s3.put_object(Bucket=out_bucket, Key=out_key, Body=json.dumps(result))
+    # Persist JSON to S3
+    json_key = f"processed/{document_key.rsplit('/', 1)[-1].replace('.pdf', '.json')}"
+    s3.put_object(Bucket=output_bucket, Key=json_key, Body=json.dumps(result))
 
     return {
         'statusCode': 200,
-        'body': json.dumps({'json_s3_key': out_key})
+        'body': json.dumps({'json_s3_key': json_key})
     }
