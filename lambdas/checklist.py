@@ -218,55 +218,61 @@ def extract_tables_grouped(blocks):
     ]
 
     def is_major_heading(text):
-        for phrase in important_headings:
-            if phrase.lower() in text.lower():
-                return True
-        return False
+        tl = text.lower()
+        return any(phrase.lower() in tl for phrase in important_headings)
 
-    # Build a page map of LINE and TABLE blocks.
-    page_map = {}
+    # Build a per‑page list of LINEs and TABLEs, with their tops
+    pages = {}
     for b in blocks:
+        if b["BlockType"] not in ("LINE", "TABLE"):
+            continue
         page = b.get("Page", 1)
-        if page not in page_map:
-            page_map[page] = []
-        if b.get("BlockType") in ["LINE", "TABLE"]:
-            bbox = b.get("Geometry", {}).get("BoundingBox", {})
-            top = bbox.get("Top", 0)
-            entry = {"type": b.get("BlockType"), "top": top, "block": b}
-            if b.get("BlockType") == "LINE":
-                entry["text"] = b.get("Text", "").strip()
-            page_map[page].append(entry)
+        top = b["Geometry"]["BoundingBox"]["Top"]
+        pages.setdefault(page, []).append({
+            "type": b["BlockType"],
+            "block": b,
+            "top": top,
+            "text": b.get("Text", "").strip() if b["BlockType"] == "LINE" else None
+        })
 
-    output_tables = []
-    for page, items in page_map.items():
-        items.sort(key=lambda x: x["top"])
-        current_heading = None
+    output = []
+    for page, items in pages.items():
+        # find all the heading lines on this page
+        headings = [(i["top"], i["text"]) for i in items
+                    if i["type"] == "LINE" and is_major_heading(i["text"])]
+
+        # now attach each table to its nearest heading above it
         for item in items:
-            if item["type"] == "LINE":
-                if is_major_heading(item.get("text", "")):
-                    current_heading = item["text"]
-            elif item["type"] == "TABLE":
-                table_block = item["block"]
-                table_dict = {
-                    "page": page,
-                    "header": current_heading,
-                    "rows": []
-                }
-                cell_blocks = []
-                for rel in table_block.get("Relationships", []):
-                    if rel.get("Type") == "CHILD":
-                        cell_blocks.extend([b for b in blocks if b["Id"] in rel.get("Ids", []) and b["BlockType"] == "CELL"])
-                rows = {}
-                for cell in cell_blocks:
-                    row_index = cell.get("RowIndex", 0)
-                    if row_index not in rows:
-                        rows[row_index] = []
-                    cell_text = get_text_from_cell(cell, blocks)
-                    rows[row_index].append(cell_text)
-                for r in sorted(rows.keys()):
-                    table_dict["rows"].append(rows[r])
-                output_tables.append(table_dict)
-    return output_tables
+            if item["type"] != "TABLE":
+                continue
+            tbl_top = item["top"]
+            # of all headings whose top is < tbl_top, pick the one closest
+            candidates = [(y, t) for (y, t) in headings if y < tbl_top]
+            header = max(candidates, key=lambda x: x[0])[1] if candidates else None
+
+            # now extract rows exactly as you do today
+            table_block = item["block"]
+            # … your existing logic to pull out cell blocks, row indices, etc. …
+            rows = []
+            for rel in table_block.get("Relationships", []):
+                if rel["Type"] == "CHILD":
+                    cells = [b for b in blocks
+                             if b["Id"] in rel["Ids"] and b["BlockType"] == "CELL"]
+                    # group cells by RowIndex…
+                    row_map = {}
+                    for cell in cells:
+                        ri = cell["RowIndex"]
+                        row_map.setdefault(ri, []).append(get_text_from_cell(cell, blocks))
+                    for ri in sorted(row_map):
+                        rows.append(row_map[ri])
+
+            output.append({
+                "page": page,
+                "header": header,
+                "rows": rows
+            })
+
+    return output
 
 def process_all_data(textract_response):
     """
