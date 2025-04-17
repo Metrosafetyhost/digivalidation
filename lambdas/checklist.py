@@ -217,10 +217,19 @@ def extract_tables_grouped(blocks):
         "Legionella Control Programme of Preventative Works",
     ]
 
-    def is_major_heading(text):
-        tl = text.lower()
-        return any(phrase.lower() in tl for phrase in important_headings)
+    def normalize(text):
+    # lowercase, strip out anything that isn’t alphanumeric or space
+        return re.sub(r'[^a-z0-9 ]+', ' ', text.lower()).strip()
 
+    def is_major_heading(text):
+        norm = normalize(text)
+        for phrase in important_headings:
+            words = phrase.lower().split()
+            # make sure *every* word in the phrase appears in the line,
+            # in any order, with any spacing/punctuation
+            if all(w in norm for w in words):
+                return True
+        return False
     # Build a per‑page list of LINEs and TABLEs, with their tops
     pages = {}
     for b in blocks:
