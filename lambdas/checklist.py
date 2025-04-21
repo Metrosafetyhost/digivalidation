@@ -8,7 +8,6 @@ from io import StringIO
 textract = boto3.client('textract', region_name='eu-west-2')
 s3 = boto3.client('s3')
 
-# Headings that define sections
 IMPORTANT_HEADINGS = [
     "Significant Findings and Action Plan",
     "Executive Summary",
@@ -27,16 +26,47 @@ IMPORTANT_HEADINGS = [
 ]
 
 def normalize(text):
-    # Lowercase and strip non-alphanumeric characters
     return re.sub(r'[^a-z0-9 ]+', ' ', text.lower()).strip()
 
 def is_major_heading(text):
     norm = normalize(text)
     for phrase in IMPORTANT_HEADINGS:
-        words = phrase.lower().split()
-        if all(w in norm for w in words):
+        if all(w in norm for w in phrase.lower().split()):
             return True
     return False
+
+# Extract key/value pairs
+
+def extract_key_value_pairs(blocks):
+    block_map = {b['Id']: b for b in blocks}
+    kv_pairs = []
+
+    for b in blocks:
+        if b['BlockType']=='KEY_VALUE_SET' and 'KEY' in b.get('EntityTypes',[]):
+            # text and bbox
+            key_text = ''
+            for r in b.get('Relationships',[]):
+                if r['Type']=='CHILD':
+                    for cid in r['Ids']:
+                        w = block_map[cid]
+                        if w['BlockType'] in ('WORD','LINE'):
+                            key_text += w['Text']+' '
+            key_text = key_text.strip()
+            bbox = b['Geometry']['BoundingBox']
+            page = b.get('Page',1)
+            # find value block
+            val_text = ''
+            for r in b.get('Relationships',[]):
+                if r['Type']=='VALUE':
+                    valb = block_map[r['Ids'][0]]
+                    for r2 in valb.get('Relationships',[]):
+                        if r2['Type']=='CHILD':
+                            for cid2 in r2['Ids']:
+                                w2 = block_map[cid2]
+                                if w2['BlockType'] in ('WORD','LINE'):
+                                    val_text += w2['Text']+' '
+            kv_pairs.append({'key':key_text,'value':val_text.strip(),'page':page,'top':bbox['Top']})
+    return kv_pairs
 
 # --- New: Key-Value (FORM) extraction ---
 def extract_key_value_pairs(blocks):
@@ -89,141 +119,108 @@ def extract_key_value_pairs(blocks):
                     })
     return pairs
 
-# Existing functions for tables and pages
-
 def poll_for_job_completion(job_id, max_tries=20, delay=5):
     for _ in range(max_tries):
         resp = textract.get_document_analysis(JobId=job_id)
-        status = resp.get('JobStatus')
-        if status == 'SUCCEEDED':
-            return get_all_pages(job_id)
-        if status == 'FAILED':
-            raise Exception("Textract job failed")
+        if resp['JobStatus']=='SUCCEEDED': return get_all_pages(job_id)
+        if resp['JobStatus']=='FAILED': raise
         time.sleep(delay)
-    raise Exception("Textract job did not complete in time")
-
+    raise
 
 def get_all_pages(job_id):
-    all_blocks = []
-    token = None
+    blocks=[]; token=None
     while True:
-        if token:
-            resp = textract.get_document_analysis(JobId=job_id, NextToken=token)
-        else:
-            resp = textract.get_document_analysis(JobId=job_id)
-        all_blocks.extend(resp.get('Blocks', []))
-        token = resp.get('NextToken')
-        if not token:
-            break
-    return all_blocks
+        params={'JobId':job_id}
+        if token: params['NextToken']=token
+        resp=textract.get_document_analysis(**params)
+        blocks+=resp['Blocks']
+        token=resp.get('NextToken');
+        if not token: break
+    return blocks
 
 
 def extract_pages_text(blocks):
-    pages = {}
+    by_page={}
     for b in blocks:
-        if b['BlockType'] == 'LINE':
-            pg = b.get('Page', 1)
-            top = b['Geometry']['BoundingBox']['Top']
-            pages.setdefault(pg, []).append((top, b['Text']))
-    out = {}
-    for pg, lines in pages.items():
-        lines.sort(key=lambda x: x[0])
-        out[pg] = [text for _, text in lines]
+        if b['BlockType']=='LINE':
+            pg=b.get('Page',1); top=b['Geometry']['BoundingBox']['Top']
+            by_page.setdefault(pg,[]).append((top,b['Text']))
+    out={}
+    for pg,lines in by_page.items():
+        lines.sort(key=lambda x:x[0]); out[pg]=[t for _,t in lines]
     return out
 
 def extract_tables_grouped(blocks):
-    tables = []
-    headings_per_page = {}
-    # collect headings
+    # unchanged
+    tables=[]; headings={}
     for b in blocks:
-        if b['BlockType'] == 'LINE' and 'Text' in b and is_major_heading(b['Text']):
-            pg = b.get('Page', 1)
-            top = b['Geometry']['BoundingBox']['Top']
-            headings_per_page.setdefault(pg, []).append((top, b['Text']))
-    # extract tables
+        if b['BlockType']=='LINE' and is_major_heading(b.get('Text','')):
+            pg=b.get('Page',1); headings.setdefault(pg,[]).append((b['Geometry']['BoundingBox']['Top'],b['Text']))
     for b in blocks:
-        if b['BlockType'] == 'TABLE':
-            pg = b.get('Page', 1)
-            top = b['Geometry']['BoundingBox']['Top']
-            header = None
-            candidates = [(y, t) for (y, t) in headings_per_page.get(pg, []) if y < top]
-            if candidates:
-                header = max(candidates, key=lambda x: x[0])[1]
-            rows = []
-            for rel in b.get('Relationships', []):
-                if rel['Type'] == 'CHILD':
-                    cells = [blk for blk in blocks if blk['Id'] in rel['Ids'] and blk['BlockType'] == 'CELL']
-                    row_map = {}
-                    for cell in cells:
-                        ri = cell['RowIndex']
-                        text = ''
-                        for crel in cell.get('Relationships', []):
-                            if crel['Type'] == 'CHILD':
-                                for cid in crel['Ids']:
-                                    child = next((x for x in blocks if x['Id'] == cid), None)
-                                    if child and child['BlockType'] in ['WORD', 'LINE']:
-                                        text += child['Text'] + ' '
-                        row_map.setdefault(ri, []).append(text.strip())
-                    for ri in sorted(row_map):
-                        rows.append(row_map[ri])
-            tables.append({
-                'page': pg,
-                'header': header,
-                'boundingBox': b['Geometry']['BoundingBox'],
-                'rows': rows
-            })
+        if b['BlockType']=='TABLE':
+            pg=b.get('Page',1); top=b['Geometry']['BoundingBox']['Top']
+            hdr=None
+            cand=[(y,t) for y,t in headings.get(pg,[]) if y<top]
+            if cand: hdr=max(cand,key=lambda x:x[0])[1]
+            rows=[]
+            for rel in b.get('Relationships',[]):
+                if rel['Type']=='CHILD':
+                    cells=[c for c in blocks if c['Id'] in rel['Ids'] and c['BlockType']=='CELL']
+                    rowm={}
+                    for c in cells:
+                        ri=c['RowIndex']; txt=''
+                        for r2 in c.get('Relationships',[]):
+                            if r2['Type']=='CHILD':
+                                for cid in r2['Ids']:
+                                    w=next((x for x in blocks if x['Id']==cid),None)
+                                    if w and w['BlockType'] in ('WORD','LINE'): txt+=w['Text']+' '
+                        rowm.setdefault(ri,[]).append(txt.strip())
+                    for ri in sorted(rowm): rows.append(rowm[ri])
+            tables.append({'page':pg,'header':hdr,'rows':rows,'bbox':b['Geometry']['BoundingBox']})
     return tables
 
 
-def group_sections(pages_text, tables, kv_pairs):
-    sections = []
-    # Build sections by lines
-    for pg, lines in pages_text.items():
-        current = None
-        for line in lines:
-            if is_major_heading(line):
-                if current:
-                    sections.append(current)
-                current = {'name': line, 'page': pg, 'paragraphs': [], 'tables': [], 'fields': []}
-            else:
-                if current:
-                    current['paragraphs'].append(line)
-        if current:
-            sections.append(current)
-    # Attach tables
-    for sec in sections:
-        sec['tables'] = [t for t in tables if t['page'] == sec['page'] and t['header'] == sec['name']]
-    # Attach key-value pairs under matching section
-    for sec in sections:
-        sec['fields'] = [
-            {'key': kv['key'], 'value': kv['value']} 
-            for kv in kv_pairs 
-            if kv['page'] == sec['page']
-        ]
+def group_sections(blocks, pages_text, tables, kv_pairs):
+    # find headings with positions
+    heads=[]
+    for b in blocks:
+        if b['BlockType']=='LINE' and is_major_heading(b.get('Text','')):
+            heads.append({'name':b['Text'],'page':b.get('Page',1),'top':b['Geometry']['BoundingBox']['Top']})
+    # sort by page, top
+    heads.sort(key=lambda x:(x['page'],x['top']))
+    sections=[]
+    for i,h in enumerate(heads):
+        page=h['page']; start=h['top'];
+        end=1.0
+        # next on same page
+        for j in range(i+1,len(heads)):
+            if heads[j]['page']==page:
+                end=heads[j]['top']; break
+        # gather paragraphs
+        paras=[]
+        for top,text in [(b['Geometry']['BoundingBox']['Top'],b['Text']) for b in blocks if b['BlockType']=='LINE' and b.get('Page',1)==page]:
+            if start<top<end: paras.append(text)
+        # gather tables
+        secs=[t for t in tables if t['page']==page and start<t['bbox']['Top']<end]
+        # gather kv
+        fields=[{'key':kv['key'],'value':kv['value']} for kv in kv_pairs if kv['page']==page and start<kv['top']<end]
+        sections.append({'name':h['name'],'page':page,'paragraphs':paras,'tables':secs,'fields':fields})
     return sections
 
 
 def process(event, context):
-    input_bucket   = event.get('bucket', 'metrosafetyprodfiles')
-    document_key   = event.get('document_key', 'WorkOrders/your-document.pdf')
-    output_bucket  = event.get('output_bucket', 'textract-output-digival')
-
-    resp = textract.start_document_analysis(
-        DocumentLocation={'S3Object': {'Bucket': input_bucket, 'Name': document_key}},
-        FeatureTypes=['TABLES','FORMS']
-    )
-    job_id = resp['JobId']
-
-    blocks = poll_for_job_completion(job_id)
-
-    pages_text = extract_pages_text(blocks)
-    tables     = extract_tables_grouped(blocks)
-    kv_pairs   = extract_key_value_pairs(blocks)
-    sections   = group_sections(pages_text, tables, kv_pairs)
-
-    result = {'document': document_key, 'sections': sections}
-
-    json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
-    s3.put_object(Bucket=output_bucket, Key=json_key, Body=json.dumps(result))
-
-    return {'statusCode': 200, 'body': json.dumps({'json_s3_key': json_key})}
+    inb=event.get('bucket','metrosafetyprodfiles')
+    key=event.get('document_key')
+    outb=event.get('output_bucket','textract-output-digival')
+    resp=textract.start_document_analysis(
+        DocumentLocation={'S3Object':{'Bucket':inb,'Name':key}},
+        FeatureTypes=['TABLES','FORMS'])
+    bid=resp['JobId']; blocks=poll_for_job_completion(bid)
+    pages=extract_pages_text(blocks)
+    tables=extract_tables_grouped(blocks)
+    kv=extract_key_value_pairs(blocks)
+    secs=group_sections(blocks,pages,tables,kv)
+    out={'document':key,'sections':secs}
+    jk=f"processed/{key.rsplit('/',1)[-1].replace('.pdf','.json')}"
+    s3.put_object(Bucket=outb,Key=jk,Body=json.dumps(out))
+    return {'statusCode':200,'body':json.dumps({'json_s3_key':jk})}
