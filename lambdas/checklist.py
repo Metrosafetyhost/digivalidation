@@ -23,6 +23,7 @@ IMPORTANT_HEADINGS = [
     "Appendices",
     "Risk Assessment Checklist",
     "Legionella Control Programme of Preventative Works",
+    "System Asset Register"
 ]
 
 def normalize(text):
@@ -38,88 +39,48 @@ def is_major_heading(text):
 # Extract key/value pairs
 
 def extract_key_value_pairs(blocks):
-    block_map = {b['Id']: b for b in blocks}
-    kv_pairs = []
+    # Build a lookup of all blocks by Id for quick CHILD/VALUE traversal
+    id_map = {b['Id']: b for b in blocks}
 
-    for b in blocks:
-        if b['BlockType']=='KEY_VALUE_SET' and 'KEY' in b.get('EntityTypes',[]):
-            # text and bbox
-            key_text = ''
-            for r in b.get('Relationships',[]):
-                if r['Type']=='CHILD':
-                    for cid in r['Ids']:
-                        w = block_map.get(cid)
-                        if w and w['BlockType'] in ('WORD','LINE'):
-                            key_text += w['Text'] + ' '
-            key_text = key_text.strip()
-            bbox = b.get('Geometry', {}).get('BoundingBox', {})
-            top = bbox.get('Top')
-            page = b.get('Page',1)
-            # find value block
-            val_text = ''
-            for r in b.get('Relationships',[]):
-                if r['Type']=='VALUE':
-                    valb = block_map.get(r['Ids'][0])
-                    if valb:
-                        for r2 in valb.get('Relationships',[]):
-                            if r2['Type']=='CHILD':
-                                for cid2 in r2['Ids']:
-                                    w2 = block_map.get(cid2)
-                                    if w2 and w2['BlockType'] in ('WORD','LINE'):
-                                        val_text += w2['Text'] + ' '
-            kv_pairs.append({'key': key_text, 'value': val_text.strip(), 'page': page, 'top': top})
+    kv_pairs = []
+    for block in blocks:
+        if block['BlockType']=='KEY_VALUE_SET' and 'KEY' in block.get('EntityTypes', []):
+            # pull the key text
+            key_text = ""
+            for rel in block.get('Relationships', []):
+                if rel['Type']=='CHILD':
+                    for cid in rel['Ids']:
+                        child = id_map[cid]
+                        if child['BlockType']=='WORD':
+                            key_text += child['Text'] + " "
+
+            # find the matching VALUE block
+            value_block = None
+            for rel in block.get('Relationships', []):
+                if rel['Type']=='VALUE':
+                    for vid in rel['Ids']:
+                        if id_map[vid]['BlockType']=='KEY_VALUE_SET':
+                            value_block = id_map[vid]
+
+            # pull the value text
+            value_text = ""
+            if value_block:
+                for rel in value_block.get('Relationships', []):
+                    if rel['Type']=='CHILD':
+                        for cid in rel['Ids']:
+                            child = id_map[cid]
+                            if child['BlockType']=='WORD':
+                                value_text += child['Text'] + " "
+
+            if key_text.strip() and value_text.strip():
+                kv_pairs.append({
+                    'key':     key_text.strip(),
+                    'value':   value_text.strip(),
+                    'page':    block.get('Page', 1),
+                    'top':     block['Geometry']['BoundingBox']['Top']
+                })
     return kv_pairs
 
-# --- New: Key-Value (FORM) extraction ---
-def extract_key_value_pairs(blocks):
-    # Map block id to block
-    block_map = {b['Id']: b for b in blocks}
-    key_blocks = []
-    value_blocks = {}
-
-    # Separate KEY and VALUE blocks
-    for b in blocks:
-        if b['BlockType'] == 'KEY_VALUE_SET' and 'EntityTypes' in b:
-            types = b['EntityTypes']
-            if 'KEY' in types:
-                key_blocks.append(b)
-            elif 'VALUE' in types:
-                value_blocks[b['Id']] = b
-
-    pairs = []
-    for key_block in key_blocks:
-        # Extract full text of key
-        key_text = ''
-        for rel in key_block.get('Relationships', []):
-            if rel['Type'] == 'CHILD':
-                for cid in rel['Ids']:
-                    child = block_map.get(cid)
-                    if child and child['BlockType'] in ('WORD', 'LINE'):
-                        key_text += child['Text'] + ' '
-        key_text = key_text.strip()
-
-        # Find associated VALUE block(s)
-        for rel in key_block.get('Relationships', []):
-            if rel['Type'] == 'VALUE':
-                for vid in rel['Ids']:
-                    val_block = value_blocks.get(vid)
-                    if not val_block:
-                        continue
-                    # Extract full text of value
-                    val_text = ''
-                    for rel2 in val_block.get('Relationships', []):
-                        if rel2['Type'] == 'CHILD':
-                            for cid2 in rel2['Ids']:
-                                child2 = block_map.get(cid2)
-                                if child2 and child2['BlockType'] in ('WORD', 'LINE'):
-                                    val_text += child2['Text'] + ' '
-                    pairs.append({
-                        'key': key_text,
-                        'value': val_text.strip(),
-                        'page': key_block.get('Page', 1),
-                        'bbox': key_block['Geometry']['BoundingBox']
-                    })
-    return pairs
 
 def poll_for_job_completion(job_id, max_tries=20, delay=5):
     for _ in range(max_tries):
@@ -200,39 +161,43 @@ def extract_tables_grouped(blocks):
     return tables
 
 
-def group_sections(blocks, pages_text, tables, kv_pairs):
-    heads=[]
-    for b in blocks:
-        if b['BlockType']=='LINE' and is_major_heading(b.get('Text','')):
-            heads.append({'name':b['Text'], 'page':b.get('Page',1), 'top':b['Geometry']['BoundingBox']['Top']})
-    # sort headings
-    heads.sort(key=lambda x: (x['page'], x['top']))
-    sections=[]
-    for i,h in enumerate(heads):
-        page = h['page']
-        start = h['top']
-        # determine end bound
-        end = 1.0
-        for j in range(i+1, len(heads)):
-            if heads[j]['page'] == page:
-                end = heads[j]['top']
-                break
-        # paragraphs
-        paras=[]
-        for b in blocks:
-            if b['BlockType']=='LINE' and b.get('Page',1)==page:
-                top = b['Geometry']['BoundingBox']['Top']
-                if start < top < end:
-                    paras.append(b['Text'])
-        # tables
-        secs = [t for t in tables if t['page']==page and start < t['bbox']['Top'] < end]
-        # key-values (ensure 'top' exists)
-        fields = []
+def group_sections(pages_text, tables, kv_pairs):
+    sections = []
+    # First pass: find all the headings in document order
+    for pg, lines in sorted(pages_text.items()):
+        for line in lines:
+            if is_major_heading(line):
+                sections.append({
+                    'name':       line,
+                    'start_page': pg,
+                    'paragraphs': [],
+                    'tables':     [],
+                    'fields':     []
+                })
+
+    # Second pass: for each section, grab everything until the next heading
+    for idx, sec in enumerate(sections):
+        next_sec = sections[idx+1] if idx+1 < len(sections) else None
+
+        for pg, lines in pages_text.items():
+            # include pages from this section's start_page up to (but not including) next_sec.start_page
+            if pg < sec['start_page'] or (next_sec and pg >= next_sec['start_page']):
+                continue
+
+            # dump **all** the lines on these pages into paragraphs
+            sec['paragraphs'].extend(lines)
+
+        # attach any tables whose header matches the section name
+        sec['tables'] = [
+            t for t in tables
+            if t['page'] == sec['start_page']
+               and t['header'] == sec['name']
+        ]
+
+        # attach **all** kv_pairs on those same pages
         for kv in kv_pairs:
-            kv_top = kv.get('top')
-            if kv.get('page')==page and kv_top is not None and start < kv_top < end:
-                fields.append({'key':kv['key'], 'value':kv['value']})
-        sections.append({'name':h['name'], 'page':page, 'paragraphs':paras, 'tables':secs, 'fields':fields})
+            if sec['start_page'] <= kv['page'] < (next_sec['start_page'] if next_sec else kv['page']+1):
+                sec['fields'].append({'key': kv['key'], 'value': kv['value']})
     return sections
 
 
@@ -246,12 +211,11 @@ def process(event, context):
         FeatureTypes=['TABLES','FORMS']
     )
     job_id = resp['JobId']
-    blocks = poll_for_job_completion(job_id)
-
-    pages = extract_pages_text(blocks)
-    tables = extract_tables_grouped(blocks)
-    kv_pairs = extract_key_value_pairs(blocks)
-    sections = group_sections(blocks, pages, tables, kv_pairs)
+    blocks    = poll_for_job_completion(job_id)
+    pages     = extract_pages_text(blocks)
+    tables    = extract_tables_grouped(blocks)
+    kv_pairs  = extract_key_value_pairs(blocks)
+    sections  = group_sections(pages, tables, kv_pairs)
 
     result = {'document':document_key, 'sections':sections}
     json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
