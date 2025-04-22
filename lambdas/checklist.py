@@ -36,28 +36,84 @@ def is_major_heading(text):
             return True
     return False
 
-# Function to parse the Significant Findings and Action Plan into structured items
+# Rewrite to handle “12.2.” style refs, followed by Priority / Observation / Target Date / Action Required
 def parse_significant_findings(lines):
-    pattern = re.compile(r'^(Audit Ref|Observation|Priority|Action Required|Target Date)[:\s]+(.+)$')
     items = []
     current = None
-    for line in lines:
-        match = pattern.match(line)
-        if not match:
-            continue
-        label, value = match.group(1), match.group(2).strip()
-        if label == 'Audit Ref':
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        # Start of a new finding: e.g. "12.2. Has a competent person..."
+        m_ref = re.match(r'^(\d+\.\d+)\.?\s+(.+)$', line)
+        if m_ref:
+            # push previous
             if current:
                 items.append(current)
-            current = {'audit_ref': value}
-        elif current:
-            key = label.lower().replace(' ', '_')
-            current[key] = value
+            current = {
+                'audit_ref': m_ref.group(1),
+                'question': m_ref.group(2)
+            }
+            i += 1
+            continue
+
+        if current:
+            # Priority on its own line, next line holds the value
+            if line.lower() == 'priority' and i+1 < len(lines):
+                current['priority'] = lines[i+1].strip()
+                i += 2
+                continue
+
+            # Observation block
+            if line.lower().startswith('observation'):
+                # if just 'Observation', grab subsequent lines until next label
+                obs = ''
+                if line.strip().lower() == 'observation':
+                    j = i+1
+                else:
+                    # inline
+                    obs = line.partition(':')[2].strip()
+                    j = i+1
+                while j < len(lines) and not re.match(r'^(Priority|Target Date|Action Required)$', lines[j].strip(), re.IGNORECASE) and not re.match(r'^\d+\.\d+', lines[j].strip()):
+                    obs += ' ' + lines[j].strip()
+                    j += 1
+                current['observation'] = obs.strip()
+                i = j
+                continue
+
+            # Target Date either inline or next line
+            if line.lower().startswith('target date'):
+                parts = line.split(':',1)
+                if len(parts)==2 and parts[1].strip():
+                    current['target_date'] = parts[1].strip()
+                    i += 1
+                elif i+1 < len(lines):
+                    current['target_date'] = lines[i+1].strip()
+                    i += 2
+                else:
+                    i += 1
+                continue
+
+            # Action Required block
+            if line.lower().startswith('action required'):
+                action = ''
+                parts = line.split(':',1)
+                if len(parts)==2:
+                    action = parts[1].strip()
+                j = i+1
+                while j < len(lines) and not re.match(r'^\d+\.\d+', lines[j].strip()):
+                    action += ' ' + lines[j].strip()
+                    j += 1
+                current['action_required'] = action.strip()
+                i = j
+                continue
+
+        i += 1
+
     if current:
         items.append(current)
     return items
 
-# Extract key/value pairs from Textract blocks
+
 def extract_key_value_pairs(blocks):
     id_map = {b['Id']: b for b in blocks}
     kv_pairs = []
@@ -93,7 +149,6 @@ def extract_key_value_pairs(blocks):
                 })
     return kv_pairs
 
-# Poll for Textract job to complete
 def poll_for_job_completion(job_id, max_tries=20, delay=5):
     for _ in range(max_tries):
         resp = textract.get_document_analysis(JobId=job_id)
@@ -104,7 +159,6 @@ def poll_for_job_completion(job_id, max_tries=20, delay=5):
         time.sleep(delay)
     raise Exception("Job did not complete in time")
 
-# Retrieve all pages of Textract response
 def get_all_pages(job_id):
     blocks = []
     token = None
@@ -119,7 +173,6 @@ def get_all_pages(job_id):
             break
     return blocks
 
-# Extract plain text lines by page
 def extract_pages_text(blocks):
     by_page = {}
     for b in blocks:
@@ -133,7 +186,6 @@ def extract_pages_text(blocks):
         out[pg] = [t for _, t in lines]
     return out
 
-# Extract tables and associate them with their nearest heading above
 def extract_tables_grouped(blocks):
     tables = []
     headings = {}
@@ -170,7 +222,6 @@ def extract_tables_grouped(blocks):
             tables.append({'page': pg, 'header': header, 'rows': rows, 'bbox': b['Geometry']['BoundingBox']})
     return tables
 
-# Group the document into logical sections based on headings
 def group_sections(pages_text, tables, kv_pairs):
     sections = []
     # find all major headings in order
@@ -178,13 +229,13 @@ def group_sections(pages_text, tables, kv_pairs):
         for line in lines:
             if is_major_heading(line):
                 sections.append({
-                    'name': line,
+                    'name':       line,
                     'start_page': pg,
                     'paragraphs': [],
-                    'tables': [],
-                    'fields': []
+                    'tables':     [],
+                    'fields':     []
                 })
-    # fill each section with its text, tables, and key/value fields
+    # fill each section
     for idx, sec in enumerate(sections):
         next_sec = sections[idx+1] if idx+1 < len(sections) else None
         for pg, lines in pages_text.items():
@@ -193,38 +244,36 @@ def group_sections(pages_text, tables, kv_pairs):
             sec['paragraphs'].extend(lines)
         sec['tables'] = [
             t for t in tables
-            if t['page'] == sec['start_page'] and t['header'] == sec['name']
+            if t['page']==sec['start_page'] and t['header']==sec['name']
         ]
         for kv in kv_pairs:
             if sec['start_page'] <= kv['page'] < (next_sec['start_page'] if next_sec else kv['page']+1):
                 sec['fields'].append({'key': kv['key'], 'value': kv['value']})
-    # post-process the Significant Findings section into structured items
+    # now post‑process Significant Findings
     for sec in sections:
-        if sec['name'] == 'Significant Findings and Action Plan':
+        if sec['name'].lower().startswith('significant findings'):
             sec['items'] = parse_significant_findings(sec['paragraphs'])
             sec.pop('paragraphs', None)
             sec.pop('fields', None)
     return sections
 
-# Main Lambda handler
 def process(event, context):
-    input_bucket = event.get('bucket', 'metrosafetyprodfiles')
-    document_key = event.get('document_key')
+    input_bucket  = event.get('bucket', 'metrosafetyprodfiles')
+    document_key  = event['document_key']
     output_bucket = event.get('output_bucket', 'textract-output-digival')
 
-    resp = textract.start_document_analysis(
-        DocumentLocation={'S3Object': {'Bucket': input_bucket, 'Name': document_key}},
-        FeatureTypes=['TABLES', 'FORMS']
+    resp     = textract.start_document_analysis(
+       DocumentLocation={'S3Object':{'Bucket':input_bucket,'Name':document_key}},
+       FeatureTypes=['TABLES','FORMS']
     )
-    job_id = resp['JobId']
-    blocks = poll_for_job_completion(job_id)
-    pages = extract_pages_text(blocks)
-    tables = extract_tables_grouped(blocks)
+    blocks   = poll_for_job_completion(resp['JobId'])
+    pages    = extract_pages_text(blocks)
+    tables   = extract_tables_grouped(blocks)
     kv_pairs = extract_key_value_pairs(blocks)
     sections = group_sections(pages, tables, kv_pairs)
 
-    result = {'document': document_key, 'sections': sections}
-    json_key = f"processed/{document_key.rsplit('/', 1)[-1].replace('.pdf', '.json')}"
+    result   = {'document':document_key, 'sections':sections}
+    json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
     s3.put_object(Bucket=output_bucket, Key=json_key, Body=json.dumps(result))
 
-    return {'statusCode': 200, 'body': json.dumps({'json_s3_key': json_key})}
+    return {'statusCode':200, 'body':json.dumps({'json_s3_key':json_key})}
