@@ -211,8 +211,8 @@ resource "aws_iam_policy_attachment" "bedrock_lambda_s3_policy_attachment" {
 ###########
 # 1. Proofing Lambda role
 ###########
-resource "aws_iam_role" "bedrock_lambda_proofing" {
-  name = "bedrock_lambda_checklist_proofing"
+resource "aws_iam_role" "bedrock_lambda_checklist_proofing" {
+  name = "bedrock-lambda-checklist_proofing"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
@@ -283,22 +283,15 @@ resource "aws_iam_role_policy_attachment" "proofing_s3_read_attach" {
 #
 resource "aws_iam_policy" "lambda_textract_output_read" {
   name        = "LambdaTextractOutputRead"
-  description = "Allow Checklist-Proofing Lambda to read Textract JSON output"
+  description = "Allow proofing Lambda to read Textract output"
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
-      # Allow ListBucket on the bucket—but scoped to the processed/ prefix
       {
-        Effect    = "Allow",
-        Action    = "s3:ListBucket",
-        Resource  = "arn:aws:s3:::textract-output-digival",
-        Condition = {
-          StringLike = {
-            "s3:prefix": ["processed/*"]
-          }
-        }
+        Effect   = "Allow",
+        Action   = "s3:ListBucket",
+        Resource = "arn:aws:s3:::textract-output-digival"
       },
-      # Allow GetObject on all objects under processed/
       {
         Effect   = "Allow",
         Action   = "s3:GetObject",
