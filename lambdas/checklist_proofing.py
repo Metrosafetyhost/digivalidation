@@ -33,17 +33,25 @@ def build_prompt(question_number, data):
     # Add other question handlers here if needed
     return ""
 
+def wrap_for_claude(raw_prompt):
+    # Ensure it begins with the required chat tokens
+    return f"\n\nHuman: {raw_prompt}\n\nAssistant:"
+
 def send_to_bedrock(prompt_text):
     MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
-    payload = {"prompt": prompt_text, "max_tokens_to_sample": 1000, "temperature": 0}
+    chat_prompt = wrap_for_claude(prompt_text)
+    payload = {
+      "prompt": chat_prompt,
+      "max_tokens_to_sample": 1000,
+      "temperature": 0
+    }
     resp = bedrock.invoke_model(
         modelId=MODEL_ID,
-        body=json.dumps(payload),      
+        body=json.dumps(payload),
         contentType="application/json",
         accept="application/json",
     )
     return resp["body"].read().decode("utf-8")
-
 
 def process(event, context):
     # Lambda entry point
