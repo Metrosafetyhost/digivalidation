@@ -6,16 +6,20 @@ import time
 import io
 import csv
 from bs4 import BeautifulSoup
-from lambdas.db import get_dynamodb_table
-from lambdas.bedrock import get_bedrock_client
-from lambdas.config import get_bucket_name, get_bedrock_model_id
 
 # Initialise logger
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# PRODUCTION AWS clients (aka global singeltons - moto (testing) has to be called before these are used)
+# AWS clients
+bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
 s3_client = boto3.client('s3')
+dynamodb = boto3.resource('dynamodb')
+
+# Configurations
+BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
+BUCKET_NAME = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
+TABLE_NAME = "ProofingMetadata"
 
 def strip_html(html):
     """Strip HTML tags from a string and return only text."""
@@ -33,12 +37,12 @@ def proof_table_content(html, record_id):
         if not table:
             logger.warning("No table found in HTML. Skipping proofing for record " + record_id)
             return html, []
-
+        
         rows = table.find_all("tr")
         if not rows:
             logger.warning("No rows found in table for record " + record_id)
             return html, []
-
+        
         original_texts = []
         for row in rows:
             tds = row.find_all("td")
@@ -48,13 +52,13 @@ def proof_table_content(html, record_id):
                 original_texts.append(cell_html)
             else:
                 original_texts.append("")
-
+        
         # Use a unique delimiter to join the texts from all rows.
         delimiter = "|||ROW_DELIM|||"
         joined_content = delimiter.join(original_texts)
-
+        
         logger.info(f"Proofing record {record_id}. Joined content: {joined_content}")
-
+        
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
             "messages": [{
@@ -76,27 +80,26 @@ def proof_table_content(html, record_id):
             "max_tokens": 1000,
             "temperature": 0.3
         }
-
+        
         logger.info("Sending payload to Bedrock: " + json.dumps(payload, indent=2))
-
-        bedrock_client = get_bedrock_client()
+        
         response = bedrock_client.invoke_model(
-            modelId=get_bedrock_model_id(),
+            modelId=BEDROCK_MODEL_ID,
             contentType="application/json",
             accept="application/json",
             body=json.dumps(payload)
         )
-
+        
         response_body = json.loads(response["body"].read().decode("utf-8"))
         proofed_text = " ".join(
             [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
         ).strip()
-
+        
         # Split the proofed result back into segments.
         corrected_contents = proofed_text.split(delimiter)
         if len(corrected_contents) != len(original_texts):
             logger.warning(f"Expected {len(original_texts)} proofed segments, got {len(corrected_contents)} for record {record_id}")
-
+        
         log_entries = []
         # Replace each row's second cell with the corresponding corrected text.
         for idx, row in enumerate(rows):
@@ -142,10 +145,8 @@ def proof_plain_text(text, record_id):
             "temperature": 0.3
         }
         logger.info("Sending payload to Bedrock: " + json.dumps(payload, indent=2))
-
-        bedrock_client = get_bedrock_client() # cached bedrock_client
         response = bedrock_client.invoke_model(
-            modelId=get_bedrock_model_id(),
+            modelId=BEDROCK_MODEL_ID,
             contentType="application/json",
             accept="application/json",
             body=json.dumps(payload)
@@ -201,14 +202,12 @@ def update_logs_csv(log_entries, filename, folder):
     # Upload the updated CSV to S3
     new_csv_data = output.getvalue()
     output.close()
-    s3_client.put_object(Bucket=get_bucket_name(), Key=s3_key, Body=new_csv_data)
+    s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=new_csv_data)
 
     return s3_key
 
-def store_metadata(workorder_id, logs_s3_key, status, table):
-    """Stores metadata about the bedlock processing in dynamodb
-       - having the table as a deoendency fo the fucntion make it testable
-       - aka no global depedency that has to be patched"""
+def store_metadata(workorder_id, logs_s3_key, status):
+    table = dynamodb.Table(TABLE_NAME)
     table.put_item(
         Item={
             "workorder_id": workorder_id,
@@ -235,7 +234,7 @@ def load_payload(event):
         content_type = body.get("contentType", "Unknown")
         items = body.get("sectionContents", [])
         logger.info(f"Payload contentType: {content_type}, records received: {len(items)}")
-
+        
         proofing_requests = {}
         table_data = {}
         for entry in items:
@@ -246,7 +245,7 @@ def load_payload(event):
                 continue
             proofing_requests[record_id] = content.strip()
             table_data[record_id] = {"content": content.strip(), "record_id": record_id}
-
+        
         return body.get("workOrderId"), content_type, proofing_requests, table_data
 
     except Exception as e:
@@ -254,7 +253,7 @@ def load_payload(event):
         return None, None, {}, {}
 
 def process(event, context):
-    """AWS Lambda entrypoint function"""
+    """Main processing function"""
     try:
         workorder_id, content_type, proofing_requests, table_data = load_payload(event)
         if not workorder_id:
@@ -320,8 +319,7 @@ def process(event, context):
     csv_s3_key = update_logs_csv(csv_log_entries, csv_filename, "logs")
     logger.info(f"CSV logs stored in S3 at key: {csv_s3_key}")
 
-    table = get_dynamodb_table()  # ← lazy init (aka call @runtime) in process NOT globally in module
-    store_metadata(workorder_id, csv_s3_key, status_flag, table)
+    store_metadata(workorder_id, csv_s3_key, status_flag)
 
     unique_proofed_entries = {entry["recordId"]: entry for entry in proofed_entries}
     final_response = {
