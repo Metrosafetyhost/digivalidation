@@ -212,7 +212,7 @@ resource "aws_iam_policy_attachment" "bedrock_lambda_s3_policy_attachment" {
 # 1. Proofing Lambda role
 ###########
 resource "aws_iam_role" "bedrock_lambda_proofing" {
-  name = "bedrock-lambda-proofing"
+  name = "bedrock_lambda_checklist_proofing"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
