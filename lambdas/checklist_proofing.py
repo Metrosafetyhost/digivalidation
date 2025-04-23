@@ -1,73 +1,93 @@
-import boto3
 import json
+import boto3
 
-# Initialize AWS clients
+# Initialise AWS clients
 bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
 s3       = boto3.client('s3')
 
 def extract_json_data(json_content):
     """
-    Parses the Textract‐generated JSON, finds the real
+    Parses the Textract-generated JSON, finds the
     "Significant Findings and Action Plan" section,
-    and returns its items.
+    and returns its items list.
     """
     payload = json.loads(json_content)
     for sec in payload.get("sections", []):
         if sec.get("name", "").strip().lower() == "significant findings and action plan":
-            # returns the parsed list of audit_ref/question/priority/etc.
-            return {"significant_findings": sec.get("items", [])}
-    # fallback if no real section found
-    return {"significant_findings": []}
+            return sec.get("items", [])
+    return []
 
-
-def build_prompt(question_number, data):
+def build_user_message(question_number, items):
+    """
+    Returns only the user-facing content for a given question.
+    Currently implemented for question_number == 13.
+    """
     if question_number == 13:
         return (
             "Water Hygiene/Legionella Risk Assessment QCC Query:\n\n"
             "Question 13: “Significant Findings and Action Plan” – read through the Observations & Actions, "
             "checking for spelling mistakes, grammatical errors, technical inaccuracies or poor location descriptions. "
             "Confirm that the Priority labels make sense, and note any missing supplementary photographs.\n\n"
-            f"--- Significant Findings and Action Plan ---\n{data['significant_findings']}\n\n"
+            "--- Significant Findings and Action Plan ---\n"
+            f"{items}\n\n"
             "If everything looks good, reply “PASS”. Otherwise, list each discrepancy."
         )
-    # Add other question handlers here if needed
+    # Future questions go here...
     return ""
 
-def wrap_for_claude(raw_prompt):
-    # Ensure it begins with the required chat tokens
-    return f"\n\nHuman: {raw_prompt}\n\nAssistant:"
-
-def send_to_bedrock(prompt_text):
+def send_to_bedrock(user_text):
+    """
+    Invokes Claude 3 Sonnet via the Messages API.
+    The 'system' role sets the assistant’s behaviour,
+    the 'user' role carries your QCC query.
+    """
     MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
-    chat_prompt = wrap_for_claude(prompt_text)
     payload = {
-      "prompt": chat_prompt,
-      "max_tokens_to_sample": 1000,
-      "temperature": 0
+        "messages": [
+            {
+                # SYSTEM sets tone/instructions for Claude
+                "role":    "system",
+                "content": (
+                    "You are a meticulous proofreader. "
+                    "Correct spelling, grammar and clarity only—no extra commentary or re-structuring."
+                )
+            },
+            {
+                # USER carries the actual QCC question
+                "role":    "user",
+                "content": user_text
+            }
+        ],
+        "max_tokens_to_sample": 1000,
+        "temperature":           0.0
     }
+
     resp = bedrock.invoke_model(
-        modelId=MODEL_ID,
-        body=json.dumps(payload),
-        contentType="application/json",
-        accept="application/json",
+        modelId     = MODEL_ID,
+        body        = json.dumps(payload),
+        contentType = "application/json",
+        accept      = "application/json"
     )
     return resp["body"].read().decode("utf-8")
 
 def process(event, context):
-    # Lambda entry point
-    bucket  = event["json_bucket"]
-    key     = event["json_key"]
-    q_num   = event.get("question_number", 13)
+    """
+    Lambda entry point.
+    Expects event to have 'json_bucket', 'json_key' and optional 'question_number'.
+    """
+    bucket = event["json_bucket"]
+    key    = event["json_key"]
+    q_num  = event.get("question_number", 13)
 
-    # Fetch the JSON produced by Textract
-    raw = s3.get_object(Bucket=bucket, Key=key)["Body"].read().decode("utf-8")
+    # 1) Fetch Textract JSON from S3
+    raw_json = s3.get_object(Bucket=bucket, Key=key)["Body"].read().decode("utf-8")
 
-    # Extract just the Significant Findings section
-    data = extract_json_data(raw)
+    # 2) Extract just the Significant Findings items
+    items = extract_json_data(raw_json)
 
-    # Build and send the prompt to Bedrock
-    prompt = build_prompt(q_num, data)
-    result = send_to_bedrock(prompt)
+    # 3) Build the user message and send to Bedrock
+    user_msg = build_user_message(q_num, items)
+    result   = send_to_bedrock(user_msg)
 
     return {
         "statusCode": 200,
