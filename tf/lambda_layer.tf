@@ -315,3 +315,21 @@ resource "aws_iam_role_policy_attachment" "proofing_read_attach" {
   role       = aws_iam_role.bedrock_lambda_checklist_proofing.name
   policy_arn = aws_iam_policy.lambda_textract_output_read.arn
 }
+
+resource "aws_iam_role" "bedrock_lambda_checklist_proofing" {
+  name = "bedrock-lambda-checklist_proofing"
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": "sts:AssumeRole",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      }
+    }
+  ]
+}
+EOF
+}
