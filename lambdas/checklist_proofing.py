@@ -37,11 +37,10 @@ def send_to_bedrock(prompt_text):
     MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
     payload = {"prompt": prompt_text, "max_tokens_to_sample": 1000, "temperature": 0}
     resp = bedrock.invoke_model(
-        modelId=MODEL_ID,               # lower-camel-case
-        body=json.dumps(payload),       # lowercase
+        modelId=MODEL_ID,
+        body=json.dumps(payload),      
         contentType="application/json",
         accept="application/json",
-        # trace="all"                 # optional
     )
     return resp["body"].read().decode("utf-8")
 
