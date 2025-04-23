@@ -36,81 +36,60 @@ def is_major_heading(text):
             return True
     return False
 
-# Rewrite to handle “12.2.” style refs, followed by Priority / Observation / Target Date / Action Required
 def parse_significant_findings(lines):
     items = []
     current = None
-    i = 0
-    while i < len(lines):
-        line = lines[i].strip()
-        # Start of a new finding: e.g. "12.2. Has a competent person..."
-        m_ref = re.match(r'^(\d+\.\d+)\.?\s+(.+)$', line)
-        if m_ref:
-            # push previous
-            if current:
-                items.append(current)
+
+    # helper to flush last item
+    def flush():
+        nonlocal current
+        if current:
+            items.append(current)
+            current = None
+
+    for raw in lines:
+        line = raw.strip()
+        # 1) start of a new finding
+        m = re.match(r'^(\d+\.\d+)\.?\s+(.+)$', line)
+        if m:
+            flush()
             current = {
-                'audit_ref': m_ref.group(1),
-                'question': m_ref.group(2)
+                "audit_ref":   m.group(1),
+                "question":    m.group(2).strip()
             }
-            i += 1
             continue
 
-        if current:
-            # Priority on its own line, next line holds the value
-            if line.lower() == 'priority' and i+1 < len(lines):
-                current['priority'] = lines[i+1].strip()
-                i += 2
-                continue
+        if not current:
+            # skip any leading junk
+            continue
 
-            # Observation block
-            if line.lower().startswith('observation'):
-                # if just 'Observation', grab subsequent lines until next label
-                obs = ''
-                if line.strip().lower() == 'observation':
-                    j = i+1
-                else:
-                    # inline
-                    obs = line.partition(':')[2].strip()
-                    j = i+1
-                while j < len(lines) and not re.match(r'^(Priority|Target Date|Action Required)$', lines[j].strip(), re.IGNORECASE) and not re.match(r'^\d+\.\d+', lines[j].strip()):
-                    obs += ' ' + lines[j].strip()
-                    j += 1
-                current['observation'] = obs.strip()
-                i = j
-                continue
+        # 2) labelled fields
+        low = line.lower()
+        if low.startswith("priority"):
+            # either “Priority: …” or “Priority” on its own
+            parts = line.split(":",1)
+            current["priority"] = parts[1].strip() if len(parts)>1 else ""
+            continue
 
-            # Target Date either inline or next line
-            if line.lower().startswith('target date'):
-                parts = line.split(':',1)
-                if len(parts)==2 and parts[1].strip():
-                    current['target_date'] = parts[1].strip()
-                    i += 1
-                elif i+1 < len(lines):
-                    current['target_date'] = lines[i+1].strip()
-                    i += 2
-                else:
-                    i += 1
-                continue
+        if low.startswith("observation"):
+            parts = line.split(":",1)
+            obs = parts[1].strip() if len(parts)>1 else ""
+            current["observation"] = obs
+            continue
 
-            # Action Required block
-            if line.lower().startswith('action required'):
-                action = ''
-                parts = line.split(':',1)
-                if len(parts)==2:
-                    action = parts[1].strip()
-                j = i+1
-                while j < len(lines) and not re.match(r'^\d+\.\d+', lines[j].strip()):
-                    action += ' ' + lines[j].strip()
-                    j += 1
-                current['action_required'] = action.strip()
-                i = j
-                continue
+        if low.startswith("target date"):
+            parts = line.split(":",1)
+            current["target_date"] = parts[1].strip() if len(parts)>1 else ""
+            continue
 
-        i += 1
+        if low.startswith("action required"):
+            parts = line.split(":",1)
+            current["action_required"] = parts[1].strip() if len(parts)>1 else ""
+            continue
 
-    if current:
-        items.append(current)
+        # lines that don’t match a label just get ignored
+    # flush last one
+    flush()
     return items
 
 
