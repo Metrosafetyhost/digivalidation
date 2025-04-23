@@ -206,3 +206,74 @@ resource "aws_iam_policy_attachment" "bedrock_lambda_s3_policy_attachment" {
   policy_arn = aws_iam_policy.bedrock_lambda_s3_policy.arn
   roles      = [ "bedrock-lambda-checklist" ]
 }
+
+
+###########
+# 1. Proofing Lambda role
+###########
+resource "aws_iam_role" "bedrock_lambda_proofing" {
+  name = "bedrock-lambda-proofing"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+###########
+# 2. Basic execution (CloudWatch Logs)
+###########
+resource "aws_iam_role_policy_attachment" "proofing_basic_exec" {
+  role       = aws_iam_role.bedrock_lambda_proofing.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+###########
+# 3. Bedrock invocation
+###########
+resource "aws_iam_policy" "proofing_bedrock_invoke" {
+  name        = "ProofingBedrockInvokePolicy"
+  description = "Allow Lambda to invoke Bedrock models"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect   = "Allow",
+      Action   = "bedrock:InvokeModel",
+      Resource = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "proofing_bedrock_attach" {
+  role       = aws_iam_role.bedrock_lambda_proofing.name
+  policy_arn = aws_iam_policy.proofing_bedrock_invoke.arn
+}
+
+###########
+# 4. S3 read (your CSV input bucket)
+###########
+data "aws_iam_policy_document" "proofing_s3_read" {
+  statement {
+    sid     = "AllowReadCsvBucket"
+    effect  = "Allow"
+    actions = ["s3:GetObject", "s3:ListBucket"]
+    resources = [
+      "arn:aws:s3:::textract-output-digival",
+      "arn:aws:s3:::textract-output-digival/*"    
+]
+  }
+}
+
+resource "aws_iam_policy" "proofing_s3_read_policy" {
+  name   = "ProofingLambdaS3ReadPolicy"
+  policy = data.aws_iam_policy_document.proofing_s3_read.json
+}
+
+resource "aws_iam_role_policy_attachment" "proofing_s3_read_attach" {
+  role       = aws_iam_role.bedrock_lambda_proofing.name
+  policy_arn = aws_iam_policy.proofing_s3_read_policy.arn
+}

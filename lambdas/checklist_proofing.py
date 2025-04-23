@@ -1,23 +1,25 @@
 import boto3
 import json
-import re
+from lambdas.config import get_bedrock_model_id
 
+# Initialize AWS clients
 bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
 s3       = boto3.client('s3')
 
-def extract_section(text, section_title):
-    pattern = re.compile(
-        rf"{re.escape(section_title)}\s*[:\-–]*\s*(.*?)(?=\n\S+\s*[:\-–]|\Z)",
-        re.DOTALL | re.IGNORECASE
-    )
-    m = pattern.search(text)
-    return m.group(1).strip() if m else ""
+def extract_json_data(json_content):
+    """
+    Parses the Textract‐generated JSON, finds the real
+    "Significant Findings and Action Plan" section,
+    and returns its items.
+    """
+    payload = json.loads(json_content)
+    for sec in payload.get("sections", []):
+        if sec.get("name", "").strip().lower() == "significant findings and action plan":
+            # returns the parsed list of audit_ref/question/priority/etc.
+            return {"significant_findings": sec.get("items", [])}
+    # fallback if no real section found
+    return {"significant_findings": []}
 
-def extract_csv_data(csv_content):
-    return {
-        # … your existing sections …
-        "significant_findings": extract_section(csv_content, "Significant Findings and Action Plan"),
-    }
 
 def build_prompt(question_number, data):
     if question_number == 13:
@@ -29,23 +31,32 @@ def build_prompt(question_number, data):
             f"--- Significant Findings and Action Plan ---\n{data['significant_findings']}\n\n"
             "If everything looks good, reply “PASS”. Otherwise, list each discrepancy."
         )
-    # … expand for other question_numbers …
+    # Add other question handlers here if needed
+    return ""
+
 
 def send_to_bedrock(prompt):
     resp = bedrock.invoke_model(
-        ModelId="your-bedrock-model-id",
+        ModelId=get_bedrock_model_id(),
         Body=json.dumps({"prompt": prompt, "maxTokens": 500}),
         ContentType="application/json"
     )
     return json.loads(resp["Body"].read())
 
-def lambda_handler(event, context):
-    bucket  = event["csv_bucket"]
-    key     = event["csv_key"]
+
+def process(event, context):
+    # Lambda entry point
+    bucket  = event["json_bucket"]
+    key     = event["json_key"]
     q_num   = event.get("question_number", 13)
 
+    # Fetch the JSON produced by Textract
     raw = s3.get_object(Bucket=bucket, Key=key)["Body"].read().decode("utf-8")
-    data = extract_csv_data(raw)
+
+    # Extract just the Significant Findings section
+    data = extract_json_data(raw)
+
+    # Build and send the prompt to Bedrock
     prompt = build_prompt(q_num, data)
     result = send_to_bedrock(prompt)
 
