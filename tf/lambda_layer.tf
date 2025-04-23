@@ -308,3 +308,28 @@ resource "aws_iam_role_policy_attachment" "proofing_read_attach" {
   role       = aws_iam_role.bedrock_lambda_checklist_proofing.name
   policy_arn = aws_iam_policy.lambda_textract_output_read.arn
 }
+
+data "aws_iam_policy_document" "checklist_textract_read" {
+  statement {
+    sid    = "AllowReadTextractOutput"
+    effect = "Allow"
+    actions = [
+      "s3:ListBucket",
+      "s3:GetObject"
+    ]
+    resources = [
+      "arn:aws:s3:::textract-output-digival",
+      "arn:aws:s3:::textract-output-digival/*"
+    ]
+  }
+}
+
+resource "aws_iam_policy" "checklist_textract_read_policy" {
+  name   = "ChecklistTextractReadPolicy"
+  policy = data.aws_iam_policy_document.checklist_textract_read.json
+}
+
+resource "aws_iam_role_policy_attachment" "checklist_textract_read_attach" {
+  role       = aws_iam_role.bedrock_lambda_checklist_proofing.name
+  policy_arn = aws_iam_policy.checklist_textract_read_policy.arn
+}
