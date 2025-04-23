@@ -33,16 +33,17 @@ def build_prompt(question_number, data):
     # Add other question handlers here if needed
     return ""
 
-
-BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
-
-def send_to_bedrock(prompt):
+def send_to_bedrock(prompt_text):
+    MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
+    payload = {"prompt": prompt_text, "max_tokens_to_sample": 1000, "temperature": 0}
     resp = bedrock.invoke_model(
-        ModelId=BEDROCK_MODEL_ID,
-        Body=json.dumps({"prompt": prompt, "maxTokens": 500}),
-        ContentType="application/json"
+        modelId=MODEL_ID,               # lower-camel-case
+        body=json.dumps(payload),       # lowercase
+        contentType="application/json",
+        accept="application/json",
+        # trace="all"                 # optional
     )
-    return json.loads(resp["Body"].read())
+    return resp["body"].read().decode("utf-8")
 
 
 def process(event, context):
