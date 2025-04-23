@@ -228,7 +228,7 @@ resource "aws_iam_role" "bedrock_lambda_proofing" {
 # 2. Basic execution (CloudWatch Logs)
 ###########
 resource "aws_iam_role_policy_attachment" "proofing_basic_exec" {
-  role       = aws_iam_role.bedrock_lambda_proofing.name
+  role       = aws_iam_role.bedrock_lambda_checklist_proofing.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
@@ -249,12 +249,12 @@ resource "aws_iam_policy" "proofing_bedrock_invoke" {
 }
 
 resource "aws_iam_role_policy_attachment" "proofing_bedrock_attach" {
-  role       = aws_iam_role.bedrock_lambda_proofing.name
+  role       = aws_iam_role.bedrock_lambda_checklist_proofing.name
   policy_arn = aws_iam_policy.proofing_bedrock_invoke.arn
 }
 
 ###########
-# 4. S3 read (your CSV input bucket)
+# 4. S3 read
 ###########
 data "aws_iam_policy_document" "proofing_s3_read" {
   statement {
@@ -274,7 +274,7 @@ resource "aws_iam_policy" "proofing_s3_read_policy" {
 }
 
 resource "aws_iam_role_policy_attachment" "proofing_s3_read_attach" {
-  role       = aws_iam_role.bedrock_lambda_proofing.name
+  role       = aws_iam_role.bedrock_lambda_checklist_proofing.name
   policy_arn = aws_iam_policy.proofing_s3_read_policy.arn
 }
 
@@ -314,22 +314,4 @@ resource "aws_iam_policy" "lambda_textract_output_read" {
 resource "aws_iam_role_policy_attachment" "proofing_read_attach" {
   role       = aws_iam_role.bedrock_lambda_checklist_proofing.name
   policy_arn = aws_iam_policy.lambda_textract_output_read.arn
-}
-
-resource "aws_iam_role" "bedrock_lambda_checklist_proofing" {
-  name = "bedrock-lambda-checklist_proofing"
-  assume_role_policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Action": "sts:AssumeRole",
-      "Effect": "Allow",
-      "Principal": {
-        "Service": "lambda.amazonaws.com"
-      }
-    }
-  ]
-}
-EOF
 }
