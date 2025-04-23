@@ -1,6 +1,5 @@
 import boto3
 import json
-from lambdas.config import get_bedrock_model_id
 
 # Initialize AWS clients
 bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
@@ -35,9 +34,11 @@ def build_prompt(question_number, data):
     return ""
 
 
+BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
+
 def send_to_bedrock(prompt):
     resp = bedrock.invoke_model(
-        ModelId=get_bedrock_model_id(),
+        ModelId=BEDROCK_MODEL_ID,
         Body=json.dumps({"prompt": prompt, "maxTokens": 500}),
         ContentType="application/json"
     )
