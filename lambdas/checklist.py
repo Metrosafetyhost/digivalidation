@@ -288,13 +288,15 @@ def process(event, context):
     kv_pairs = extract_key_value_pairs(blocks)
     sections = group_sections(pages, tables, kv_pairs)
 
-    # Re-parse the “Significant Findings” section so action_required grabs the full paragraph
     for sec in sections:
         if sec["name"].lower().startswith("significant findings"):
-            sec["items"] = parse_significant_findings(sec["paragraphs"])
+            paras = sec.get("paragraphs", [])
+            if paras:
+                sec["items"] = parse_significant_findings(paras)
             sec.pop("paragraphs", None)
             sec.pop("fields", None)
 
+    result   = {'document':document_key, 'sections':sections}
     # 2) write out your JSON
     result   = {'document':document_key, 'sections':sections}
     json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
