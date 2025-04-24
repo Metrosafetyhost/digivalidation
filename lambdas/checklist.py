@@ -38,31 +38,40 @@ def is_major_heading(text):
 
 import re
 
+import re
+
 def parse_significant_findings(lines):
     items = []
     current = None
     i = 0
 
+    # map the human label to our JSON key
+    label_map = {
+        'priority':        'priority',
+        'observation':     'observation',
+        'target date':     'target_date',
+        'action required': 'action_required',
+    }
+
     def flush():
         nonlocal current
         if current:
-            # ensure all keys exist
-            for k in ("priority","observation","target_date","action_required"):
-                current.setdefault(k, "")
+            # ensure all four keys exist
+            for v in label_map.values():
+                current.setdefault(v, "")
             items.append(current)
             current = None
 
     while i < len(lines):
         line = lines[i].strip()
-        low  = line.lower()
 
-        # 1) New finding starts on “12.2. …”
-        m = re.match(r'^(\d+\.\d+)\.?\s+(.+)$', line)
-        if m:
+        # 1) New finding if it begins with "12.2. " etc
+        m_ref = re.match(r'^(\d+\.\d+)\.?\s*(.+)$', line)
+        if m_ref:
             flush()
             current = {
-                "audit_ref": m.group(1),
-                "question":  m.group(2).strip()
+                'audit_ref': m_ref.group(1),
+                'question':  m_ref.group(2).strip()
             }
             i += 1
             continue
@@ -71,63 +80,40 @@ def parse_significant_findings(lines):
             i += 1
             continue
 
-        # 2) Priority
-        if low == "priority" or low.startswith("priority:"):
-            if ":" in line:
-                current["priority"] = line.split(":",1)[1].strip()
-            elif i+1 < len(lines):
-                current["priority"] = lines[i+1].strip()
-                i += 1
-            i += 1
-            continue
+        # 2) Look for any of our four labels, inline or standalone
+        m_lab = re.match(r'^(Priority|Observation|Target Date|Action Required)[:\s]*(.*)$',
+                         line, re.IGNORECASE)
+        if m_lab:
+            label = m_lab.group(1).lower()
+            key   = label_map[label]
+            tail  = m_lab.group(2).strip()
 
-        # 3) Observation
-        if low == "observation" or low.startswith("observation:"):
-            obs = ""
-            if ":" in line:
-                obs = line.split(":",1)[1].strip()
-            j = i + 1
-            while j < len(lines):
-                nxt = lines[j].strip()
-                if re.match(r'^(Priority|Observation|Target Date|Action Required)\b', nxt, re.IGNORECASE):
-                    break
-                if re.match(r'^\d+\.\d+', nxt):
-                    break
-                obs += " " + nxt
-                j += 1
-            current["observation"] = obs.strip()
-            i = j
-            continue
-
-        # 4) Target Date
-        if low.startswith("target date"):
-            if ":" in line:
-                current["target_date"] = line.split(":",1)[1].strip()
+            if tail:
+                # inline value: e.g. "Priority Medium" or "Target Date: 20/04/2025"
+                current[key] = tail
                 i += 1
-            elif i+1 < len(lines):
-                current["target_date"] = lines[i+1].strip()
-                i += 2
             else:
-                i += 1
-            continue
-
-        # 5) Action Required (captures all following lines up to next finding)
-        if low.startswith("action required"):
-            act = ""
-            if ":" in line:
-                act = line.split(":",1)[1].strip()
-            j = i + 1
-            while j < len(lines) and not re.match(r'^\d+\.\d+', lines[j].strip()):
-                act += " " + lines[j].strip()
-                j += 1
-            current["action_required"] = act.strip()
-            i = j
+                # label on its own line: grab all following lines until
+                # we hit a blank, a new label, or the next audit_ref
+                buf = []
+                j   = i + 1
+                while j < len(lines):
+                    nxt = lines[j].strip()
+                    if not nxt: break
+                    if re.match(r'^\d+\.\d+', nxt): break
+                    if re.match(r'^(Priority|Observation|Target Date|Action Required)\b', nxt, re.IGNORECASE):
+                        break
+                    buf.append(nxt)
+                    j += 1
+                current[key] = ' '.join(buf).strip()
+                i = j
             continue
 
         i += 1
 
     flush()
     return items
+
 
 
 def extract_key_value_pairs(blocks):
