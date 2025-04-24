@@ -36,16 +36,14 @@ def is_major_heading(text):
             return True
     return False
 
+# Revised parser for "Significant Findings and Action Plan"
 def parse_significant_findings(lines):
-    import re
-
     items = []
-    # find all the start indices of each finding (e.g. "12.2. …")
+    # find indices of each audit ref start
     refs = [
         idx for idx, l in enumerate(lines)
-        if re.match(r'^\d+\.\d+\.?\s+', l.strip())
+        if re.match(r'^(\d+\.\d+)\.?\s+', l.strip())
     ]
-    # add end sentinel
     refs.append(len(lines))
 
     for start, end in zip(refs, refs[1:]):
@@ -53,27 +51,21 @@ def parse_significant_findings(lines):
         if not chunk:
             continue
 
-        # first line has audit_ref + question
         m = re.match(r'^(\d+\.\d+)\.?\s*(.+)$', chunk[0])
         if not m:
             continue
         audit_ref, question = m.groups()
 
-        # locate label lines
-        labels = {}
-        for i, l in enumerate(chunk):
-            key = l.rstrip(':').lower()
-            if key in ('priority', 'observation', 'target date', 'action required'):
-                labels[key] = i
+        # locate labels
+        labels = {l.rstrip(':').lower(): i for i, l in enumerate(chunk)
+                  if l.rstrip(':').lower() in ('priority', 'observation', 'target date', 'action required')}
 
         def slice_field(name):
             i = labels.get(name)
             if i is None:
                 return ''
-            # find next label index after this one
             next_idxs = [v for k, v in labels.items() if v > i]
             j = min(next_idxs) if next_idxs else len(chunk)
-            # return everything between the label and the next label
             return ' '.join(chunk[i+1:j]).strip()
 
         items.append({
@@ -237,16 +229,24 @@ def process(event, context):
     document_key  = event['document_key']
     output_bucket = event.get('output_bucket', 'textract-output-digival')
 
-    resp     = textract.start_document_analysis(
+    # 1) start Textract with both TABLES and FORMS
+    resp = textract.start_document_analysis(
        DocumentLocation={'S3Object':{'Bucket':input_bucket,'Name':document_key}},
-       FeatureTypes=['TABLES','FORMS']
+       FeatureTypes=['TABLES','FORMS']  # <-- added 'FORMS'
     )
-    blocks   = poll_for_job_completion(resp['JobId'])
+
+    # 2) poll until completion
+    blocks = poll_for_job_completion(resp['JobId'])
+
+    # 3) extract pages, tables, key/value pairs, etc (unchanged)
     pages    = extract_pages_text(blocks)
     tables   = extract_tables_grouped(blocks)
     kv_pairs = extract_key_value_pairs(blocks)
+    
+    # 4) group into sections and apply revised parser
     sections = group_sections(pages, tables, kv_pairs)
 
+    # 5) output
     result   = {'document':document_key, 'sections':sections}
     json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
     s3.put_object(Bucket=output_bucket, Key=json_key, Body=json.dumps(result))
