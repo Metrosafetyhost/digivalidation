@@ -26,9 +26,11 @@ IMPORTANT_HEADINGS = [
     "System Asset Register"
 ]
 
+# Helper to normalize text for heading matching
 def normalize(text):
     return re.sub(r'[^a-z0-9 ]+', ' ', text.lower()).strip()
 
+# Detect major section headings
 def is_major_heading(text):
     norm = normalize(text)
     for phrase in IMPORTANT_HEADINGS:
@@ -36,16 +38,13 @@ def is_major_heading(text):
             return True
     return False
 
-import re
-
+# Line‑based fallback parser for Significant Findings
 def parse_significant_findings(lines):
     items = []
     current = None
     current_section = None
 
-    # labels we expect
     LABELS = ['Priority', 'Observation', 'Target Date', 'Action Required']
-    # sub-sections within this QCC section
     SUB_SECTIONS = {'management of risk', 'additional guidance', 'emergency action'}
 
     def flush():
@@ -59,67 +58,65 @@ def parse_significant_findings(lines):
         line = lines[i].strip()
         lower = line.lower()
 
-        # 1) pick up sub-section headings
+        # Pick up sub-section headings
         if lower in SUB_SECTIONS:
-            current_section = line  # e.g. "Management of Risk"
+            current_section = line
             i += 1
             continue
 
-        # 2) new audit ref starts a new item
+        # New audit reference
         m_ref = re.match(r'^(\d+\.\d+)\.?\s+(.+)$', line)
         if m_ref:
             flush()
             current = {
-                'section':     current_section,
-                'audit_ref':   m_ref.group(1),
-                'question':    m_ref.group(2).strip(),
-                'priority':       "",
-                'observation':    "",
-                'target_date':    "",
-                'action_required':""
+                'section': current_section,
+                'audit_ref': m_ref.group(1),
+                'question': m_ref.group(2).strip(),
+                'priority': '',
+                'observation': '',
+                'target_date': '',
+                'action_required': ''
             }
             i += 1
             continue
 
-        # if we don't have an item yet, skip
+        # If no item open, skip
         if not current:
             i += 1
             continue
 
-        # 3) field extraction
-        # detect which label this line is
+        # Field extraction
         for label in LABELS:
-            # match "Priority" or "Priority:" etc
             if re.match(rf'^{label}\b:?', line, re.IGNORECASE):
-                field = label.lower().replace(' ', '_')  # maps to our keys
-                # grab inline content if present
+                field = label.lower().replace(' ', '_')
                 parts = re.split(r':\s*', line, 1)
+
+                # Inline value
                 if len(parts) == 2 and parts[1].strip():
                     content = parts[1].strip()
                     i += 1
                 else:
-                    # otherwise, consume following lines until next label or new ref
+                    # Multi-line block until next label or audit ref
                     content_lines = []
                     j = i + 1
                     while j < len(lines):
                         nxt = lines[j].strip()
-                        # break if next is a label or a new audit ref
                         if any(re.match(rf'^{L}\b', nxt, re.IGNORECASE) for L in LABELS) or re.match(r'^\d+\.\d+', nxt):
                             break
                         content_lines.append(nxt)
                         j += 1
                     content = ' '.join(content_lines).strip()
                     i = j
+
                 current[field] = content
                 break
         else:
-            # no label matched, skip
             i += 1
 
-    # after loop, flush last item
     flush()
     return items
 
+# Extract key/value form fields (unused here but kept for completeness)
 def extract_key_value_pairs(blocks):
     id_map = {b['Id']: b for b in blocks}
     kv_pairs = []
@@ -132,6 +129,7 @@ def extract_key_value_pairs(blocks):
                         child = id_map[cid]
                         if child['BlockType'] == 'WORD':
                             key_text += child['Text'] + ' '
+            # find value block
             value_block = None
             for rel in block.get('Relationships', []):
                 if rel['Type'] == 'VALUE':
@@ -155,6 +153,7 @@ def extract_key_value_pairs(blocks):
                 })
     return kv_pairs
 
+# Poll until Textract job completes
 def poll_for_job_completion(job_id, max_tries=20, delay=5):
     for _ in range(max_tries):
         resp = textract.get_document_analysis(JobId=job_id)
@@ -165,6 +164,7 @@ def poll_for_job_completion(job_id, max_tries=20, delay=5):
         time.sleep(delay)
     raise Exception("Job did not complete in time")
 
+# Retrieve all pages of results
 def get_all_pages(job_id):
     blocks = []
     token = None
@@ -179,6 +179,7 @@ def get_all_pages(job_id):
             break
     return blocks
 
+# Extract lines of text per page
 def extract_pages_text(blocks):
     by_page = {}
     for b in blocks:
@@ -192,6 +193,7 @@ def extract_pages_text(blocks):
         out[pg] = [t for _, t in lines]
     return out
 
+# Group tables under headings
 def extract_tables_grouped(blocks):
     tables = []
     headings = {}
@@ -204,10 +206,12 @@ def extract_tables_grouped(blocks):
         if b['BlockType'] == 'TABLE':
             pg = b.get('Page', 1)
             top = b['Geometry']['BoundingBox']['Top']
-            header = None
+            # find nearest heading above
             cand = [(y, t) for y, t in headings.get(pg, []) if y < top]
+            header = None
             if cand:
                 header = max(cand, key=lambda x: x[0])[1]
+            # collect rows
             rows = []
             for rel in b.get('Relationships', []):
                 if rel['Type'] == 'CHILD':
@@ -228,37 +232,57 @@ def extract_tables_grouped(blocks):
             tables.append({'page': pg, 'header': header, 'rows': rows, 'bbox': b['Geometry']['BoundingBox']})
     return tables
 
+# Build high‑level sections and attach tables/fields
 def group_sections(pages_text, tables, kv_pairs):
     sections = []
-    # find all major headings in order
+    # detect headings
     for pg, lines in sorted(pages_text.items()):
         for line in lines:
             if is_major_heading(line):
                 sections.append({
-                    'name':       line,
+                    'name': line,
                     'start_page': pg,
                     'paragraphs': [],
-                    'tables':     [],
-                    'fields':     []
+                    'tables': [],
+                    'fields': []
                 })
-    # fill each section
+    # populate content
     for idx, sec in enumerate(sections):
         next_sec = sections[idx+1] if idx+1 < len(sections) else None
         for pg, lines in pages_text.items():
             if pg < sec['start_page'] or (next_sec and pg >= next_sec['start_page']):
                 continue
             sec['paragraphs'].extend(lines)
-        sec['tables'] = [
-            t for t in tables
-            if t['page']==sec['start_page'] and t['header']==sec['name']
-        ]
+        sec['tables'] = [t for t in tables if t['page'] == sec['start_page'] and t['header'] == sec['name']]
         for kv in kv_pairs:
             if sec['start_page'] <= kv['page'] < (next_sec['start_page'] if next_sec else kv['page']+1):
                 sec['fields'].append({'key': kv['key'], 'value': kv['value']})
-    # now post‑process Significant Findings
+    # post‑process Significant Findings
     for sec in sections:
         if sec['name'].lower().startswith('significant findings'):
-            sec['items'] = parse_significant_findings(sec['paragraphs'])
+            if sec['tables']:
+                tbl = sec['tables'][0]
+                items = []
+                # skip header row
+                for row in tbl['rows'][1:]:
+                    m = re.match(r'^(\d+\.\d+)\.?\s*(.+)$', row[0])
+                    if m:
+                        audit_ref, question = m.groups()
+                    else:
+                        audit_ref, question = "", row[0]
+                    items.append({
+                        'section': sec['name'],
+                        'audit_ref': audit_ref,
+                        'question': question.strip(),
+                        'priority':        row[1].strip() if len(row) > 1 else "",
+                        'observation':     row[2].strip() if len(row) > 2 else "",
+                        'target_date':     row[3].strip() if len(row) > 3 else "",
+                        'action_required': row[4].strip() if len(row) > 4 else "",
+                    })
+                sec['items'] = items
+            else:
+                sec['items'] = parse_significant_findings(sec.get('paragraphs', []))
+            # drop unused
             sec.pop('paragraphs', None)
             sec.pop('fields', None)
     return sections
@@ -278,8 +302,8 @@ def process(event, context):
     kv_pairs = extract_key_value_pairs(blocks)
     sections = group_sections(pages, tables, kv_pairs)
 
-    result   = {'document':document_key, 'sections':sections}
+    result   = {'document': document_key, 'sections': sections}
     json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
     s3.put_object(Bucket=output_bucket, Key=json_key, Body=json.dumps(result))
 
-    return {'statusCode':200, 'body':json.dumps({'json_s3_key':json_key})}
+    return {'statusCode':200, 'body': json.dumps({'json_s3_key': json_key})}
