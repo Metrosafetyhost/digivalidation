@@ -36,51 +36,7 @@ def is_major_heading(text):
             return True
     return False
 
-# Revised parser for "Significant Findings and Action Plan"
-def parse_significant_findings(lines):
-    items = []
-    # find indices of each audit ref start
-    refs = [
-        idx for idx, l in enumerate(lines)
-        if re.match(r'^(\d+\.\d+)\.?\s+', l.strip())
-    ]
-    refs.append(len(lines))
-
-    for start, end in zip(refs, refs[1:]):
-        chunk = [l.strip() for l in lines[start:end] if l.strip()]
-        if not chunk:
-            continue
-
-        m = re.match(r'^(\d+\.\d+)\.?\s*(.+)$', chunk[0])
-        if not m:
-            continue
-        audit_ref, question = m.groups()
-
-        # locate labels
-        labels = {l.rstrip(':').lower(): i for i, l in enumerate(chunk)
-                  if l.rstrip(':').lower() in ('priority', 'observation', 'target date', 'action required')}
-
-        def slice_field(name):
-            i = labels.get(name)
-            if i is None:
-                return ''
-            next_idxs = [v for k, v in labels.items() if v > i]
-            j = min(next_idxs) if next_idxs else len(chunk)
-            return ' '.join(chunk[i+1:j]).strip()
-
-        items.append({
-            'audit_ref':      audit_ref,
-            'question':       question.strip(),
-            'priority':       slice_field('priority'),
-            'observation':    slice_field('observation'),
-            'target_date':    slice_field('target date'),
-            'action_required':slice_field('action required'),
-        })
-
-    return items
-
-
-
+# existing parsers (unchanged for other sections)
 def extract_key_value_pairs(blocks):
     id_map = {b['Id']: b for b in blocks}
     kv_pairs = []
@@ -149,7 +105,7 @@ def extract_pages_text(blocks):
             by_page.setdefault(pg, []).append((top, b['Text']))
     out = {}
     for pg, lines in by_page.items():
-        lines.sort(key=lambda x: x[0])
+        lines.sort(key=lambda x: (x[0], ))
         out[pg] = [t for _, t in lines]
     return out
 
@@ -216,12 +172,6 @@ def group_sections(pages_text, tables, kv_pairs):
         for kv in kv_pairs:
             if sec['start_page'] <= kv['page'] < (next_sec['start_page'] if next_sec else kv['page']+1):
                 sec['fields'].append({'key': kv['key'], 'value': kv['value']})
-    # now post‑process Significant Findings
-    for sec in sections:
-        if sec['name'].lower().startswith('significant findings'):
-            sec['items'] = parse_significant_findings(sec['paragraphs'])
-            sec.pop('paragraphs', None)
-            sec.pop('fields', None)
     return sections
 
 def process(event, context):
@@ -229,22 +179,48 @@ def process(event, context):
     document_key  = event['document_key']
     output_bucket = event.get('output_bucket', 'textract-output-digival')
 
-    # 1) start Textract with both TABLES and FORMS
+    # 1) start Textract with TABLES and FORMS
     resp = textract.start_document_analysis(
        DocumentLocation={'S3Object':{'Bucket':input_bucket,'Name':document_key}},
-       FeatureTypes=['TABLES','FORMS']  # <-- added 'FORMS'
+       FeatureTypes=['TABLES','FORMS']
     )
 
     # 2) poll until completion
     blocks = poll_for_job_completion(resp['JobId'])
 
-    # 3) extract pages, tables, key/value pairs, etc (unchanged)
+    # 3) extract pages, tables, key/value pairs
     pages    = extract_pages_text(blocks)
     tables   = extract_tables_grouped(blocks)
     kv_pairs = extract_key_value_pairs(blocks)
-    
-    # 4) group into sections and apply revised parser
+
+    # 4) group into sections
     sections = group_sections(pages, tables, kv_pairs)
+
+    # 4b) for "Significant Findings and Action Plan", parse directly from its table
+    for sec in sections:
+        if sec['name'].lower().startswith('significant findings') and sec.get('tables'):
+            tbl = sec['tables'][0]
+            items = []
+            for row in tbl['rows']:
+                # split ref & question
+                parts = row[0].split(' ', 1)
+                audit_ref = parts[0].rstrip('.')
+                question  = parts[1] if len(parts)>1 else ''
+                priority       = row[1] if len(row)>1 else ''
+                observation    = row[2] if len(row)>2 else ''
+                target_date    = row[3] if len(row)>3 else ''
+                action_required= row[4] if len(row)>4 else ''
+                items.append({
+                    'audit_ref':      audit_ref,
+                    'question':       question.strip(),
+                    'priority':       priority.strip(),
+                    'observation':    observation.strip(),
+                    'target_date':    target_date.strip(),
+                    'action_required':action_required.strip(),
+                })
+            sec['items'] = items
+            sec.pop('paragraphs', None)
+            sec.pop('fields',     None)
 
     # 5) output
     result   = {'document':document_key, 'sections':sections}
