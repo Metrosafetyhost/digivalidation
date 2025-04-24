@@ -36,82 +36,55 @@ def is_major_heading(text):
             return True
     return False
 
-import re
-
-import re
-
 def parse_significant_findings(lines):
+    import re
+
     items = []
-    current = None
-    i = 0
+    # find all the start indices of each finding (e.g. "12.2. …")
+    refs = [
+        idx for idx, l in enumerate(lines)
+        if re.match(r'^\d+\.\d+\.?\s+', l.strip())
+    ]
+    # add end sentinel
+    refs.append(len(lines))
 
-    # map the human label to our JSON key
-    label_map = {
-        'priority':        'priority',
-        'observation':     'observation',
-        'target date':     'target_date',
-        'action required': 'action_required',
-    }
-
-    def flush():
-        nonlocal current
-        if current:
-            # ensure all four keys exist
-            for v in label_map.values():
-                current.setdefault(v, "")
-            items.append(current)
-            current = None
-
-    while i < len(lines):
-        line = lines[i].strip()
-
-        # 1) New finding if it begins with "12.2. " etc
-        m_ref = re.match(r'^(\d+\.\d+)\.?\s*(.+)$', line)
-        if m_ref:
-            flush()
-            current = {
-                'audit_ref': m_ref.group(1),
-                'question':  m_ref.group(2).strip()
-            }
-            i += 1
+    for start, end in zip(refs, refs[1:]):
+        chunk = [l.strip() for l in lines[start:end] if l.strip()]
+        if not chunk:
             continue
 
-        if not current:
-            i += 1
+        # first line has audit_ref + question
+        m = re.match(r'^(\d+\.\d+)\.?\s*(.+)$', chunk[0])
+        if not m:
             continue
+        audit_ref, question = m.groups()
 
-        # 2) Look for any of our four labels, inline or standalone
-        m_lab = re.match(r'^(Priority|Observation|Target Date|Action Required)[:\s]*(.*)$',
-                         line, re.IGNORECASE)
-        if m_lab:
-            label = m_lab.group(1).lower()
-            key   = label_map[label]
-            tail  = m_lab.group(2).strip()
+        # locate label lines
+        labels = {}
+        for i, l in enumerate(chunk):
+            key = l.rstrip(':').lower()
+            if key in ('priority', 'observation', 'target date', 'action required'):
+                labels[key] = i
 
-            if tail:
-                # inline value: e.g. "Priority Medium" or "Target Date: 20/04/2025"
-                current[key] = tail
-                i += 1
-            else:
-                # label on its own line: grab all following lines until
-                # we hit a blank, a new label, or the next audit_ref
-                buf = []
-                j   = i + 1
-                while j < len(lines):
-                    nxt = lines[j].strip()
-                    if not nxt: break
-                    if re.match(r'^\d+\.\d+', nxt): break
-                    if re.match(r'^(Priority|Observation|Target Date|Action Required)\b', nxt, re.IGNORECASE):
-                        break
-                    buf.append(nxt)
-                    j += 1
-                current[key] = ' '.join(buf).strip()
-                i = j
-            continue
+        def slice_field(name):
+            i = labels.get(name)
+            if i is None:
+                return ''
+            # find next label index after this one
+            next_idxs = [v for k, v in labels.items() if v > i]
+            j = min(next_idxs) if next_idxs else len(chunk)
+            # return everything between the label and the next label
+            return ' '.join(chunk[i+1:j]).strip()
 
-        i += 1
+        items.append({
+            'audit_ref':      audit_ref,
+            'question':       question.strip(),
+            'priority':       slice_field('priority'),
+            'observation':    slice_field('observation'),
+            'target_date':    slice_field('target date'),
+            'action_required':slice_field('action required'),
+        })
 
-    flush()
     return items
 
 
@@ -274,16 +247,6 @@ def process(event, context):
     kv_pairs = extract_key_value_pairs(blocks)
     sections = group_sections(pages, tables, kv_pairs)
 
-    for sec in sections:
-        if sec["name"].lower().startswith("significant findings"):
-            paras = sec.get("paragraphs", [])
-            if paras:
-                sec["items"] = parse_significant_findings(paras)
-            sec.pop("paragraphs", None)
-            sec.pop("fields", None)
-
-    result   = {'document':document_key, 'sections':sections}
-    # 2) write out your JSON
     result   = {'document':document_key, 'sections':sections}
     json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
     s3.put_object(Bucket=output_bucket, Key=json_key, Body=json.dumps(result))
