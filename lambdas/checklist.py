@@ -36,7 +36,90 @@ def is_major_heading(text):
             return True
     return False
 
-# existing parsers (unchanged for other sections)
+import re
+
+def parse_significant_findings(lines):
+    items = []
+    current = None
+    current_section = None
+
+    # labels we expect
+    LABELS = ['Priority', 'Observation', 'Target Date', 'Action Required']
+    # sub-sections within this QCC section
+    SUB_SECTIONS = {'management of risk', 'additional guidance', 'emergency action'}
+
+    def flush():
+        nonlocal current
+        if current:
+            items.append(current)
+            current = None
+
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        lower = line.lower()
+
+        # 1) pick up sub-section headings
+        if lower in SUB_SECTIONS:
+            current_section = line  # e.g. "Management of Risk"
+            i += 1
+            continue
+
+        # 2) new audit ref starts a new item
+        m_ref = re.match(r'^(\d+\.\d+)\.?\s+(.+)$', line)
+        if m_ref:
+            flush()
+            current = {
+                'section':     current_section,
+                'audit_ref':   m_ref.group(1),
+                'question':    m_ref.group(2).strip(),
+                'priority':       "",
+                'observation':    "",
+                'target_date':    "",
+                'action_required':""
+            }
+            i += 1
+            continue
+
+        # if we don't have an item yet, skip
+        if not current:
+            i += 1
+            continue
+
+        # 3) field extraction
+        # detect which label this line is
+        for label in LABELS:
+            # match "Priority" or "Priority:" etc
+            if re.match(rf'^{label}\b:?', line, re.IGNORECASE):
+                field = label.lower().replace(' ', '_')  # maps to our keys
+                # grab inline content if present
+                parts = re.split(r':\s*', line, 1)
+                if len(parts) == 2 and parts[1].strip():
+                    content = parts[1].strip()
+                    i += 1
+                else:
+                    # otherwise, consume following lines until next label or new ref
+                    content_lines = []
+                    j = i + 1
+                    while j < len(lines):
+                        nxt = lines[j].strip()
+                        # break if next is a label or a new audit ref
+                        if any(re.match(rf'^{L}\b', nxt, re.IGNORECASE) for L in LABELS) or re.match(r'^\d+\.\d+', nxt):
+                            break
+                        content_lines.append(nxt)
+                        j += 1
+                    content = ' '.join(content_lines).strip()
+                    i = j
+                current[field] = content
+                break
+        else:
+            # no label matched, skip
+            i += 1
+
+    # after loop, flush last item
+    flush()
+    return items
+
 def extract_key_value_pairs(blocks):
     id_map = {b['Id']: b for b in blocks}
     kv_pairs = []
@@ -105,7 +188,7 @@ def extract_pages_text(blocks):
             by_page.setdefault(pg, []).append((top, b['Text']))
     out = {}
     for pg, lines in by_page.items():
-        lines.sort(key=lambda x: (x[0], ))
+        lines.sort(key=lambda x: x[0])
         out[pg] = [t for _, t in lines]
     return out
 
@@ -172,6 +255,12 @@ def group_sections(pages_text, tables, kv_pairs):
         for kv in kv_pairs:
             if sec['start_page'] <= kv['page'] < (next_sec['start_page'] if next_sec else kv['page']+1):
                 sec['fields'].append({'key': kv['key'], 'value': kv['value']})
+    # now post‑process Significant Findings
+    for sec in sections:
+        if sec['name'].lower().startswith('significant findings'):
+            sec['items'] = parse_significant_findings(sec['paragraphs'])
+            sec.pop('paragraphs', None)
+            sec.pop('fields', None)
     return sections
 
 def process(event, context):
@@ -179,50 +268,16 @@ def process(event, context):
     document_key  = event['document_key']
     output_bucket = event.get('output_bucket', 'textract-output-digival')
 
-    # 1) start Textract with TABLES and FORMS
-    resp = textract.start_document_analysis(
+    resp     = textract.start_document_analysis(
        DocumentLocation={'S3Object':{'Bucket':input_bucket,'Name':document_key}},
        FeatureTypes=['TABLES','FORMS']
     )
-
-    # 2) poll until completion
-    blocks = poll_for_job_completion(resp['JobId'])
-
-    # 3) extract pages, tables, key/value pairs
+    blocks   = poll_for_job_completion(resp['JobId'])
     pages    = extract_pages_text(blocks)
     tables   = extract_tables_grouped(blocks)
     kv_pairs = extract_key_value_pairs(blocks)
-
-    # 4) group into sections
     sections = group_sections(pages, tables, kv_pairs)
 
-    # 4b) for "Significant Findings and Action Plan", parse directly from its table
-    for sec in sections:
-        if sec['name'].lower().startswith('significant findings') and sec.get('tables'):
-            tbl = sec['tables'][0]
-            items = []
-            for row in tbl['rows']:
-                # split ref & question
-                parts = row[0].split(' ', 1)
-                audit_ref = parts[0].rstrip('.')
-                question  = parts[1] if len(parts)>1 else ''
-                priority       = row[1] if len(row)>1 else ''
-                observation    = row[2] if len(row)>2 else ''
-                target_date    = row[3] if len(row)>3 else ''
-                action_required= row[4] if len(row)>4 else ''
-                items.append({
-                    'audit_ref':      audit_ref,
-                    'question':       question.strip(),
-                    'priority':       priority.strip(),
-                    'observation':    observation.strip(),
-                    'target_date':    target_date.strip(),
-                    'action_required':action_required.strip(),
-                })
-            sec['items'] = items
-            sec.pop('paragraphs', None)
-            sec.pop('fields',     None)
-
-    # 5) output
     result   = {'document':document_key, 'sections':sections}
     json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
     s3.put_object(Bucket=output_bucket, Key=json_key, Body=json.dumps(result))
