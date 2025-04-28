@@ -23,20 +23,62 @@ IMPORTANT_HEADINGS = [
     "Legionella Control Programme of Preventative Works",
     "System Asset Register"
 ]
-def process(event, context):
-    # 1. Get input location
+
+def extract_significant_findings_from_table(section):
+    """
+    Pull out the guaranteed 2-column layout under
+    “Significant Findings and Action Plan” and map
+    Label→Value.
+    """
+    # 1) Question is always the first paragraph
+    paras    = section.get('paragraphs', [])
+    question = paras[0].strip() if paras else ""
+
+    # 2) The first table under this heading
+    tables = section.get('tables', [])
+    if not tables:
+        return {"Question": question}
+
+    table = tables[0]
+
+    # 3) Find the row index that contains "Priority"
+    idx = next((i for i,row in enumerate(table) if "Priority" in row), None)
+    if idx is None or idx+1 >= len(table):
+        return {"Question": question}
+
+    # 4) Loop label-row / value-row pairs
+    result = {"Question": question}
+    i = idx
+    while i+1 < len(table):
+        labels = table[i]
+        values = table[i+1]
+        for col, label in enumerate(labels):
+            val = values[col] if col < len(values) else ""
+            result[label.strip()] = val.strip()
+        i += 2
+
+    return result
+
+
+# map section name → extractor
+SECTION_EXTRACTORS = {
+    "Significant Findings and Action Plan": extract_significant_findings_from_table
+}
+
+
+def lambda_handler(event, context):
     input_bucket  = event.get('bucket',    'metrosafetyprodfiles')
     document_key  = event['document_key']
     output_bucket = event.get('output_bucket','textract-output-digival')
 
-    # 2. Kick off Textract (tables + forms)
+    # 2) kick off Textract analysis
     resp = textract.start_document_analysis(
         DocumentLocation={'S3Object':{'Bucket':input_bucket,'Name':document_key}},
         FeatureTypes=['TABLES','FORMS']
     )
     job_id = resp['JobId']
 
-    # 3. Poll until done
+    # 3) poll until done
     while True:
         status = textract.get_document_analysis(JobId=job_id)['JobStatus']
         if status in ('SUCCEEDED','FAILED'):
@@ -45,27 +87,33 @@ def process(event, context):
     if status != 'SUCCEEDED':
         raise RuntimeError(f"Textract failed: {status}")
 
-    # 4. Retrieve all blocks
-    blocks    = []
-    next_tok  = None
+    # 4) fetch all blocks
+    blocks   = []
+    next_tok = None
     while True:
         kwargs = {'JobId': job_id}
         if next_tok:
             kwargs['NextToken'] = next_tok
-        resp = textract.get_document_analysis(**kwargs)
-        blocks.extend(resp['Blocks'])
-        next_tok = resp.get('NextToken')
+        r = textract.get_document_analysis(**kwargs)
+        blocks.extend(r['Blocks'])
+        next_tok = r.get('NextToken')
         if not next_tok:
             break
 
-    # 5. Parse into sections
+    # 5) group into sections (with raw paragraphs + raw 2D table arrays)
     sections = parse_sections(blocks)
 
-    # 6. Write JSON back to the processed/ folder in textract-output-digival
-    output_bucket = 'textract-output-digival'
-    json_key      = 'processed/' + document_key.rsplit('/',1)[-1].replace('.pdf', '.json')
-    result        = {'document': document_key, 'sections': sections}
+    # 6) apply section‐specific extractors
+    output_secs = []
+    for sec in sections:
+        name      = sec['name']
+        extractor = SECTION_EXTRACTORS.get(name, lambda s: s['tables'])
+        data      = extractor(sec)
+        output_secs.append({'name': name, 'data': data})
 
+    # 7) write JSON back to S3
+    result   = {'document': document_key, 'sections': output_secs}
+    json_key = 'processed/' + document_key.rsplit('/',1)[-1].replace('.pdf','.json')
     s3.put_object(
         Bucket=output_bucket,
         Key=json_key,
@@ -78,55 +126,9 @@ def process(event, context):
         'body': json.dumps({'json_s3_key': json_key})
     }
 
-IMPORTANT_HEADINGS = [
-    "Significant Findings and Action Plan",
-    "Executive Summary",
-    "Areas Identified Requiring Remedial Actions",
-    "Building Description",
-    "Water Scope",
-    "Risk Dashboard",
-    "Management Responsibilities",
-    "Legionella Control Programme",
-    "Audit Detail",
-    "System Asset Register",
-    "Water Assets",
-    "Appendices",
-    "Risk Assessment Checklist",
-    "Legionella Control Programme of Preventative Works",
-    "System Asset Register"
-]
-
-def poll_for_job_completion(job_id, max_tries=60, delay=5):
-    """Poll until Textract job succeeds, then return all blocks."""
-    for _ in range(max_tries):
-        status = textract.get_document_analysis(JobId=job_id)['JobStatus']
-        if status == 'SUCCEEDED':
-            break
-        if status == 'FAILED':
-            raise RuntimeError("Textract analysis failed")
-        time.sleep(delay)
-
-    all_blocks = []
-    next_token = None
-    while True:
-        kwargs = {'JobId': job_id}
-        if next_token:
-            kwargs['NextToken'] = next_token
-        resp = textract.get_document_analysis(**kwargs)
-        all_blocks.extend(resp['Blocks'])
-        next_token = resp.get('NextToken')
-        if not next_token:
-            break
-
-    return all_blocks
-
 
 def parse_sections(blocks):
-    """Organise LINEs and TABLEs under each IMPORTANT_HEADINGS."""
-    # map by ID for fast lookup
-    id_map = {b['Id']: b for b in blocks}
-
-    # collect lines & tables per page
+    id_map = {b['Id']:b for b in blocks}
     page_lines, page_tables = {}, {}
     for b in blocks:
         if b['BlockType']=='LINE':
@@ -139,59 +141,44 @@ def parse_sections(blocks):
         lines  = sorted(page_lines[page],
                         key=lambda x: x['Geometry']['BoundingBox']['Top'])
         tables = page_tables.get(page, [])
-        # pre-extract table arrays
-        table_data = [extract_table(tbl, blocks, id_map) for tbl in tables]
+        table_data = [extract_table(t, blocks, id_map) for t in tables]
         t_idx = 0
         current = None
 
         for line in lines:
             text = line['Text'].strip()
-            # start new section?
             if text in IMPORTANT_HEADINGS:
                 current = {'name': text, 'paragraphs': [], 'tables': []}
                 sections.append(current)
                 continue
-
             if not current:
                 continue
-
-            # attach any tables whose top lies below this line
+            # attach tables whose top sits below this line
             while (t_idx < len(tables) and
                    tables[t_idx]['Geometry']['BoundingBox']['Top']
-                   > line['Geometry']['BoundingBox']['Top']):
+                     > line['Geometry']['BoundingBox']['Top']):
                 current['tables'].append(table_data[t_idx])
                 t_idx += 1
-
-            # accumulate paragraph text
             current['paragraphs'].append(text)
-
-        # leftover tables go to the last section on this page
+        # leftover tables
         while t_idx < len(tables) and current:
             current['tables'].append(table_data[t_idx])
             t_idx += 1
 
     return sections
 
-
-def extract_table(tbl_block, blocks, id_map):
-    """Turn a Textract TABLE block into a 2D list of cell texts."""
-    # find all CELL blocks for this table
-    cells = [
-        b for b in blocks
-        if b['BlockType']=='CELL'
-        and b.get('Table',{}).get('Id') == tbl_block['Id']
-    ]
-
-    # if we got zero cells, bail out early
+def extract_table(tbl, blocks, id_map):
+    cells = [b for b in blocks
+             if b['BlockType']=='CELL'
+             and b.get('Table',{}).get('Id')==tbl['Id']]
     if not cells:
         return []
 
-    # map row→{col→text}
     rows = {}
     for cell in cells:
         r, c = cell['RowIndex'], cell['ColumnIndex']
         txt = ""
-        for rel in cell.get('Relationships', []):
+        for rel in cell.get('Relationships',[]):
             if rel['Type']=='CHILD':
                 for cid in rel['Ids']:
                     w = id_map[cid]
@@ -202,11 +189,8 @@ def extract_table(tbl_block, blocks, id_map):
                         txt += '[X] '
         rows.setdefault(r, {})[c] = txt.strip()
 
-    # now build a rectangular list-of-lists
     max_col = max(max(cols.keys()) for cols in rows.values())
-    table = []
+    table   = []
     for r in sorted(rows):
-        row = [rows[r].get(c, "") for c in range(1, max_col+1)]
-        table.append(row)
-
+        table.append([rows[r].get(c,"") for c in range(1, max_col+1)])
     return table
