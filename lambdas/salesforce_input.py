@@ -64,20 +64,20 @@ def proof_table_content(html, record_id):
             "messages": [{
                 "role": "user",
                 "content": (
-                    "Proofread and correct the following text while ensuring:\n"
+                    "Proofread the following text according to these strict guidelines:\n\n"
+                    "- Do NOT add any new introductory text or explanatory sentences before or after the original content.\n"
                     "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
                     "- Headings, section titles, and structure remain unchanged.\n"
                     "- Do NOT remove any words or phrases from the original content.\n"
                     "- Do NOT split, merge, or add any new sentences or content.\n"
-                    "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
                     "- Proofread the text while preserving the exact sequence ‘|||ROW_DELIM|||’ as a marker. Additionally, if a list is detected (i.e. multiple standalone words), insert a newline between them only after the marker.\n"
                     "- Do NOT remove or alter any HTML formatting tags (such as <p>, <ul>, <li>, and <u>)."
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
-                    "Correct this text: " + joined_content
+                    "Text to proofread: " + joined_content
                 )
             }],
-            "max_tokens": 1000,
+            "max_tokens": 2000,
             "temperature": 0.3
         }
         
