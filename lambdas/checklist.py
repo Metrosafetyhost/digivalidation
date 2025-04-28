@@ -26,17 +26,8 @@ IMPORTANT_HEADINGS = [
     "System Asset Register"
 ]
 
-FOOTER_PATTERNS = [
-    re.compile(r'Printed from SafetySMART', re.IGNORECASE),
-    re.compile(r'^Page \d+ of \d+$', re.IGNORECASE)
-]
-DATE_RE = re.compile(r'\b\d{1,2}/\d{1,2}/\d{4}\b')
-
-# Helpers
-
 def normalize(text):
     return re.sub(r'[^a-z0-9 ]+', ' ', text.lower()).strip()
-
 
 def is_major_heading(text):
     norm = normalize(text)
@@ -44,6 +35,83 @@ def is_major_heading(text):
         if all(w in norm for w in phrase.lower().split()):
             return True
     return False
+
+# Rewrite to handle “12.2.” style refs, followed by Priority / Observation / Target Date / Action Required
+def parse_significant_findings(lines):
+    items = []
+    current = None
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        # Start of a new finding: e.g. "12.2. Has a competent person..."
+        m_ref = re.match(r'^(\d+\.\d+)\.?\s+(.+)$', line)
+        if m_ref:
+            # push previous
+            if current:
+                items.append(current)
+            current = {
+                'audit_ref': m_ref.group(1),
+                'question': m_ref.group(2)
+            }
+            i += 1
+            continue
+
+        if current:
+            # Priority on its own line, next line holds the value
+            if line.lower() == 'priority' and i+1 < len(lines):
+                current['priority'] = lines[i+1].strip()
+                i += 2
+                continue
+
+            # Observation block
+            if line.lower().startswith('observation'):
+                # if just 'Observation', grab subsequent lines until next label
+                obs = ''
+                if line.strip().lower() == 'observation':
+                    j = i+1
+                else:
+                    # inline
+                    obs = line.partition(':')[2].strip()
+                    j = i+1
+                while j < len(lines) and not re.match(r'^(Priority|Target Date|Action Required)$', lines[j].strip(), re.IGNORECASE) and not re.match(r'^\d+\.\d+', lines[j].strip()):
+                    obs += ' ' + lines[j].strip()
+                    j += 1
+                current['observation'] = obs.strip()
+                i = j
+                continue
+
+            # Target Date either inline or next line
+            if line.lower().startswith('target date'):
+                parts = line.split(':',1)
+                if len(parts)==2 and parts[1].strip():
+                    current['target_date'] = parts[1].strip()
+                    i += 1
+                elif i+1 < len(lines):
+                    current['target_date'] = lines[i+1].strip()
+                    i += 2
+                else:
+                    i += 1
+                continue
+
+            # Action Required block
+            if line.lower().startswith('action required'):
+                action = ''
+                parts = line.split(':',1)
+                if len(parts)==2:
+                    action = parts[1].strip()
+                j = i+1
+                while j < len(lines) and not re.match(r'^\d+\.\d+', lines[j].strip()):
+                    action += ' ' + lines[j].strip()
+                    j += 1
+                current['action_required'] = action.strip()
+                i = j
+                continue
+
+        i += 1
+
+    if current:
+        items.append(current)
+    return items
 
 
 def extract_key_value_pairs(blocks):
@@ -81,7 +149,6 @@ def extract_key_value_pairs(blocks):
                 })
     return kv_pairs
 
-
 def poll_for_job_completion(job_id, max_tries=20, delay=5):
     for _ in range(max_tries):
         resp = textract.get_document_analysis(JobId=job_id)
@@ -91,7 +158,6 @@ def poll_for_job_completion(job_id, max_tries=20, delay=5):
             raise Exception("Textract job failed")
         time.sleep(delay)
     raise Exception("Job did not complete in time")
-
 
 def get_all_pages(job_id):
     blocks = []
@@ -107,49 +173,35 @@ def get_all_pages(job_id):
             break
     return blocks
 
-
 def extract_pages_text(blocks):
     by_page = {}
     for b in blocks:
         if b['BlockType'] == 'LINE':
-            text = b['Text'].strip()
-            # drop footers
-            if any(p.search(text) for p in FOOTER_PATTERNS):
-                continue
-            # remove standalone dates
-            text = DATE_RE.sub('', text).strip()
-            if not text:
-                continue
             pg = b.get('Page', 1)
             top = b['Geometry']['BoundingBox']['Top']
-            by_page.setdefault(pg, []).append((top, text))
+            by_page.setdefault(pg, []).append((top, b['Text']))
     out = {}
     for pg, lines in by_page.items():
         lines.sort(key=lambda x: x[0])
         out[pg] = [t for _, t in lines]
     return out
 
-
 def extract_tables_grouped(blocks):
     tables = []
     headings = {}
-    # collect headings per page
     for b in blocks:
         if b['BlockType'] == 'LINE' and is_major_heading(b.get('Text', '')):
             pg = b.get('Page', 1)
             top = b['Geometry']['BoundingBox']['Top']
             headings.setdefault(pg, []).append((top, b['Text']))
-    # group tables
     for b in blocks:
         if b['BlockType'] == 'TABLE':
             pg = b.get('Page', 1)
             top = b['Geometry']['BoundingBox']['Top']
-            # find closest heading on same page
             header = None
             cand = [(y, t) for y, t in headings.get(pg, []) if y < top]
             if cand:
                 header = max(cand, key=lambda x: x[0])[1]
-            # extract rows
             rows = []
             for rel in b.get('Relationships', []):
                 if rel['Type'] == 'CHILD':
@@ -170,56 +222,20 @@ def extract_tables_grouped(blocks):
             tables.append({'page': pg, 'header': header, 'rows': rows, 'bbox': b['Geometry']['BoundingBox']})
     return tables
 
-
-def parse_significant_findings_table(tables, start_page, end_page):
-    """
-    Extract items from the 'Significant Findings and Action Plan' table
-    looking at any tables in the page range
-    """
-    items = []
-    # first try matching header
-    for tbl in tables:
-        if tbl['header'] and tbl['header'].lower().startswith('significant findings'):
-            for row in tbl['rows']:
-                cols = row + [''] * (5 - len(row))
-                items.append({
-                    'audit_ref':      cols[0].strip(),
-                    'question':       cols[1].strip(),
-                    'observation':    cols[2].strip(),
-                    'priority':       cols[3].strip(),
-                    'action_required':cols[4].strip(),
-                })
-            return items
-    # fallback: any table in the section pages
-    for tbl in tables:
-        if start_page < tbl['page'] < end_page:
-            for row in tbl['rows']:
-                cols = row + [''] * (5 - len(row))
-                items.append({
-                    'audit_ref':      cols[0].strip(),
-                    'question':       cols[1].strip(),
-                    'observation':    cols[2].strip(),
-                    'priority':       cols[3].strip(),
-                    'action_required':cols[4].strip(),
-                })
-            return items
-    return items
-
-
 def group_sections(pages_text, tables, kv_pairs):
     sections = []
-    # find major headings
+    # find all major headings in order
     for pg, lines in sorted(pages_text.items()):
         for line in lines:
             if is_major_heading(line):
                 sections.append({
-                    'name': line,
+                    'name':       line,
                     'start_page': pg,
                     'paragraphs': [],
-                    'tables': [],
-                    'fields': []
+                    'tables':     [],
+                    'fields':     []
                 })
-    # fill paragraphs and fields
+    # fill each section
     for idx, sec in enumerate(sections):
         next_sec = sections[idx+1] if idx+1 < len(sections) else None
         for pg, lines in pages_text.items():
@@ -228,20 +244,18 @@ def group_sections(pages_text, tables, kv_pairs):
             sec['paragraphs'].extend(lines)
         sec['tables'] = [
             t for t in tables
-            if t['page'] == sec['start_page'] and t['header'] == sec['name']
+            if t['page']==sec['start_page'] and t['header']==sec['name']
         ]
         for kv in kv_pairs:
             if sec['start_page'] <= kv['page'] < (next_sec['start_page'] if next_sec else kv['page']+1):
                 sec['fields'].append({'key': kv['key'], 'value': kv['value']})
-    # post-process Significant Findings
-    for idx, sec in enumerate(sections):
+    # now post‑process Significant Findings
+    for sec in sections:
         if sec['name'].lower().startswith('significant findings'):
-            next_start = sections[idx+1]['start_page'] if idx+1 < len(sections) else float('inf')
-            sec['items'] = parse_significant_findings_table(tables, sec['start_page'], next_start)
+            sec['items'] = parse_significant_findings(sec['paragraphs'])
             sec.pop('paragraphs', None)
-            sec.pop('fields',     None)
+            sec.pop('fields', None)
     return sections
-
 
 def process(event, context):
     input_bucket  = event.get('bucket', 'metrosafetyprodfiles')
@@ -258,7 +272,7 @@ def process(event, context):
     kv_pairs = extract_key_value_pairs(blocks)
     sections = group_sections(pages, tables, kv_pairs)
 
-    result   = {'document': document_key, 'sections': sections}
+    result   = {'document':document_key, 'sections':sections}
     json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
     s3.put_object(Bucket=output_bucket, Key=json_key, Body=json.dumps(result))
 
