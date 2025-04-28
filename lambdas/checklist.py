@@ -25,9 +25,9 @@ IMPORTANT_HEADINGS = [
 ]
 def process(event, context):
     # 1. Get input location
-    rec          = event['Records'][0]['s3']
-    input_bucket = rec['bucket']['name']
-    document_key = rec['object']['key']
+    input_bucket  = event.get('bucket',    'metrosafetyprodfiles')
+    document_key  = event['document_key']
+    output_bucket = event.get('output_bucket','textract-output-digival')
 
     # 2. Kick off Textract (tables + forms)
     resp = textract.start_document_analysis(
@@ -174,31 +174,35 @@ def parse_sections(blocks):
 
 
 def extract_table(tbl_block, blocks, id_map):
-    """Convert one TABLE block into a 2D list of cell texts."""
-    # find cells belonging to this table
-    cells = [b for b in blocks
-             if b['BlockType']=='CELL' and
-                any(rel['Type']=='CHILD' for rel in b.get('Relationships', []))
-             and b.get('Table', {}).get('Id') == tbl_block['Id']]
+    """Turn a Textract TABLE block into a 2D list of cell texts."""
+    # find all CELL blocks for this table
+    cells = [
+        b for b in blocks
+        if b['BlockType']=='CELL'
+        and b.get('Table',{}).get('Id') == tbl_block['Id']
+    ]
 
-    # organise by row/col
+    # if we got zero cells, bail out early
+    if not cells:
+        return []
+
+    # map row→{col→text}
     rows = {}
     for cell in cells:
-        r = cell['RowIndex']
-        c = cell['ColumnIndex']
-        text = ""
+        r, c = cell['RowIndex'], cell['ColumnIndex']
+        txt = ""
         for rel in cell.get('Relationships', []):
             if rel['Type']=='CHILD':
                 for cid in rel['Ids']:
                     w = id_map[cid]
                     if w['BlockType']=='WORD':
-                        text += w['Text'] + ' '
-                    elif (w['BlockType']=='SELECTION_ELEMENT' and
-                          w['SelectionStatus']=='SELECTED'):
-                        text += '[X] '
-        rows.setdefault(r, {})[c] = text.strip()
+                        txt += w['Text'] + ' '
+                    elif (w['BlockType']=='SELECTION_ELEMENT'
+                          and w['SelectionStatus']=='SELECTED'):
+                        txt += '[X] '
+        rows.setdefault(r, {})[c] = txt.strip()
 
-    # build row-ordered list of lists
+    # now build a rectangular list-of-lists
     max_col = max(max(cols.keys()) for cols in rows.values())
     table = []
     for r in sorted(rows):
