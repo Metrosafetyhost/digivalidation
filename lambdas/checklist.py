@@ -1,12 +1,82 @@
-import boto3
 import json
 import time
-import re
-from io import StringIO
+import boto3
 
 # AWS clients
 textract = boto3.client('textract', region_name='eu-west-2')
-s3 = boto3.client('s3')
+s3       = boto3.client('s3')
+
+IMPORTANT_HEADINGS = [
+    "Significant Findings and Action Plan",
+    "Executive Summary",
+    "Areas Identified Requiring Remedial Actions",
+    "Building Description",
+    "Water Scope",
+    "Risk Dashboard",
+    "Management Responsibilities",
+    "Legionella Control Programme",
+    "Audit Detail",
+    "System Asset Register",
+    "Water Assets",
+    "Appendices",
+    "Risk Assessment Checklist",
+    "Legionella Control Programme of Preventative Works",
+    "System Asset Register"
+]
+def process(event, context):
+    # 1. Get input location
+    rec          = event['Records'][0]['s3']
+    input_bucket = rec['bucket']['name']
+    document_key = rec['object']['key']
+
+    # 2. Kick off Textract (tables + forms)
+    resp = textract.start_document_analysis(
+        DocumentLocation={'S3Object':{'Bucket':input_bucket,'Name':document_key}},
+        FeatureTypes=['TABLES','FORMS']
+    )
+    job_id = resp['JobId']
+
+    # 3. Poll until done
+    while True:
+        status = textract.get_document_analysis(JobId=job_id)['JobStatus']
+        if status in ('SUCCEEDED','FAILED'):
+            break
+        time.sleep(5)
+    if status != 'SUCCEEDED':
+        raise RuntimeError(f"Textract failed: {status}")
+
+    # 4. Retrieve all blocks
+    blocks    = []
+    next_tok  = None
+    while True:
+        kwargs = {'JobId': job_id}
+        if next_tok:
+            kwargs['NextToken'] = next_tok
+        resp = textract.get_document_analysis(**kwargs)
+        blocks.extend(resp['Blocks'])
+        next_tok = resp.get('NextToken')
+        if not next_tok:
+            break
+
+    # 5. Parse into sections
+    sections = parse_sections(blocks)
+
+    # 6. Write JSON back to the processed/ folder in textract-output-digival
+    output_bucket = 'textract-output-digival'
+    json_key      = 'processed/' + document_key.rsplit('/',1)[-1].replace('.pdf', '.json')
+    result        = {'document': document_key, 'sections': sections}
+
+    s3.put_object(
+        Bucket=output_bucket,
+        Key=json_key,
+        Body=json.dumps(result, indent=2).encode('utf-8'),
+        ContentType='application/json'
+    )
+
+    return {
+        'statusCode': 200,
+        'body': json.dumps({'json_s3_key': json_key})
+    }
 
 IMPORTANT_HEADINGS = [
     "Significant Findings and Action Plan",
@@ -26,182 +96,113 @@ IMPORTANT_HEADINGS = [
     "System Asset Register"
 ]
 
-def normalize(text):
-    return re.sub(r'[^a-z0-9 ]+', ' ', text.lower()).strip()
-
-def is_major_heading(text):
-    norm = normalize(text)
-    for phrase in IMPORTANT_HEADINGS:
-        if all(w in norm for w in phrase.lower().split()):
-            return True
-    return False
-
-def extract_key_value_pairs(blocks):
-    id_map = {b['Id']: b for b in blocks}
-    kv_pairs = []
-    for block in blocks:
-        if block['BlockType'] == 'KEY_VALUE_SET' and 'KEY' in block.get('EntityTypes', []):
-            key_text = ''
-            for rel in block.get('Relationships', []):
-                if rel['Type'] == 'CHILD':
-                    for cid in rel['Ids']:
-                        child = id_map[cid]
-                        if child['BlockType'] == 'WORD':
-                            key_text += child['Text'] + ' '
-            value_block = None
-            for rel in block.get('Relationships', []):
-                if rel['Type'] == 'VALUE':
-                    for vid in rel['Ids']:
-                        if id_map[vid]['BlockType'] == 'KEY_VALUE_SET':
-                            value_block = id_map[vid]
-            value_text = ''
-            if value_block:
-                for rel in value_block.get('Relationships', []):
-                    if rel['Type'] == 'CHILD':
-                        for cid in rel['Ids']:
-                            child = id_map[cid]
-                            if child['BlockType'] == 'WORD':
-                                value_text += child['Text'] + ' '
-            if key_text.strip() and value_text.strip():
-                kv_pairs.append({
-                    'key': key_text.strip(),
-                    'value': value_text.strip(),
-                    'page': block.get('Page', 1),
-                    'top': block['Geometry']['BoundingBox']['Top']
-                })
-    return kv_pairs
-
-def poll_for_job_completion(job_id, max_tries=20, delay=5):
+def poll_for_job_completion(job_id, max_tries=60, delay=5):
+    """Poll until Textract job succeeds, then return all blocks."""
     for _ in range(max_tries):
-        resp = textract.get_document_analysis(JobId=job_id)
-        status = resp['JobStatus']
+        status = textract.get_document_analysis(JobId=job_id)['JobStatus']
         if status == 'SUCCEEDED':
-            return get_all_pages(job_id)
-        if status == 'FAILED':
-            raise Exception("Textract job failed")
-        time.sleep(delay)
-    raise Exception("Job did not complete in time")
-
-def get_all_pages(job_id):
-    blocks = []
-    token = None
-    while True:
-        params = {'JobId': job_id}
-        if token:
-            params['NextToken'] = token
-        resp = textract.get_document_analysis(**params)
-        blocks.extend(resp.get('Blocks', []))
-        token = resp.get('NextToken')
-        if not token:
             break
-    return blocks
+        if status == 'FAILED':
+            raise RuntimeError("Textract analysis failed")
+        time.sleep(delay)
 
-def extract_pages_text(blocks):
-    by_page = {}
+    all_blocks = []
+    next_token = None
+    while True:
+        kwargs = {'JobId': job_id}
+        if next_token:
+            kwargs['NextToken'] = next_token
+        resp = textract.get_document_analysis(**kwargs)
+        all_blocks.extend(resp['Blocks'])
+        next_token = resp.get('NextToken')
+        if not next_token:
+            break
+
+    return all_blocks
+
+
+def parse_sections(blocks):
+    """Organise LINEs and TABLEs under each IMPORTANT_HEADINGS."""
+    # map by ID for fast lookup
+    id_map = {b['Id']: b for b in blocks}
+
+    # collect lines & tables per page
+    page_lines, page_tables = {}, {}
     for b in blocks:
-        if b['BlockType'] == 'LINE':
-            pg = b.get('Page', 1)
-            top = b['Geometry']['BoundingBox']['Top']
-            by_page.setdefault(pg, []).append((top, b['Text']))
-    out = {}
-    for pg, lines in by_page.items():
-        lines.sort(key=lambda x: x[0])
-        out[pg] = [t for _, t in lines]
-    return out
+        if b['BlockType']=='LINE':
+            page_lines.setdefault(b['Page'], []).append(b)
+        elif b['BlockType']=='TABLE':
+            page_tables.setdefault(b['Page'], []).append(b)
 
-def extract_tables_grouped(blocks):
-    tables = []
-    headings = {}
-    for b in blocks:
-        if b['BlockType'] == 'LINE' and is_major_heading(b.get('Text', '')):
-            pg = b.get('Page', 1)
-            top = b['Geometry']['BoundingBox']['Top']
-            headings.setdefault(pg, []).append((top, b['Text']))
-    for b in blocks:
-        if b['BlockType'] == 'TABLE':
-            pg = b.get('Page', 1)
-            top = b['Geometry']['BoundingBox']['Top']
-            header = None
-            cand = [(y, t) for y, t in headings.get(pg, []) if y < top]
-            if cand:
-                header = max(cand, key=lambda x: x[0])[1]
-            rows = []
-            for rel in b.get('Relationships', []):
-                if rel['Type'] == 'CHILD':
-                    cells = [c for c in blocks if c['Id'] in rel['Ids'] and c['BlockType'] == 'CELL']
-                    rowm = {}
-                    for c in cells:
-                        ri = c['RowIndex']
-                        txt = ''
-                        for r2 in c.get('Relationships', []):
-                            if r2['Type'] == 'CHILD':
-                                for cid in r2['Ids']:
-                                    w = next((x for x in blocks if x['Id'] == cid), None)
-                                    if w and w['BlockType'] in ('WORD', 'LINE'):
-                                        txt += w['Text'] + ' '
-                        rowm.setdefault(ri, []).append(txt.strip())
-                    for ri in sorted(rowm):
-                        rows.append(rowm[ri])
-            tables.append({'page': pg, 'header': header, 'rows': rows, 'bbox': b['Geometry']['BoundingBox']})
-    return tables
-
-# Updated grouping: tables by start_page only
-
-def group_sections(pages_text, tables, kv_pairs):
     sections = []
-    # identify major headings
-    for pg, lines in sorted(pages_text.items()):
+    for page in sorted(page_lines):
+        lines  = sorted(page_lines[page],
+                        key=lambda x: x['Geometry']['BoundingBox']['Top'])
+        tables = page_tables.get(page, [])
+        # pre-extract table arrays
+        table_data = [extract_table(tbl, blocks, id_map) for tbl in tables]
+        t_idx = 0
+        current = None
+
         for line in lines:
-            if is_major_heading(line):
-                sections.append({
-                    'name':       line,
-                    'start_page': pg,
-                    'paragraphs': [],
-                    'tables':     [],
-                    'fields':     []
-                })
-    # populate
-    for idx, sec in enumerate(sections):
-        next_sec = sections[idx+1] if idx+1 < len(sections) else None
-        # paragraphs
-        for pg, lines in pages_text.items():
-            if sec['start_page'] <= pg < (next_sec['start_page'] if next_sec else pg+1):
-                sec['paragraphs'].extend(lines)
-        # tables: any table on the start_page
-        sec['tables'] = [t for t in tables if t['page'] == sec['start_page']]
-        # fields as before
-        sec['fields'] = [
-            {'key': kv['key'], 'value': kv['value']}
-            for kv in kv_pairs
-            if sec['start_page'] <= kv['page'] < (next_sec['start_page'] if next_sec else kv['page']+1)
-        ]
+            text = line['Text'].strip()
+            # start new section?
+            if text in IMPORTANT_HEADINGS:
+                current = {'name': text, 'paragraphs': [], 'tables': []}
+                sections.append(current)
+                continue
+
+            if not current:
+                continue
+
+            # attach any tables whose top lies below this line
+            while (t_idx < len(tables) and
+                   tables[t_idx]['Geometry']['BoundingBox']['Top']
+                   > line['Geometry']['BoundingBox']['Top']):
+                current['tables'].append(table_data[t_idx])
+                t_idx += 1
+
+            # accumulate paragraph text
+            current['paragraphs'].append(text)
+
+        # leftover tables go to the last section on this page
+        while t_idx < len(tables) and current:
+            current['tables'].append(table_data[t_idx])
+            t_idx += 1
+
     return sections
 
-# process remains same but uses updated group_sections()
-def process(event, context):
-    input_bucket  = event.get('bucket', 'metrosafetyprodfiles')
-    document_key  = event['document_key']
-    output_bucket = event.get('output_bucket', 'textract-output-digival')
 
-    resp = textract.start_document_analysis(
-        DocumentLocation={'S3Object':{'Bucket':input_bucket,'Name':document_key}},
-        FeatureTypes=['TABLES','FORMS']
-    )
-    blocks = poll_for_job_completion(resp['JobId'], max_tries=60, delay=5)
+def extract_table(tbl_block, blocks, id_map):
+    """Convert one TABLE block into a 2D list of cell texts."""
+    # find cells belonging to this table
+    cells = [b for b in blocks
+             if b['BlockType']=='CELL' and
+                any(rel['Type']=='CHILD' for rel in b.get('Relationships', []))
+             and b.get('Table', {}).get('Id') == tbl_block['Id']]
 
-    pages    = extract_pages_text(blocks)
-    tables   = extract_tables_grouped(blocks)
-    kv_pairs = []  # if you still want to skip these
+    # organise by row/col
+    rows = {}
+    for cell in cells:
+        r = cell['RowIndex']
+        c = cell['ColumnIndex']
+        text = ""
+        for rel in cell.get('Relationships', []):
+            if rel['Type']=='CHILD':
+                for cid in rel['Ids']:
+                    w = id_map[cid]
+                    if w['BlockType']=='WORD':
+                        text += w['Text'] + ' '
+                    elif (w['BlockType']=='SELECTION_ELEMENT' and
+                          w['SelectionStatus']=='SELECTED'):
+                        text += '[X] '
+        rows.setdefault(r, {})[c] = text.strip()
 
-    sections = group_sections(pages, tables, kv_pairs)
+    # build row-ordered list of lists
+    max_col = max(max(cols.keys()) for cols in rows.values())
+    table = []
+    for r in sorted(rows):
+        row = [rows[r].get(c, "") for c in range(1, max_col+1)]
+        table.append(row)
 
-    # optional: log tables per section
-    for sec in sections:
-        if sec['tables']:
-            print(f'Section “{sec["name"]}” has {len(sec["tables"])} table(s) on page {sec["start_page"]}')
-
-    result   = {'document': document_key, 'sections': sections}
-    json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
-    s3.put_object(Bucket=output_bucket, Key=json_key, Body=json.dumps(result))
-
-    return {'statusCode':200, 'body':json.dumps({'json_s3_key':json_key})}
+    return table
