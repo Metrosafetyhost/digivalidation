@@ -9,6 +9,7 @@ textract = boto3.client('textract', region_name='eu-west-2')
 s3 = boto3.client('s3')
 
 IMPORTANT_HEADINGS = [
+    "Significant Findings and Action Plan",
     "Executive Summary",
     "Areas Identified Requiring Remedial Actions",
     "Building Description",
@@ -21,19 +22,12 @@ IMPORTANT_HEADINGS = [
     "Water Assets",
     "Appendices",
     "Risk Assessment Checklist",
-    "Legionella Control Programme of Preventative Works"
-]
-
-FOOTER_PATTERNS = [
-    r'^Printed from SafetySMART',
-    r'^Page \d+ of \d+',
-    r'^Metro SRM LLP',
-    r'^Legionella Water Risk Assessment'
+    "Legionella Control Programme of Preventative Works",
+    "System Asset Register"
 ]
 
 def normalize(text):
     return re.sub(r'[^a-z0-9 ]+', ' ', text.lower()).strip()
-
 
 def is_major_heading(text):
     norm = normalize(text)
@@ -41,11 +35,6 @@ def is_major_heading(text):
         if all(w in norm for w in phrase.lower().split()):
             return True
     return False
-
-
-def is_footer(text):
-    return any(re.search(p, text) for p in FOOTER_PATTERNS)
-
 
 def extract_key_value_pairs(blocks):
     id_map = {b['Id']: b for b in blocks}
@@ -82,17 +71,16 @@ def extract_key_value_pairs(blocks):
                 })
     return kv_pairs
 
-
 def poll_for_job_completion(job_id, max_tries=20, delay=5):
     for _ in range(max_tries):
         resp = textract.get_document_analysis(JobId=job_id)
-        if resp['JobStatus'] == 'SUCCEEDED':
+        status = resp['JobStatus']
+        if status == 'SUCCEEDED':
             return get_all_pages(job_id)
-        if resp['JobStatus'] == 'FAILED':
+        if status == 'FAILED':
             raise Exception("Textract job failed")
         time.sleep(delay)
     raise Exception("Job did not complete in time")
-
 
 def get_all_pages(job_id):
     blocks = []
@@ -108,25 +96,18 @@ def get_all_pages(job_id):
             break
     return blocks
 
-
 def extract_pages_text(blocks):
     by_page = {}
     for b in blocks:
         if b['BlockType'] == 'LINE':
-            txt = b['Text'].strip()
-            if is_footer(txt):
-                continue
-            top = b['Geometry']['BoundingBox']['Top']
-            if top > 0.98:
-                continue
             pg = b.get('Page', 1)
-            by_page.setdefault(pg, []).append((top, txt))
+            top = b['Geometry']['BoundingBox']['Top']
+            by_page.setdefault(pg, []).append((top, b['Text']))
     out = {}
     for pg, lines in by_page.items():
         lines.sort(key=lambda x: x[0])
         out[pg] = [t for _, t in lines]
     return out
-
 
 def extract_tables_grouped(blocks):
     tables = []
@@ -164,25 +145,36 @@ def extract_tables_grouped(blocks):
             tables.append({'page': pg, 'header': header, 'rows': rows, 'bbox': b['Geometry']['BoundingBox']})
     return tables
 
-
 def group_sections(pages_text, tables, kv_pairs):
     sections = []
+    # identify major headings in order
     for pg, lines in sorted(pages_text.items()):
         for line in lines:
             if is_major_heading(line):
                 sections.append({
                     'name':       line,
                     'start_page': pg,
-                    'tables':     []
+                    'paragraphs': [],
+                    'tables':     [],
+                    'fields':     []
                 })
+    # populate paragraphs, tables, and fields for each section
     for idx, sec in enumerate(sections):
         next_sec = sections[idx+1] if idx+1 < len(sections) else None
+        for pg, lines in pages_text.items():
+            if pg < sec['start_page'] or (next_sec and pg >= next_sec['start_page']):
+                continue
+            sec['paragraphs'].extend(lines)
         sec['tables'] = [
             t for t in tables
-            if t['page']==sec['start_page'] and t['header']==sec['name']
+            if t['page'] == sec['start_page'] and t['header'] == sec['name']
+        ]
+        sec['fields'] = [
+            {'key': kv['key'], 'value': kv['value']}
+            for kv in kv_pairs
+            if sec['start_page'] <= kv['page'] < (next_sec['start_page'] if next_sec else kv['page']+1)
         ]
     return sections
-
 
 def process(event, context):
     input_bucket  = event.get('bucket', 'metrosafetyprodfiles')
@@ -196,10 +188,10 @@ def process(event, context):
     blocks   = poll_for_job_completion(resp['JobId'])
     pages    = extract_pages_text(blocks)
     tables   = extract_tables_grouped(blocks)
-    # kv_pairs no longer used but can be kept or removed
-    sections = group_sections(pages, tables, [])
+    kv_pairs = extract_key_value_pairs(blocks)
+    sections = group_sections(pages, tables, kv_pairs)
 
-    result   = {'document':document_key, 'sections':sections}
+    result   = {'document': document_key, 'sections': sections}
     json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
     s3.put_object(Bucket=output_bucket, Key=json_key, Body=json.dumps(result))
 
