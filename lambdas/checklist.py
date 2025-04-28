@@ -145,9 +145,11 @@ def extract_tables_grouped(blocks):
             tables.append({'page': pg, 'header': header, 'rows': rows, 'bbox': b['Geometry']['BoundingBox']})
     return tables
 
+# Updated grouping: tables by start_page only
+
 def group_sections(pages_text, tables, kv_pairs):
     sections = []
-    # identify major headings in order
+    # identify major headings
     for pg, lines in sorted(pages_text.items()):
         for line in lines:
             if is_major_heading(line):
@@ -158,17 +160,16 @@ def group_sections(pages_text, tables, kv_pairs):
                     'tables':     [],
                     'fields':     []
                 })
-    # populate paragraphs, tables, and fields for each section
+    # populate
     for idx, sec in enumerate(sections):
         next_sec = sections[idx+1] if idx+1 < len(sections) else None
+        # paragraphs
         for pg, lines in pages_text.items():
-            if pg < sec['start_page'] or (next_sec and pg >= next_sec['start_page']):
-                continue
-            sec['paragraphs'].extend(lines)
-        sec['tables'] = [
-            t for t in tables
-            if t['page'] == sec['start_page'] and t['header'] == sec['name']
-        ]
+            if sec['start_page'] <= pg < (next_sec['start_page'] if next_sec else pg+1):
+                sec['paragraphs'].extend(lines)
+        # tables: any table on the start_page
+        sec['tables'] = [t for t in tables if t['page'] == sec['start_page']]
+        # fields as before
         sec['fields'] = [
             {'key': kv['key'], 'value': kv['value']}
             for kv in kv_pairs
@@ -176,20 +177,28 @@ def group_sections(pages_text, tables, kv_pairs):
         ]
     return sections
 
+# process remains same but uses updated group_sections()
 def process(event, context):
     input_bucket  = event.get('bucket', 'metrosafetyprodfiles')
     document_key  = event['document_key']
     output_bucket = event.get('output_bucket', 'textract-output-digival')
 
-    resp     = textract.start_document_analysis(
-       DocumentLocation={'S3Object':{'Bucket':input_bucket,'Name':document_key}},
-       FeatureTypes=['TABLES','FORMS']
+    resp = textract.start_document_analysis(
+        DocumentLocation={'S3Object':{'Bucket':input_bucket,'Name':document_key}},
+        FeatureTypes=['TABLES','FORMS']
     )
-    blocks   = poll_for_job_completion(resp['JobId'])
+    blocks = poll_for_job_completion(resp['JobId'], max_tries=60, delay=5)
+
     pages    = extract_pages_text(blocks)
     tables   = extract_tables_grouped(blocks)
-    kv_pairs = extract_key_value_pairs(blocks)
+    kv_pairs = []  # if you still want to skip these
+
     sections = group_sections(pages, tables, kv_pairs)
+
+    # optional: log tables per section
+    for sec in sections:
+        if sec['tables']:
+            print(f'Section “{sec["name"]}” has {len(sec["tables"])} table(s) on page {sec["start_page"]}')
 
     result   = {'document': document_key, 'sections': sections}
     json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
