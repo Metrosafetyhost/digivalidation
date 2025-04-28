@@ -117,7 +117,7 @@ def extract_pages_text(blocks):
             if is_footer(txt):
                 continue
             top = b['Geometry']['BoundingBox']['Top']
-            if top > 0.90:
+            if top > 0.98:
                 continue
             pg = b.get('Page', 1)
             by_page.setdefault(pg, []).append((top, txt))
