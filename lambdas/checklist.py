@@ -9,7 +9,6 @@ textract = boto3.client('textract', region_name='eu-west-2')
 s3 = boto3.client('s3')
 
 IMPORTANT_HEADINGS = [
-    "Significant Findings and Action Plan",
     "Executive Summary",
     "Areas Identified Requiring Remedial Actions",
     "Building Description",
@@ -22,12 +21,19 @@ IMPORTANT_HEADINGS = [
     "Water Assets",
     "Appendices",
     "Risk Assessment Checklist",
-    "Legionella Control Programme of Preventative Works",
-    "System Asset Register"
+    "Legionella Control Programme of Preventative Works"
+]
+
+FOOTER_PATTERNS = [
+    r'^Printed from SafetySMART',
+    r'^Page \d+ of \d+',
+    r'^Metro SRM LLP',
+    r'^Legionella Water Risk Assessment'
 ]
 
 def normalize(text):
     return re.sub(r'[^a-z0-9 ]+', ' ', text.lower()).strip()
+
 
 def is_major_heading(text):
     norm = normalize(text)
@@ -36,82 +42,9 @@ def is_major_heading(text):
             return True
     return False
 
-# Rewrite to handle “12.2.” style refs, followed by Priority / Observation / Target Date / Action Required
-def parse_significant_findings(lines):
-    items = []
-    current = None
-    i = 0
-    while i < len(lines):
-        line = lines[i].strip()
-        # Start of a new finding: e.g. "12.2. Has a competent person..."
-        m_ref = re.match(r'^(\d+\.\d+)\.?\s+(.+)$', line)
-        if m_ref:
-            # push previous
-            if current:
-                items.append(current)
-            current = {
-                'audit_ref': m_ref.group(1),
-                'question': m_ref.group(2)
-            }
-            i += 1
-            continue
 
-        if current:
-            # Priority on its own line, next line holds the value
-            if line.lower() == 'priority' and i+1 < len(lines):
-                current['priority'] = lines[i+1].strip()
-                i += 2
-                continue
-
-            # Observation block
-            if line.lower().startswith('observation'):
-                # if just 'Observation', grab subsequent lines until next label
-                obs = ''
-                if line.strip().lower() == 'observation':
-                    j = i+1
-                else:
-                    # inline
-                    obs = line.partition(':')[2].strip()
-                    j = i+1
-                while j < len(lines) and not re.match(r'^(Priority|Target Date|Action Required)$', lines[j].strip(), re.IGNORECASE) and not re.match(r'^\d+\.\d+', lines[j].strip()):
-                    obs += ' ' + lines[j].strip()
-                    j += 1
-                current['observation'] = obs.strip()
-                i = j
-                continue
-
-            # Target Date either inline or next line
-            if line.lower().startswith('target date'):
-                parts = line.split(':',1)
-                if len(parts)==2 and parts[1].strip():
-                    current['target_date'] = parts[1].strip()
-                    i += 1
-                elif i+1 < len(lines):
-                    current['target_date'] = lines[i+1].strip()
-                    i += 2
-                else:
-                    i += 1
-                continue
-
-            # Action Required block
-            if line.lower().startswith('action required'):
-                action = ''
-                parts = line.split(':',1)
-                if len(parts)==2:
-                    action = parts[1].strip()
-                j = i+1
-                while j < len(lines) and not re.match(r'^\d+\.\d+', lines[j].strip()):
-                    action += ' ' + lines[j].strip()
-                    j += 1
-                current['action_required'] = action.strip()
-                i = j
-                continue
-
-        i += 1
-
-    if current:
-        items.append(current)
-    return items
+def is_footer(text):
+    return any(re.search(p, text) for p in FOOTER_PATTERNS)
 
 
 def extract_key_value_pairs(blocks):
@@ -149,6 +82,7 @@ def extract_key_value_pairs(blocks):
                 })
     return kv_pairs
 
+
 def poll_for_job_completion(job_id, max_tries=20, delay=5):
     for _ in range(max_tries):
         resp = textract.get_document_analysis(JobId=job_id)
@@ -158,6 +92,7 @@ def poll_for_job_completion(job_id, max_tries=20, delay=5):
             raise Exception("Textract job failed")
         time.sleep(delay)
     raise Exception("Job did not complete in time")
+
 
 def get_all_pages(job_id):
     blocks = []
@@ -173,18 +108,25 @@ def get_all_pages(job_id):
             break
     return blocks
 
+
 def extract_pages_text(blocks):
     by_page = {}
     for b in blocks:
         if b['BlockType'] == 'LINE':
-            pg = b.get('Page', 1)
+            txt = b['Text'].strip()
+            if is_footer(txt):
+                continue
             top = b['Geometry']['BoundingBox']['Top']
-            by_page.setdefault(pg, []).append((top, b['Text']))
+            if top > 0.90:
+                continue
+            pg = b.get('Page', 1)
+            by_page.setdefault(pg, []).append((top, txt))
     out = {}
     for pg, lines in by_page.items():
         lines.sort(key=lambda x: x[0])
         out[pg] = [t for _, t in lines]
     return out
+
 
 def extract_tables_grouped(blocks):
     tables = []
@@ -222,40 +164,25 @@ def extract_tables_grouped(blocks):
             tables.append({'page': pg, 'header': header, 'rows': rows, 'bbox': b['Geometry']['BoundingBox']})
     return tables
 
+
 def group_sections(pages_text, tables, kv_pairs):
     sections = []
-    # find all major headings in order
     for pg, lines in sorted(pages_text.items()):
         for line in lines:
             if is_major_heading(line):
                 sections.append({
                     'name':       line,
                     'start_page': pg,
-                    'paragraphs': [],
-                    'tables':     [],
-                    'fields':     []
+                    'tables':     []
                 })
-    # fill each section
     for idx, sec in enumerate(sections):
         next_sec = sections[idx+1] if idx+1 < len(sections) else None
-        for pg, lines in pages_text.items():
-            if pg < sec['start_page'] or (next_sec and pg >= next_sec['start_page']):
-                continue
-            sec['paragraphs'].extend(lines)
         sec['tables'] = [
             t for t in tables
             if t['page']==sec['start_page'] and t['header']==sec['name']
         ]
-        for kv in kv_pairs:
-            if sec['start_page'] <= kv['page'] < (next_sec['start_page'] if next_sec else kv['page']+1):
-                sec['fields'].append({'key': kv['key'], 'value': kv['value']})
-    # now post‑process Significant Findings
-    for sec in sections:
-        if sec['name'].lower().startswith('significant findings'):
-            sec['items'] = parse_significant_findings(sec['paragraphs'])
-            sec.pop('paragraphs', None)
-            sec.pop('fields', None)
     return sections
+
 
 def process(event, context):
     input_bucket  = event.get('bucket', 'metrosafetyprodfiles')
@@ -269,8 +196,8 @@ def process(event, context):
     blocks   = poll_for_job_completion(resp['JobId'])
     pages    = extract_pages_text(blocks)
     tables   = extract_tables_grouped(blocks)
-    kv_pairs = extract_key_value_pairs(blocks)
-    sections = group_sections(pages, tables, kv_pairs)
+    # kv_pairs no longer used but can be kept or removed
+    sections = group_sections(pages, tables, [])
 
     result   = {'document':document_key, 'sections':sections}
     json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
