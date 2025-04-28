@@ -144,11 +144,12 @@ def extract_tables_grouped(blocks):
         if b['BlockType'] == 'TABLE':
             pg = b.get('Page', 1)
             top = b['Geometry']['BoundingBox']['Top']
-            # find closest heading above
+            # find closest heading on same page
             header = None
             cand = [(y, t) for y, t in headings.get(pg, []) if y < top]
             if cand:
                 header = max(cand, key=lambda x: x[0])[1]
+            # extract rows
             rows = []
             for rel in b.get('Relationships', []):
                 if rel['Type'] == 'CHILD':
@@ -165,31 +166,43 @@ def extract_tables_grouped(blocks):
                                         txt += w['Text'] + ' '
                         rowm.setdefault(ri, []).append(txt.strip())
                     for ri in sorted(rowm):
-                        # flatten multiple cells in a row index
-                        rows.append([" ".join(rowm[ri])])
+                        rows.append(rowm[ri])
             tables.append({'page': pg, 'header': header, 'rows': rows, 'bbox': b['Geometry']['BoundingBox']})
     return tables
 
 
-def parse_significant_findings_table(tables):
+def parse_significant_findings_table(tables, start_page, end_page):
     """
-    Extract items from the 'Significant Findings and Action Plan' table.
-    Expected columns: audit_ref, question, observation, priority, action_required
+    Extract items from the 'Significant Findings and Action Plan' table
+    looking at any tables in the page range
     """
     items = []
+    # first try matching header
     for tbl in tables:
         if tbl['header'] and tbl['header'].lower().startswith('significant findings'):
             for row in tbl['rows']:
-                # pad to 5 columns
                 cols = row + [''] * (5 - len(row))
                 items.append({
-                    'audit_ref': cols[0].strip(),
-                    'question': cols[1].strip(),
-                    'observation': cols[2].strip(),
-                    'priority': cols[3].strip(),
-                    'action_required': cols[4].strip(),
+                    'audit_ref':      cols[0].strip(),
+                    'question':       cols[1].strip(),
+                    'observation':    cols[2].strip(),
+                    'priority':       cols[3].strip(),
+                    'action_required':cols[4].strip(),
                 })
-            break
+            return items
+    # fallback: any table in the section pages
+    for tbl in tables:
+        if start_page < tbl['page'] < end_page:
+            for row in tbl['rows']:
+                cols = row + [''] * (5 - len(row))
+                items.append({
+                    'audit_ref':      cols[0].strip(),
+                    'question':       cols[1].strip(),
+                    'observation':    cols[2].strip(),
+                    'priority':       cols[3].strip(),
+                    'action_required':cols[4].strip(),
+                })
+            return items
     return items
 
 
@@ -206,22 +219,25 @@ def group_sections(pages_text, tables, kv_pairs):
                     'tables': [],
                     'fields': []
                 })
-    # fill each section with paragraphs and fields
+    # fill paragraphs and fields
     for idx, sec in enumerate(sections):
         next_sec = sections[idx+1] if idx+1 < len(sections) else None
         for pg, lines in pages_text.items():
             if pg < sec['start_page'] or (next_sec and pg >= next_sec['start_page']):
                 continue
             sec['paragraphs'].extend(lines)
-        sec['tables'] = [t for t in tables if t['page']==sec['start_page'] and t['header']==sec['name']]
+        sec['tables'] = [
+            t for t in tables
+            if t['page'] == sec['start_page'] and t['header'] == sec['name']
+        ]
         for kv in kv_pairs:
             if sec['start_page'] <= kv['page'] < (next_sec['start_page'] if next_sec else kv['page']+1):
                 sec['fields'].append({'key': kv['key'], 'value': kv['value']})
-
-    # specifically replace Significant Findings paragraphs with table-based items
-    for sec in sections:
+    # post-process Significant Findings
+    for idx, sec in enumerate(sections):
         if sec['name'].lower().startswith('significant findings'):
-            sec['items'] = parse_significant_findings_table(tables)
+            next_start = sections[idx+1]['start_page'] if idx+1 < len(sections) else float('inf')
+            sec['items'] = parse_significant_findings_table(tables, sec['start_page'], next_start)
             sec.pop('paragraphs', None)
             sec.pop('fields',     None)
     return sections
