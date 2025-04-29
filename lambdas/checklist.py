@@ -36,81 +36,12 @@ def is_major_heading(text):
             return True
     return False
 
-# existing parser for fallback
-
-# def parse_significant_findings(lines):
-#     items = []
-#     current = None
-#     i = 0
-
-#     while i < len(lines):
-#         line = lines[i].strip()
-#         m_ref = re.match(r'^(\d+\.\d+)\.?\s+(.+)$', line)
-#         if m_ref:
-#             if current:
-#                 items.append(current)
-#             current = { 'audit_ref': m_ref.group(1), 'question': m_ref.group(2) }
-#             i += 1
-#             continue
-
-#         if current:
-#             if line.lower() == 'priority' and i+1 < len(lines):
-#                 current['priority'] = lines[i+1].strip()
-#                 i += 2
-#                 continue
-
-#             if line.lower().startswith('observation'):
-#                 obs = ''
-#                 if line.lower() == 'observation':
-#                     j = i + 1
-#                 else:
-#                     obs = line.partition(':')[2].strip()
-#                     j = i + 1
-#                 while j < len(lines) and not re.match(r'^(Priority|Target Date|Action Required)$', lines[j].strip(), re.IGNORECASE) and not re.match(r'^\d+\.\d+', lines[j].strip()):
-#                     obs += ' ' + lines[j].strip()
-#                     j += 1
-#                 current['observation'] = obs.strip()
-#                 i = j
-#                 continue
-
-#             if line.lower().startswith('target date'):
-#                 parts = line.split(':',1)
-#                 if len(parts) == 2 and parts[1].strip():
-#                     current['target_date'] = parts[1].strip()
-#                     i += 1
-#                 elif i+1 < len(lines):
-#                     current['target_date'] = lines[i+1].strip()
-#                     i += 2
-#                 else:
-#                     i += 1
-#                 continue
-
-#             if line.lower().startswith('action required'):
-#                 action = ''
-#                 parts = line.split(':',1)
-#                 if len(parts) == 2:
-#                     action = parts[1].strip()
-#                 j = i + 1
-#                 while j < len(lines) and not re.match(r'^\d+\.\d+', lines[j].strip()):
-#                     action += ' ' + lines[j].strip()
-#                     j += 1
-#                 current['action_required'] = action.strip()
-#                 i = j
-#                 continue
-
-#         i += 1
-
-#     if current:
-#         items.append(current)
-#     return items
-
 
 def extract_key_value_pairs(blocks):
-    id_map = { b['Id']: b for b in blocks }
+    id_map = {b['Id']: b for b in blocks}
     kv_pairs = []
     for block in blocks:
         if block['BlockType'] == 'KEY_VALUE_SET' and 'KEY' in block.get('EntityTypes', []):
-            # unchanged
             key_text = ''
             for rel in block.get('Relationships', []):
                 if rel['Type'] == 'CHILD':
@@ -185,63 +116,43 @@ def extract_pages_text(blocks):
 def extract_tables_grouped(blocks):
     tables = []
     headings = {}
-    # collect major-heading lines
     for b in blocks:
-        if b['BlockType'] == 'LINE' and is_major_heading(b.get('Text','')):
-            pg  = b.get('Page', 1)
+        if b['BlockType'] == 'LINE' and is_major_heading(b.get('Text', '')):
+            pg = b.get('Page', 1)
             top = b['Geometry']['BoundingBox']['Top']
             headings.setdefault(pg, []).append((top, b['Text']))
-
     for b in blocks:
         if b['BlockType'] == 'TABLE':
-            pg  = b.get('Page', 1)
+            pg = b.get('Page', 1)
             top = b['Geometry']['BoundingBox']['Top']
             header = None
             cand = [(y, t) for y, t in headings.get(pg, []) if y < top]
             if cand:
                 header = max(cand, key=lambda x: x[0])[1]
-
-            # build rows with correct column order
-            # collect CELL blocks
-            cell_blocks = []
+            rows = []
             for rel in b.get('Relationships', []):
                 if rel['Type'] == 'CHILD':
-                    for cid in rel['Ids']:
-                        cb = next((x for x in blocks if x['Id']==cid and x['BlockType']=='CELL'), None)
-                        if cb:
-                            cell_blocks.append(cb)
-
-            # map text by row & col
-            table_map = {}
-            for c in cell_blocks:
-                ri = c['RowIndex']
-                ci = c.get('ColumnIndex', 1)
-                txt = ''
-                for r2 in c.get('Relationships', []):
-                    if r2['Type'] == 'CHILD':
-                        for wid in r2['Ids']:
-                            w = next((x for x in blocks if x['Id']==wid), None)
-                            if w and w['BlockType'] in ('WORD','LINE'):
-                                txt += w['Text'] + ' '
-                table_map.setdefault(ri, {})[ci] = txt.strip()
-
-            rows = []
-            for ri in sorted(table_map):
-                row = [ table_map[ri].get(ci, '') for ci in sorted(table_map[ri]) ]
-                rows.append(row)
-
-            tables.append({
-                'page': pg,
-                'header': header,
-                'rows': rows,
-                'bbox': b['Geometry']['BoundingBox']
-            })
+                    cells = [c for c in blocks if c['Id'] in rel['Ids'] and c['BlockType'] == 'CELL']
+                    rowm = {}
+                    for c in cells:
+                        ri = c['RowIndex']
+                        txt = ''
+                        for r2 in c.get('Relationships', []):
+                            if r2['Type'] == 'CHILD':
+                                for cid in r2['Ids']:
+                                    w = next((x for x in blocks if x['Id'] == cid), None)
+                                    if w and w['BlockType'] in ('WORD', 'LINE'):
+                                        txt += w['Text'] + ' '
+                        rowm.setdefault(ri, []).append(txt.strip())
+                    for ri in sorted(rowm):
+                        rows.append(rowm[ri])
+            tables.append({'page': pg, 'header': header, 'rows': rows, 'bbox': b['Geometry']['BoundingBox']})
     return tables
 
 
 def group_sections(pages_text, tables, kv_pairs):
     sections = []
-    # identify all major headings
+    # 1) find all major headings in order
     for pg, lines in sorted(pages_text.items()):
         for line in lines:
             if is_major_heading(line):
@@ -253,41 +164,42 @@ def group_sections(pages_text, tables, kv_pairs):
                     'fields':     []
                 })
 
-    # fill each section
+    # 2) fill paragraphs, tables, and fields
     for idx, sec in enumerate(sections):
         next_sec = sections[idx+1] if idx+1 < len(sections) else None
+
+        # paragraphs
         for pg, lines in pages_text.items():
             if pg < sec['start_page'] or (next_sec and pg >= next_sec['start_page']):
                 continue
             sec['paragraphs'].extend(lines)
+
+        # tables in page range
         sec['tables'] = [
             t for t in tables
-            if t['page']==sec['start_page'] and t['header']==sec['name']
+            if sec['start_page'] <= t['page'] < (next_sec['start_page'] if next_sec else t['page']+1)
         ]
+
+        # kv fields
         for kv in kv_pairs:
             if sec['start_page'] <= kv['page'] < (next_sec['start_page'] if next_sec else kv['page']+1):
                 sec['fields'].append({'key': kv['key'], 'value': kv['value']})
 
-    # post-process Significant Findings and Action Plan
+    # 3) special-case "Significant Findings and Action Plan"
     for sec in sections:
         if sec['name'].lower().startswith('significant findings'):
-            # try to map the "Management of Risk" table directly
-            tbl = next((t for t in sec.get('tables', []) if t['header']=='Management of Risk'), None)
-            # if tbl:
-            r = tbl['rows']
-            sec['data'] = {
-                'Question':       r[0][0] if len(r)>0 and len(r[0])>0 else '',
-                'Priority':       r[2][0] if len(r)>2 and len(r[2])>0 else '',
-                'Observation':    r[2][1] if len(r)>2 and len(r[2])>1 else '',
-                'Target Date':    r[4][0] if len(r)>4 and len(r[4])>0 else '',
-                'Action Required':r[4][1] if len(r)>4 and len(r[4])>1 else ''
-                }
-            # else:
-            #     # fallback to line-based parsing
-            #     sec['items'] = parse_significant_findings(sec['paragraphs'])
+            data = {}
+            if sec['tables']:
+                tbl = sec['tables'][0]
+                rows = tbl['rows']
+                for i in range(0, len(rows), 2):
+                    headers = rows[i]
+                    values  = rows[i+1] if i+1 < len(rows) else []
+                    for j, h in enumerate(headers):
+                        data[h.strip()] = values[j].strip() if j < len(values) else ''
 
-            # remove now-redundant fields
-            for k in ('paragraphs', 'fields', 'tables'):
+            sec['data'] = data
+            for k in ('paragraphs','fields','tables'):
                 sec.pop(k, None)
 
     return sections
@@ -298,7 +210,7 @@ def process(event, context):
     document_key  = event['document_key']
     output_bucket = event.get('output_bucket', 'textract-output-digival')
 
-    resp   = textract.start_document_analysis(
+    resp     = textract.start_document_analysis(
        DocumentLocation={'S3Object':{'Bucket':input_bucket,'Name':document_key}},
        FeatureTypes=['TABLES','FORMS']
     )
@@ -308,9 +220,8 @@ def process(event, context):
     kv_pairs = extract_key_value_pairs(blocks)
     sections = group_sections(pages, tables, kv_pairs)
 
-    result   = {'document': document_key, 'sections': sections}
+    result   = {'document':document_key, 'sections':sections}
     json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
     s3.put_object(Bucket=output_bucket, Key=json_key, Body=json.dumps(result))
 
-    return {'statusCode':200, 'body':json.dumps({'json_s3_key': json_key})}
-
+    return {'statusCode':200, 'body':json.dumps({'json_s3_key':json_key})}
