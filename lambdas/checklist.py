@@ -1,10 +1,12 @@
+import boto3
 import json
 import time
-import boto3
+import re
+from io import StringIO
 
 # AWS clients
 textract = boto3.client('textract', region_name='eu-west-2')
-s3       = boto3.client('s3')
+s3 = boto3.client('s3')
 
 IMPORTANT_HEADINGS = [
     "Significant Findings and Action Plan",
@@ -24,192 +26,291 @@ IMPORTANT_HEADINGS = [
     "System Asset Register"
 ]
 
-def extract_significant_findings_from_table(section):
-    """
-    Treat the first table under this section as:
-      Row0: "Management of Risk" header → skip
-      Row1: the real question (e.g. "12.2. …?")
-      Row2: ["Priority", "Observation"]
-      Row3: ["Medium", "…observations…"]
-      Row4: ["Target Date", "Action Required"]
-      Row5: ["20/04/2025", "…action text…"]
+def normalize(text):
+    return re.sub(r'[^a-z0-9 ]+', ' ', text.lower()).strip()
 
-    Returns a dict with keys:
-      Question, Priority, Observation, Target Date, Action Required
-    """
-    tables = section.get('tables', [])
-    if not tables:
-        return {}
+def is_major_heading(text):
+    norm = normalize(text)
+    for phrase in IMPORTANT_HEADINGS:
+        if all(w in norm for w in phrase.lower().split()):
+            return True
+    return False
 
-    table = tables[0]
+# existing parser for fallback
 
-    # 1) Find the question row: skip any top row that matches "Management of Risk"
-    question_row = 0
-    top = table[0][0].strip().lower()
-    if top.startswith(section['name'].lower()) or "management of risk" in top:
-        question_row = 1
+# def parse_significant_findings(lines):
+#     items = []
+#     current = None
+#     i = 0
 
-    # 2) Pull the question
-    question = table[question_row][0].strip()
+#     while i < len(lines):
+#         line = lines[i].strip()
+#         m_ref = re.match(r'^(\d+\.\d+)\.?\s+(.+)$', line)
+#         if m_ref:
+#             if current:
+#                 items.append(current)
+#             current = { 'audit_ref': m_ref.group(1), 'question': m_ref.group(2) }
+#             i += 1
+#             continue
 
-    # 3) Locate the first label row ("Priority")
-    label_row_idx = next(
-        (i for i in range(question_row+1, len(table))
-         if any(cell.strip()=="Priority" for cell in table[i])),
-        None
-    )
-    if label_row_idx is None or label_row_idx+1 >= len(table):
-        return {"Question": question}
+#         if current:
+#             if line.lower() == 'priority' and i+1 < len(lines):
+#                 current['priority'] = lines[i+1].strip()
+#                 i += 2
+#                 continue
 
-    # 4) Map the two pairs of label→value
-    result = {"Question": question}
-    i = label_row_idx
-    while i+1 < len(table):
-        labels = table[i]
-        values = table[i+1]
-        for col,label in enumerate(labels):
-            val = values[col] if col < len(values) else ""
-            result[label.strip()] = val.strip()
-        i += 2
+#             if line.lower().startswith('observation'):
+#                 obs = ''
+#                 if line.lower() == 'observation':
+#                     j = i + 1
+#                 else:
+#                     obs = line.partition(':')[2].strip()
+#                     j = i + 1
+#                 while j < len(lines) and not re.match(r'^(Priority|Target Date|Action Required)$', lines[j].strip(), re.IGNORECASE) and not re.match(r'^\d+\.\d+', lines[j].strip()):
+#                     obs += ' ' + lines[j].strip()
+#                     j += 1
+#                 current['observation'] = obs.strip()
+#                 i = j
+#                 continue
 
-    return result
+#             if line.lower().startswith('target date'):
+#                 parts = line.split(':',1)
+#                 if len(parts) == 2 and parts[1].strip():
+#                     current['target_date'] = parts[1].strip()
+#                     i += 1
+#                 elif i+1 < len(lines):
+#                     current['target_date'] = lines[i+1].strip()
+#                     i += 2
+#                 else:
+#                     i += 1
+#                 continue
+
+#             if line.lower().startswith('action required'):
+#                 action = ''
+#                 parts = line.split(':',1)
+#                 if len(parts) == 2:
+#                     action = parts[1].strip()
+#                 j = i + 1
+#                 while j < len(lines) and not re.match(r'^\d+\.\d+', lines[j].strip()):
+#                     action += ' ' + lines[j].strip()
+#                     j += 1
+#                 current['action_required'] = action.strip()
+#                 i = j
+#                 continue
+
+#         i += 1
+
+#     if current:
+#         items.append(current)
+#     return items
 
 
-# section name → extractor
-SECTION_EXTRACTORS = {
-    "Significant Findings and Action Plan": extract_significant_findings_from_table
-}
+def extract_key_value_pairs(blocks):
+    id_map = { b['Id']: b for b in blocks }
+    kv_pairs = []
+    for block in blocks:
+        if block['BlockType'] == 'KEY_VALUE_SET' and 'KEY' in block.get('EntityTypes', []):
+            # unchanged
+            key_text = ''
+            for rel in block.get('Relationships', []):
+                if rel['Type'] == 'CHILD':
+                    for cid in rel['Ids']:
+                        child = id_map[cid]
+                        if child['BlockType'] == 'WORD':
+                            key_text += child['Text'] + ' '
+            value_block = None
+            for rel in block.get('Relationships', []):
+                if rel['Type'] == 'VALUE':
+                    for vid in rel['Ids']:
+                        if id_map[vid]['BlockType'] == 'KEY_VALUE_SET':
+                            value_block = id_map[vid]
+            value_text = ''
+            if value_block:
+                for rel in value_block.get('Relationships', []):
+                    if rel['Type'] == 'CHILD':
+                        for cid in rel['Ids']:
+                            child = id_map[cid]
+                            if child['BlockType'] == 'WORD':
+                                value_text += child['Text'] + ' '
+            if key_text.strip() and value_text.strip():
+                kv_pairs.append({
+                    'key': key_text.strip(),
+                    'value': value_text.strip(),
+                    'page': block.get('Page', 1),
+                    'top': block['Geometry']['BoundingBox']['Top']
+                })
+    return kv_pairs
 
 
-def process(event, context):
-    # ─── determine input/output ───────────────────────────────────────────────
-    input_bucket  = event.get('bucket', 'metrosafetyprodfiles')
-    document_key  = event['document_key']
-    output_bucket = event.get('output_bucket','textract-output-digival')
+def poll_for_job_completion(job_id, max_tries=20, delay=5):
+    for _ in range(max_tries):
+        resp = textract.get_document_analysis(JobId=job_id)
+        if resp['JobStatus'] == 'SUCCEEDED':
+            return get_all_pages(job_id)
+        if resp['JobStatus'] == 'FAILED':
+            raise Exception("Textract job failed")
+        time.sleep(delay)
+    raise Exception("Job did not complete in time")
 
-    # ─── start Textract ───────────────────────────────────────────────────────
-    start = textract.start_document_analysis(
-        DocumentLocation={'S3Object':{'Bucket':input_bucket,'Name':document_key}},
-        FeatureTypes=['TABLES','FORMS']
-    )
-    job_id = start['JobId']
 
-    # ─── poll until done ───────────────────────────────────────────────────────
+def get_all_pages(job_id):
+    blocks = []
+    token = None
     while True:
-        status = textract.get_document_analysis(JobId=job_id)['JobStatus']
-        if status in ('SUCCEEDED','FAILED'):
+        params = {'JobId': job_id}
+        if token:
+            params['NextToken'] = token
+        resp = textract.get_document_analysis(**params)
+        blocks.extend(resp.get('Blocks', []))
+        token = resp.get('NextToken')
+        if not token:
             break
-        time.sleep(5)
-    if status != 'SUCCEEDED':
-        raise RuntimeError(f"Textract failed: {status}")
-
-    # ─── retrieve all blocks ───────────────────────────────────────────────────
-    blocks   = []
-    next_tok = None
-    while True:
-        kwargs = {'JobId': job_id}
-        if next_tok:
-            kwargs['NextToken'] = next_tok
-        resp = textract.get_document_analysis(**kwargs)
-        blocks.extend(resp['Blocks'])
-        next_tok = resp.get('NextToken')
-        if not next_tok:
-            break
-
-    # ─── group into sections ──────────────────────────────────────────────────
-    sections = parse_sections(blocks)
-
-    # ─── extract per‐section data ──────────────────────────────────────────────
-    output_secs = []
-    for sec in sections:
-        name      = sec['name']
-        extractor = SECTION_EXTRACTORS.get(name, lambda s: s['tables'])
-        data      = extractor(sec)
-        output_secs.append({'name': name, 'data': data})
-
-    # ─── write JSON back to s3 ────────────────────────────────────────────────
-    result   = {'document': document_key, 'sections': output_secs}
-    json_key = 'processed/' + document_key.rsplit('/',1)[-1].replace('.pdf','.json')
-    s3.put_object(
-        Bucket=output_bucket,
-        Key=json_key,
-        Body=json.dumps(result, indent=2).encode('utf-8'),
-        ContentType='application/json'
-    )
-
-    return {
-        'statusCode': 200,
-        'body': json.dumps({'json_s3_key': json_key})
-    }
+    return blocks
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# your existing parse_sections & extract_table unchanged below
-# ─────────────────────────────────────────────────────────────────────────────
-def parse_sections(blocks):
-    id_map = {b['Id']: b for b in blocks}
-    page_lines,page_tables = {},{}
+def extract_pages_text(blocks):
+    by_page = {}
     for b in blocks:
-        if b['BlockType']=='LINE':
-            page_lines.setdefault(b['Page'],[]).append(b)
-        elif b['BlockType']=='TABLE':
-            page_tables.setdefault(b['Page'],[]).append(b)
+        if b['BlockType'] == 'LINE':
+            pg = b.get('Page', 1)
+            top = b['Geometry']['BoundingBox']['Top']
+            by_page.setdefault(pg, []).append((top, b['Text']))
+    out = {}
+    for pg, lines in by_page.items():
+        lines.sort(key=lambda x: x[0])
+        out[pg] = [t for _, t in lines]
+    return out
 
+
+def extract_tables_grouped(blocks):
+    tables = []
+    headings = {}
+    # collect major-heading lines
+    for b in blocks:
+        if b['BlockType'] == 'LINE' and is_major_heading(b.get('Text','')):
+            pg  = b.get('Page', 1)
+            top = b['Geometry']['BoundingBox']['Top']
+            headings.setdefault(pg, []).append((top, b['Text']))
+
+    for b in blocks:
+        if b['BlockType'] == 'TABLE':
+            pg  = b.get('Page', 1)
+            top = b['Geometry']['BoundingBox']['Top']
+            header = None
+            cand = [(y, t) for y, t in headings.get(pg, []) if y < top]
+            if cand:
+                header = max(cand, key=lambda x: x[0])[1]
+
+            # build rows with correct column order
+            # collect CELL blocks
+            cell_blocks = []
+            for rel in b.get('Relationships', []):
+                if rel['Type'] == 'CHILD':
+                    for cid in rel['Ids']:
+                        cb = next((x for x in blocks if x['Id']==cid and x['BlockType']=='CELL'), None)
+                        if cb:
+                            cell_blocks.append(cb)
+
+            # map text by row & col
+            table_map = {}
+            for c in cell_blocks:
+                ri = c['RowIndex']
+                ci = c.get('ColumnIndex', 1)
+                txt = ''
+                for r2 in c.get('Relationships', []):
+                    if r2['Type'] == 'CHILD':
+                        for wid in r2['Ids']:
+                            w = next((x for x in blocks if x['Id']==wid), None)
+                            if w and w['BlockType'] in ('WORD','LINE'):
+                                txt += w['Text'] + ' '
+                table_map.setdefault(ri, {})[ci] = txt.strip()
+
+            rows = []
+            for ri in sorted(table_map):
+                row = [ table_map[ri].get(ci, '') for ci in sorted(table_map[ri]) ]
+                rows.append(row)
+
+            tables.append({
+                'page': pg,
+                'header': header,
+                'rows': rows,
+                'bbox': b['Geometry']['BoundingBox']
+            })
+    return tables
+
+
+def group_sections(pages_text, tables, kv_pairs):
     sections = []
-    for page in sorted(page_lines):
-        lines  = sorted(page_lines[page],
-                        key=lambda x: x['Geometry']['BoundingBox']['Top'])
-        tables = page_tables.get(page,[])
-        table_data = [extract_table(t,blocks,id_map) for t in tables]
-        t_idx = 0
-        current = None
-
+    # identify all major headings
+    for pg, lines in sorted(pages_text.items()):
         for line in lines:
-            text = line['Text'].strip()
-            if text in IMPORTANT_HEADINGS:
-                current = {'name':text,'paragraphs':[],'tables':[]}
-                sections.append(current)
-                continue
-            if not current:
-                continue
+            if is_major_heading(line):
+                sections.append({
+                    'name':       line,
+                    'start_page': pg,
+                    'paragraphs': [],
+                    'tables':     [],
+                    'fields':     []
+                })
 
-            while (t_idx < len(tables)
-                   and tables[t_idx]['Geometry']['BoundingBox']['Top']
-                     > line['Geometry']['BoundingBox']['Top']):
-                current['tables'].append(table_data[t_idx])
-                t_idx += 1
-            current['paragraphs'].append(text)
+    # fill each section
+    for idx, sec in enumerate(sections):
+        next_sec = sections[idx+1] if idx+1 < len(sections) else None
+        for pg, lines in pages_text.items():
+            if pg < sec['start_page'] or (next_sec and pg >= next_sec['start_page']):
+                continue
+            sec['paragraphs'].extend(lines)
+        sec['tables'] = [
+            t for t in tables
+            if t['page']==sec['start_page'] and t['header']==sec['name']
+        ]
+        for kv in kv_pairs:
+            if sec['start_page'] <= kv['page'] < (next_sec['start_page'] if next_sec else kv['page']+1):
+                sec['fields'].append({'key': kv['key'], 'value': kv['value']})
 
-        while t_idx < len(tables) and current:
-            current['tables'].append(table_data[t_idx])
-            t_idx += 1
+    # post-process Significant Findings and Action Plan
+    for sec in sections:
+        if sec['name'].lower().startswith('significant findings'):
+            # try to map the "Management of Risk" table directly
+            tbl = next((t for t in sec.get('tables', []) if t['header']=='Management of Risk'), None)
+            # if tbl:
+            r = tbl['rows']
+            sec['data'] = {
+                'Question':       r[0][0] if len(r)>0 and len(r[0])>0 else '',
+                'Priority':       r[2][0] if len(r)>2 and len(r[2])>0 else '',
+                'Observation':    r[2][1] if len(r)>2 and len(r[2])>1 else '',
+                'Target Date':    r[4][0] if len(r)>4 and len(r[4])>0 else '',
+                'Action Required':r[4][1] if len(r)>4 and len(r[4])>1 else ''
+                }
+            # else:
+            #     # fallback to line-based parsing
+            #     sec['items'] = parse_significant_findings(sec['paragraphs'])
+
+            # remove now-redundant fields
+            for k in ('paragraphs', 'fields', 'tables'):
+                sec.pop(k, None)
 
     return sections
 
-def extract_table(tbl, blocks, id_map):
-    cells = [b for b in blocks
-             if b['BlockType']=='CELL'
-             and b.get('Table',{}).get('Id')==tbl['Id']]
-    if not cells:
-        return []
 
-    rows = {}
-    for cell in cells:
-        r,c = cell['RowIndex'],cell['ColumnIndex']
-        txt = ""
-        for rel in cell.get('Relationships',[]):
-            if rel['Type']=='CHILD':
-                for cid in rel['Ids']:
-                    w = id_map[cid]
-                    if w['BlockType']=='WORD':
-                        txt += w['Text']+" "
-                    elif (w['BlockType']=='SELECTION_ELEMENT'
-                          and w['SelectionStatus']=='SELECTED'):
-                        txt += "[X] "
-        rows.setdefault(r,{})[c] = txt.strip()
+def process(event, context):
+    input_bucket  = event.get('bucket', 'metrosafetyprodfiles')
+    document_key  = event['document_key']
+    output_bucket = event.get('output_bucket', 'textract-output-digival')
 
-    max_col = max(max(cols.keys()) for cols in rows.values())
-    table   = []
-    for r in sorted(rows):
-        table.append([ rows[r].get(c,"") for c in range(1,max_col+1) ])
-    return table
+    resp   = textract.start_document_analysis(
+       DocumentLocation={'S3Object':{'Bucket':input_bucket,'Name':document_key}},
+       FeatureTypes=['TABLES','FORMS']
+    )
+    blocks   = poll_for_job_completion(resp['JobId'])
+    pages    = extract_pages_text(blocks)
+    tables   = extract_tables_grouped(blocks)
+    kv_pairs = extract_key_value_pairs(blocks)
+    sections = group_sections(pages, tables, kv_pairs)
+
+    result   = {'document': document_key, 'sections': sections}
+    json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
+    s3.put_object(Bucket=output_bucket, Key=json_key, Body=json.dumps(result))
+
+    return {'statusCode':200, 'body':json.dumps({'json_s3_key': json_key})}
+
