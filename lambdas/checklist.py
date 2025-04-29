@@ -113,46 +113,103 @@ def extract_pages_text(blocks):
     return out
 
 
-def extract_tables_grouped(blocks):
+# … keep your imports, clients, IMPORTANT_HEADINGS, normalize, is_major_heading …
+
+def extract_tables_grouped(blocks, id_map):
     tables = []
     headings = {}
+
+    # first, gather all major headings by page & vertical position
     for b in blocks:
         if b['BlockType'] == 'LINE' and is_major_heading(b.get('Text', '')):
-            pg = b.get('Page', 1)
+            pg = b['Page']
             top = b['Geometry']['BoundingBox']['Top']
             headings.setdefault(pg, []).append((top, b['Text']))
+
+    # then, for each TABLE block, capture its header (closest heading above)
+    # and also keep its raw CELL blocks for deeper parsing
     for b in blocks:
         if b['BlockType'] == 'TABLE':
-            pg = b.get('Page', 1)
+            pg = b['Page']
             top = b['Geometry']['BoundingBox']['Top']
+
+            # find the nearest heading above this table on the same page
             header = None
-            cand = [(y, t) for y, t in headings.get(pg, []) if y < top]
-            if cand:
-                header = max(cand, key=lambda x: x[0])[1]
-            rows = []
+            if pg in headings:
+                above = [(y, t) for y, t in headings[pg] if y < top]
+                if above:
+                    header = max(above, key=lambda x: x[0])[1]
+
+            # collect the CELL blocks that belong to this table
+            cell_blocks = []
             for rel in b.get('Relationships', []):
                 if rel['Type'] == 'CHILD':
-                    cells = [c for c in blocks if c['Id'] in rel['Ids'] and c['BlockType'] == 'CELL']
-                    rowm = {}
-                    for c in cells:
-                        ri = c['RowIndex']
-                        txt = ''
-                        for r2 in c.get('Relationships', []):
-                            if r2['Type'] == 'CHILD':
-                                for cid in r2['Ids']:
-                                    w = next((x for x in blocks if x['Id'] == cid), None)
-                                    if w and w['BlockType'] in ('WORD', 'LINE'):
-                                        txt += w['Text'] + ' '
-                        rowm.setdefault(ri, []).append(txt.strip())
-                    for ri in sorted(rowm):
-                        rows.append(rowm[ri])
-            tables.append({'page': pg, 'header': header, 'rows': rows, 'bbox': b['Geometry']['BoundingBox']})
+                    for cid in rel['Ids']:
+                        cell = id_map.get(cid)
+                        if cell and cell['BlockType'] == 'CELL':
+                            cell_blocks.append(cell)
+
+            tables.append({
+                'page':  pg,
+                'header': header,
+                'block':  b,
+                'cells':  cell_blocks,
+                'bbox':   b['Geometry']['BoundingBox']
+            })
+
     return tables
 
 
-def group_sections(pages_text, tables, kv_pairs):
+def parse_significant_table(table, id_map):
+    """
+    Given a single TABLE entry for 'Significant Findings…', build a dict
+    mapping each header cell (by ColumnIndex) to the cell directly below it.
+    """
+    # split CELL blocks by row
+    rows = {}
+    for cell in table['cells']:
+        ri = cell['RowIndex']
+        rows.setdefault(ri, []).append(cell)
+
+    header_row = rows.get(1, [])  # assume first row is headers
+    data_row   = rows.get(2, [])  # assume second row is the values
+
+    # map ColumnIndex → header text
+    headers = {}
+    for cell in header_row:
+        col = cell['ColumnIndex']
+        text = ''
+        for rel in cell.get('Relationships', []):
+            if rel['Type'] == 'CHILD':
+                for wid in rel['Ids']:
+                    w = id_map.get(wid)
+                    if w and w['BlockType'] == 'WORD':
+                        text += w['Text'] + ' '
+        headers[col] = text.strip()
+
+    # map ColumnIndex → value text
+    values = {}
+    for cell in data_row:
+        col = cell['ColumnIndex']
+        text = ''
+        for rel in cell.get('Relationships', []):
+            if rel['Type'] == 'CHILD':
+                for wid in rel['Ids']:
+                    w = id_map.get(wid)
+                    if w and w['BlockType'] == 'WORD':
+                        text += w['Text'] + ' '
+        values[col] = text.strip()
+
+    # build final dict: header → corresponding value
+    data = {}
+    for col, h in headers.items():
+        data[h] = values.get(col, '')
+    return data
+
+
+def group_sections(blocks, pages_text, tables, kv_pairs, id_map):
+    # 1) locate each major heading in order
     sections = []
-    # 1) find all major headings in order
     for pg, lines in sorted(pages_text.items()):
         for line in lines:
             if is_major_heading(line):
@@ -164,46 +221,37 @@ def group_sections(pages_text, tables, kv_pairs):
                     'fields':     []
                 })
 
-    # 2) fill paragraphs, tables, and fields
+    # 2) populate paragraphs, tables and key–value fields per section
     for idx, sec in enumerate(sections):
-        next_sec = sections[idx+1] if idx+1 < len(sections) else None
+        nxt = sections[idx+1] if idx+1 < len(sections) else None
 
         # paragraphs
         for pg, lines in pages_text.items():
-            if pg < sec['start_page'] or (next_sec and pg >= next_sec['start_page']):
+            if pg < sec['start_page'] or (nxt and pg >= nxt['start_page']):
                 continue
             sec['paragraphs'].extend(lines)
 
-        # tables in page range
+        # tables
         sec['tables'] = [
             t for t in tables
-            if sec['start_page'] <= t['page'] < (next_sec['start_page'] if next_sec else t['page']+1)
+            if sec['start_page'] <= t['page'] < (nxt['start_page'] if nxt else t['page']+1)
         ]
 
-        # kv fields
+        # form fields
         for kv in kv_pairs:
-            if sec['start_page'] <= kv['page'] < (next_sec['start_page'] if next_sec else kv['page']+1):
+            if sec['start_page'] <= kv['page'] < (nxt['start_page'] if nxt else kv['page']+1):
                 sec['fields'].append({'key': kv['key'], 'value': kv['value']})
 
-    # 3) special-case "Significant Findings and Action Plan"
+    # 3) special-case the Significant Findings section
     for sec in sections:
         if sec['name'].lower().startswith('significant findings'):
-            data = {}
-            if sec['tables']:
-                tbl = sec['tables'][0]
-                rows = tbl['rows']
-                for i in range(0, len(rows), 2):
-                    headers = rows[i]
-                    values  = rows[i+1] if i+1 < len(rows) else []
-                    for j, h in enumerate(headers):
-                        data[h.strip()] = values[j].strip() if j < len(values) else ''
-
-            sec['data'] = data
-            for k in ('paragraphs','fields','tables'):
+            tbl = sec['tables'][0] if sec['tables'] else None
+            sec['data'] = parse_significant_table(tbl, id_map) if tbl else {}
+            # drop the old buckets
+            for k in ('paragraphs', 'fields', 'tables'):
                 sec.pop(k, None)
 
     return sections
-
 
 def process(event, context):
     input_bucket  = event.get('bucket', 'metrosafetyprodfiles')
@@ -215,10 +263,12 @@ def process(event, context):
        FeatureTypes=['TABLES','FORMS']
     )
     blocks   = poll_for_job_completion(resp['JobId'])
+    # build a quick lookup of every block by Id
+    id_map   = {b['Id']: b for b in blocks}
     pages    = extract_pages_text(blocks)
     tables   = extract_tables_grouped(blocks)
     kv_pairs = extract_key_value_pairs(blocks)
-    sections = group_sections(pages, tables, kv_pairs)
+    sections = group_sections(blocks, pages, tables, kv_pairs, id_map)
 
     result   = {'document':document_key, 'sections':sections}
     json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
