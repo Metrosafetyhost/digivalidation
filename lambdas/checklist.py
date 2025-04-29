@@ -266,9 +266,15 @@ def process(event, context):
     # build a quick lookup of every block by Id
     id_map   = {b['Id']: b for b in blocks}
     pages    = extract_pages_text(blocks)
-    tables   = extract_tables_grouped(blocks)
+    tables = extract_tables_grouped(blocks, id_map)
     kv_pairs = extract_key_value_pairs(blocks)
     sections = group_sections(blocks, pages, tables, kv_pairs, id_map)
+
+    # debug dump for “Significant Findings…” only:
+    for sec in sections:
+        if sec['name'].startswith('Significant Findings'):
+            print(">> Parsed Significant Findings table:\n",
+                  json.dumps(sec['data'], indent=2))
 
     result   = {'document':document_key, 'sections':sections}
     json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
