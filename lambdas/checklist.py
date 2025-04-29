@@ -150,6 +150,79 @@ def group_sections(pages_text, tables, kv_pairs):
             final_sections.append(sec)
     return final_sections
 
+
+def extract_key_value_pairs(blocks):
+    id_map = {b['Id']: b for b in blocks}
+    kv_pairs = []
+    for block in blocks:
+        if block['BlockType'] == 'KEY_VALUE_SET' and 'KEY' in block.get('EntityTypes', []):
+            key_text = ''
+            for rel in block.get('Relationships', []):
+                if rel['Type'] == 'CHILD':
+                    for cid in rel['Ids']:
+                        child = id_map[cid]
+                        if child['BlockType'] == 'WORD':
+                            key_text += child['Text'] + ' '
+            value_block = None
+            for rel in block.get('Relationships', []):
+                if rel['Type'] == 'VALUE':
+                    for vid in rel['Ids']:
+                        if id_map[vid]['BlockType'] == 'KEY_VALUE_SET':
+                            value_block = id_map[vid]
+            value_text = ''
+            if value_block:
+                for rel in value_block.get('Relationships', []):
+                    if rel['Type'] == 'CHILD':
+                        for cid in rel['Ids']:
+                            child = id_map[cid]
+                            if child['BlockType'] == 'WORD':
+                                value_text += child['Text'] + ' '
+            if key_text.strip() and value_text.strip():
+                kv_pairs.append({
+                    'key': key_text.strip(),
+                    'value': value_text.strip(),
+                    'page': block.get('Page', 1),
+                    'top': block['Geometry']['BoundingBox']['Top']
+                })
+    return kv_pairs
+
+def poll_for_job_completion(job_id, max_tries=20, delay=5):
+    for _ in range(max_tries):
+        resp = textract.get_document_analysis(JobId=job_id)
+        if resp['JobStatus'] == 'SUCCEEDED':
+            return get_all_pages(job_id)
+        if resp['JobStatus'] == 'FAILED':
+            raise Exception("Textract job failed")
+        time.sleep(delay)
+    raise Exception("Job did not complete in time")
+
+def get_all_pages(job_id):
+    blocks = []
+    token = None
+    while True:
+        params = {'JobId': job_id}
+        if token:
+            params['NextToken'] = token
+        resp = textract.get_document_analysis(**params)
+        blocks.extend(resp.get('Blocks', []))
+        token = resp.get('NextToken')
+        if not token:
+            break
+    return blocks
+
+def extract_pages_text(blocks):
+    by_page = {}
+    for b in blocks:
+        if b['BlockType'] == 'LINE':
+            pg = b.get('Page', 1)
+            top = b['Geometry']['BoundingBox']['Top']
+            by_page.setdefault(pg, []).append((top, b['Text']))
+    out = {}
+    for pg, lines in by_page.items():
+        lines.sort(key=lambda x: x[0])
+        out[pg] = [t for _, t in lines]
+    return out
+
 def process(event, context):
     input_bucket  = event.get('bucket', 'metrosafetyprodfiles')
     document_key  = event['document_key']
