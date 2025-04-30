@@ -1,7 +1,7 @@
 # 1. (Optional) Verify your "From" address in SES
 #    — only needed if you haven’t already done this in Terraform:
 resource "aws_ses_email_identity" "sender" {
-  email = "Luke.Gasson@metrosafety.co.uk"
+  email = "luke.gasson@metrosafety.co.uk"
 }
 
 resource "aws_ses_email_identity" "recipient" {
@@ -24,7 +24,7 @@ resource "aws_iam_policy" "ses_send_email" {
       Sid      = "AllowSendEmailFromMyAddress",
       Effect   = "Allow",
       Action   = ["ses:SendEmail","ses:SendRawEmail"],
-      Resource = "arn:aws:ses:eu-west-2:123456789012:identity/Luke.Gasson@metrosafety.co.uk"
+      Resource = "arn:aws:ses:eu-west-2:123456789012:identity/luke.gasson@metrosafety.co.uk"
     }]
   })
 }
