@@ -214,13 +214,15 @@ def update_logs_csv(log_entries, filename, folder):
 
 def store_metadata(workorder_id, logs_s3_key, status):
     table = dynamodb.Table(TABLE_NAME)
-    table.put_item(
-        Item={
-            "workorder_id": workorder_id,
-            "logs_s3_key": logs_s3_key,
-            "status": status,  # "Proofed" or "Original"
-            "timestamp": int(time.time()),
-            "notified": False
+    # Update logs/status/timestamp but leave 'notified' alone
+    table.update_item(
+        Key={"workorder_id": workorder_id},
+        UpdateExpression="SET logs_s3_key = :logs, #st = :status, timestamp = :ts",
+        ExpressionAttributeNames={"#st": "status"},
+        ExpressionAttributeValues={
+            ":logs": logs_s3_key,
+            ":status": status,
+            ":ts": int(time.time())
         }
     )
 
