@@ -6,6 +6,7 @@ import time
 import io
 import csv
 from bs4 import BeautifulSoup
+from botocore.exceptions import ClientError
 
 # Initialise logger
 logger = logging.getLogger()
@@ -218,7 +219,8 @@ def store_metadata(workorder_id, logs_s3_key, status):
             "workorder_id": workorder_id,
             "logs_s3_key": logs_s3_key,
             "status": status,  # "Proofed" or "Original"
-            "timestamp": int(time.time())
+            "timestamp": int(time.time()),
+            "notified": False
         }
     )
 
@@ -257,21 +259,35 @@ def load_payload(event):
         logger.error(f"Unexpected error in load_payload: {e}")
         return None, None, {}, {}
     
+def mark_notified_if_needed(workorder_id):
+    table = dynamodb.Table(TABLE_NAME)
+    try:
+        table.update_item(
+            Key={"workorder_id": workorder_id},
+            UpdateExpression="SET notified = :true",
+            ConditionExpression="attribute_not_exists(notified)",
+            ExpressionAttributeValues={":true": True}
+        )
+        return True
+    except ClientError as e:
+        if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        raise
 
-def notify_run(workorder_id, status):
+
+def notify_run(workorder_id, status, summary_lines):
     subject = f"Work Order {workorder_id} Processed: {status}"
     body = (
-        f"Hello team,\n\n"
-        f"The proofing Lambda has just run for Work Order ID: {workorder_id}.\n"
-        f"Overall status: {status}.\n\n"
-        f"Cheers,\nYour AWS Lambda"
+        f"The Work Order {workorder_id} has been proofed with the following results:\n\n"
+        + "\n".join(summary_lines)
+        + "\n\nCheers,\nYour AWS Lambda"
     )
     ses_client.send_email(
         Source=SENDER,
-        Destination={ "ToAddresses": [RECIPIENT] },
+        Destination={"ToAddresses": [RECIPIENT]},
         Message={
-            "Subject": { "Data": subject },
-            "Body": { "Text": { "Data": body } }
+            "Subject": {"Data": subject},
+            "Body":    {"Text": {"Data": body}}
         }
     )
 
@@ -290,33 +306,39 @@ def process(event, context):
         return {"statusCode": 400, "body": json.dumps({"error": "No proofing items found"})}
 
     csv_log_entries = []
-    overall_proofed_flag = False
-    proofed_entries = []
+    proofed_entries   = []
+    summary_lines     = []
+    overall_proofed   = False
 
-    # Process each record. Use different logic based on contentType.
+    # Process each record
     for record_id, content in proofing_requests.items():
         if content_type == "FormQuestion":
-            # Process HTML table content.
             updated_html, log_entries = proof_table_content(content, record_id)
+            # determine if any changes
+            changed = any(e["original"] != e["proofed"] for e in log_entries)
+            summary_lines.append(f"Form Question {record_id} {'Proofed' if changed else 'No changes'}")
             for entry in log_entries:
-                # Add record ID to each entry for logging.
                 entry["recordId"] = record_id
                 csv_log_entries.append(entry)
-                # Check if any changes were made.
                 if entry["original"] != entry["proofed"]:
-                    overall_proofed_flag = True
-            rec_data = table_data.get(record_id)
-            if rec_data:
+                    overall_proofed = True
+            if record_id in table_data:
                 proofed_entries.append({"recordId": record_id, "content": updated_html})
             else:
                 logger.warning(f"No table data found for record {record_id}")
         else:
-            # For Action_Observation or Action_Required, treat content as plain text.
             corrected_text = proof_plain_text(content, record_id)
-            orig_text = strip_html(content)
-            corr_text = strip_html(corrected_text)
-            if corr_text != orig_text:
-                overall_proofed_flag = True
+            orig_text  = strip_html(content)
+            corr_text  = strip_html(corrected_text)
+            changed    = corr_text != orig_text
+            # choose label based on type
+            if content_type == "Action_Observation":
+                label = f"Case {record_id} Observation"
+            else:
+                label = f"Case {record_id} Action"
+            summary_lines.append(f"{label} {'Proofed' if changed else 'No changes'}")
+            if changed:
+                overall_proofed = True
                 csv_log_entries.append({
                     "recordId": record_id,
                     "header": "",
@@ -332,30 +354,31 @@ def process(event, context):
                 })
             proofed_entries.append({"recordId": record_id, "content": corrected_text})
 
-    status_flag = "Proofed" if overall_proofed_flag else "Original"
+    status_flag = "Proofed" if overall_proofed else "Original"
     logger.info(f"Work order flagged as: {status_flag}")
-    logger.info("Updating logs CSV in S3...")
 
-    # Use a single file for all logs for this work order
+    # write logs
     csv_filename = f"{workorder_id}_logs"
-    # Store/append the new entries to the CSV
-    csv_s3_key = update_logs_csv(csv_log_entries, csv_filename, "logs")
+    csv_s3_key   = update_logs_csv(csv_log_entries, csv_filename, "logs")
     logger.info(f"CSV logs stored in S3 at key: {csv_s3_key}")
 
     store_metadata(workorder_id, csv_s3_key, status_flag)
 
-    try:
-        notify_run(workorder_id, status_flag)
-        logger.info(f"Notification email sent for {workorder_id}")
-    except Exception as e:
-        logger.error(f"Failed to send notification email: {e}")
+    # Notify once per work order
+    if mark_notified_if_needed(workorder_id):
+        try:
+            notify_run(workorder_id, status_flag, summary_lines)
+            logger.info(f"Notification email sent for {workorder_id}")
+        except Exception as e:
+            logger.error(f"Failed to send notification email: {e}")
+    else:
+        logger.info(f"Skipping notification: already sent for {workorder_id}")
 
-
-    unique_proofed_entries = {entry["recordId"]: entry for entry in proofed_entries}
+    unique_proofed = {e['recordId']: e for e in proofed_entries}
     final_response = {
         "workOrderId": workorder_id,
         "contentType": content_type,
-        "sectionContents": list(unique_proofed_entries.values())
+        "sectionContents": list(unique_proofed.values())
     }
     logger.info("Final response: " + json.dumps(final_response, indent=2))
     return {
