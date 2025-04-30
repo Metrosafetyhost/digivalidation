@@ -16,6 +16,11 @@ bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
 s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
 
+# Email nots perms 
+ses_client = boto3.client("ses", region_name="eu-west-2")
+SENDER = "luke.gasson@metrosafety.co.uk"
+RECIPIENT = "luke.gasson@metrosafety.co.uk"  
+
 # Configurations
 BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 BUCKET_NAME = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
@@ -251,6 +256,24 @@ def load_payload(event):
     except Exception as e:
         logger.error(f"Unexpected error in load_payload: {e}")
         return None, None, {}, {}
+    
+
+def notify_run(workorder_id, status):
+    subject = f"Work Order {workorder_id} Processed: {status}"
+    body = (
+        f"Hello team,\n\n"
+        f"The proofing Lambda has just run for Work Order ID: {workorder_id}.\n"
+        f"Overall status: {status}.\n\n"
+        f"Cheers,\nYour AWS Lambda"
+    )
+    ses_client.send_email(
+        Source=SENDER,
+        Destination={ "ToAddresses": [RECIPIENT] },
+        Message={
+            "Subject": { "Data": subject },
+            "Body": { "Text": { "Data": body } }
+        }
+    )
 
 def process(event, context):
     """Main processing function"""
@@ -320,6 +343,13 @@ def process(event, context):
     logger.info(f"CSV logs stored in S3 at key: {csv_s3_key}")
 
     store_metadata(workorder_id, csv_s3_key, status_flag)
+
+    try:
+        notify_run(workorder_id, status_flag)
+        logger.info(f"Notification email sent for {workorder_id}")
+    except Exception as e:
+        logger.error(f"Failed to send notification email: {e}")
+
 
     unique_proofed_entries = {entry["recordId"]: entry for entry in proofed_entries}
     final_response = {
