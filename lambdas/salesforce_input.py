@@ -69,18 +69,17 @@ def proof_table_content(html, record_id):
             "messages": [{
                 "role": "user",
                 "content": (
-                    "You are an HTML-aware proofreader.  I need you to return **valid HTML** containing exactly the same tags I sent you, with only spelling, grammar and spacing corrected.\n\n"
-                    "## Guidelines\n"
-                    "1. **Do NOT add or remove any HTML tags.**  All `<p>`, `<ul>`, `<li>`, `<u>`, etc. must appear exactly where they were in the input.\n"
-                    "2. Do NOT add any new introductory or explanatory sentences.\n"
-                    "3. Do NOT delete, split, merge or re-order any sentences or phrases.\n"
-                    "4. Correct spelling and grammar in **British English** only.\n"
-                    "5. Preserve the `|||ROW_DELIM|||` markers exactly (they separate table cells).\n"
-                    "6. Return the response as a single HTML code block.\n\n"
-                    "Here is the HTML to proofread:\n\n"
-                    "```html\n"
-                    + joined_content + "\n"
-                    "```"
+                    "Proofread the following text according to these strict guidelines:\n\n"
+                    "- Do NOT add any new introductory text or explanatory sentences before or after the original content.\n"
+                    "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
+                    "- Headings, section titles, and structure remain unchanged.\n"
+                    "- Do NOT remove any words or phrases from the original content.\n"
+                    "- Do NOT split, merge, or add any new sentences or content.\n"
+                    "- Ensure that lists, bullet points, and standalone words remain intact.\n"
+                    "- Proofread the text while preserving the exact sequence ‘|||ROW_DELIM|||’ as a marker. Additionally, if a list is detected (i.e. multiple standalone words), insert a newline between them only after the marker.\n"
+                    "- Do NOT remove or alter any HTML formatting tags (such as <p>, <ul>, <li>, and <u>)."
+                    "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
+                    "Text to proofread: " + joined_content
                 )
             }],
             "max_tokens": 2000,
