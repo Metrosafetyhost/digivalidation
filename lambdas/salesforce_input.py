@@ -345,11 +345,11 @@ def process(event, context):
 
     store_metadata(workorder_id, csv_s3_key, status_flag)
 
-    try:
-        notify_run(workorder_id, status_flag)
-        logger.info(f"Notification email sent for {workorder_id}")
-    except Exception as e:
-        logger.error(f"Failed to send notification email: {e}")
+    # try:
+    #     notify_run(workorder_id, status_flag)
+    #     logger.info(f"Notification email sent for {workorder_id}")
+    # except Exception as e:
+    #     logger.error(f"Failed to send notification email: {e}")
 
 
     unique_proofed_entries = {entry["recordId"]: entry for entry in proofed_entries}
