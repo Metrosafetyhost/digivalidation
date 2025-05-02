@@ -137,10 +137,10 @@ def proof_plain_text(text, record_id):
                 "content": (
                     "Proofread and correct the following text while ensuring:\n"
                     "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
+                    "- Do NOT add any new introductory text or explanatory sentences before or after the original content.\n"
                     "- Headings, section titles, and structure remain unchanged.\n"
                     "- Do NOT remove any words or phrases from the original content.\n"
                     "- Do NOT split, merge, or add any new sentences or content.\n"
-                    "- Ensure NOT to add any introductory text or explanations ANYWHERE.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
                     "Correct this text: " + plain_text
