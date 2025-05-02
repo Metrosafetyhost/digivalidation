@@ -136,8 +136,8 @@ def proof_plain_text(text, record_id):
                 "role": "user",
                 "content": (
                     "Proofread and correct the following text while ensuring:\n"
-                    "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
                     "- Do NOT add any new introductory text or explanatory sentences before or after the original content.\n"
+                    "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
                     "- Headings, section titles, and structure remain unchanged.\n"
                     "- Do NOT remove any words or phrases from the original content.\n"
                     "- Do NOT split, merge, or add any new sentences or content.\n"
