@@ -82,7 +82,7 @@ def proof_table_content(html, record_id):
                     "Text to proofread: " + joined_content
                 )
             }],
-            "max_tokens": 2000,
+            "max_tokens": 3000,
             "temperature": 0.3
         }
         
