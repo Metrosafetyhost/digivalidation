@@ -1,6 +1,7 @@
 import json
 import boto3
 import logging
+import re
 
 # ——— Initialise logging ———
 logger = logging.getLogger()
@@ -12,94 +13,70 @@ s3       = boto3.client('s3')
 
 
 def extract_json_data(json_content, question_number):
-    """
-    Pull out either:
-      • Q4 => the Building Description string
-      • Q13 => the list of Significant Findings items
-    """
     payload = json.loads(json_content)
 
-    # ————— Q4: Building Description —————
+    # Q4: Building Description
     if question_number == 4:
         for sec in payload.get("sections", []):
-            name = sec.get("name", "").strip().lower()
-            if name.endswith("building description"):
-                # look for the table row “Description of the Property”
+            if sec.get("name", "").lower().endswith("building description"):
                 for tbl in sec.get("tables", []):
-                    for row in tbl.get("rows", []):
-                        key = row[0].lower().strip()
-                        if key.startswith("description of the property"):
-                            desc = row[1].strip()
-                            logger.info("Extracted Building Description")
-                            return desc
-        logger.warning("Section ‘Building Description’ not found; returning empty string")
+                    for key, val in tbl.get("rows", []):
+                        if key.lower().startswith("description of the property"):
+                            return val.strip()
         return ""
-    
-    # ————— Q5: Remedial‐actions vs Significant Findings count —————
-    if question_number == 5:
-        remedial_total  = 0
-        remedial_by_sec = {}
-        sig_item_count  = 0
 
-        # 1) Sum numbers in the “1.1 Areas Identified Requiring Remedial Actions” table
+    # Q5: Remedial-actions vs Significant Findings count
+    if question_number == 5:
+        remedial_by_sec = {}
+        remedial_total  = 0
+
+        # 1) Sum all ints in each row of the 1.1 table
         for sec in payload.get("sections", []):
             if sec.get("name", "").startswith("1.1 Areas Identified"):
-                tbl = sec.get("tables", [])[0]
-                # skip header row
-                for row in tbl.get("rows", [])[1:]:
+                rows = sec.get("tables", [])[0].get("rows", [])
+                for row in rows[1:]:  # skip header
                     label = row[0].strip()
-                    try:
-                        count = int(row[1].strip())
-                    except ValueError:
-                        continue
-                    remedial_by_sec[label] = count
-                    remedial_total += count
+                    # sum any integer cells in columns 1 and 2
+                    row_sum = sum(int(cell) for cell in row[1:] if cell.isdigit())
+                    remedial_by_sec[label] = row_sum
+                    remedial_total += row_sum
 
-        # 2) Count question‐items (e.g. “12.2.”) in “Significant Findings and Action Plan”
+        # 2) Count distinct question IDs in the “Significant Findings” paragraphs
+        ids = set()
         for sec in payload.get("sections", []):
             if sec.get("name", "").startswith("Significant Findings"):
                 for line in sec.get("paragraphs", []):
-                    if re.match(r"^\d+\.\d+", line.strip()):
-                        sig_item_count += 1
+                    m = re.match(r"^(\d+\.\d+)", line.strip())
+                    if m:
+                        ids.add(m.group(1))
 
         return {
             "remedial_by_section": remedial_by_sec,
             "remedial_total":      remedial_total,
-            "sig_item_count":      sig_item_count
+            "sig_item_count":      len(ids)
         }
-    
-    # ————— Q13: Significant Findings and Action Plan —————
+
+    # Q13: Significant Findings items
     if question_number == 13:
         for sec in payload.get("sections", []):
             if sec.get("name", "").strip().lower() == "significant findings and action plan":
-                items = sec.get("items", [])
-                logger.info(f"Found {len(items)} items in ‘Significant Findings and Action Plan’")
-                return items
-        logger.warning("Section ‘Significant Findings and Action Plan’ not found; returning empty list")
+                return sec.get("items", [])
         return []
 
-    # ————— default —————
-    logger.error(f"No extractor for question_number={question_number}; returning None")
     return None
 
 
 def build_user_message(question_number, content):
-    """
-    Build the user→Bedrock prompt for each question.
-    """
-    # Q4: Building Description
+    # Q4 prompt
     if question_number == 4:
-        msg = (
+        return (
             "Water Hygiene/Legionella Risk Assessment QCC Query:\n\n"
             "Question 4: Read the Building Description, ensuring it’s complete, concise and relevant.\n\n"
-            "--- Building Description ---\n"
             f"{content}\n\n"
-            "If it’s good, reply “PASS”. Otherwise, list any missing or unclear details."
+            "If it’s good, reply “PASS”. Otherwise list any missing or unclear details."
         )
-        logger.info("Built user message for question 4")
-        return msg
-    
-        # Q5 prompt
+
+    # Q5 prompt
     if question_number == 5:
         by_sec = content.get("remedial_by_section", {})
         total  = content.get("remedial_total", 0)
