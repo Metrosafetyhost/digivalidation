@@ -9,7 +9,9 @@ textract = boto3.client('textract', region_name='eu-west-2')
 s3 = boto3.client('s3')
 
 IMPORTANT_HEADINGS = [
-    "Significant Findings and Action Plan",
+    "Significant Findings and Action Plan"
+    "Contents",
+    "Legionella Water Risk Assessment",
     "Executive Summary",
     "Areas Identified Requiring Remedial Actions",
     "Building Description",
