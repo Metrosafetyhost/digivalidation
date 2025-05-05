@@ -34,7 +34,40 @@ def extract_json_data(json_content, question_number):
                             return desc
         logger.warning("Section ‘Building Description’ not found; returning empty string")
         return ""
+    
+    # ————— Q5: Remedial‐actions vs Significant Findings count —————
+    if question_number == 5:
+        remedial_total  = 0
+        remedial_by_sec = {}
+        sig_item_count  = 0
 
+        # 1) Sum numbers in the “1.1 Areas Identified Requiring Remedial Actions” table
+        for sec in payload.get("sections", []):
+            if sec.get("name", "").startswith("1.1 Areas Identified"):
+                tbl = sec.get("tables", [])[0]
+                # skip header row
+                for row in tbl.get("rows", [])[1:]:
+                    label = row[0].strip()
+                    try:
+                        count = int(row[1].strip())
+                    except ValueError:
+                        continue
+                    remedial_by_sec[label] = count
+                    remedial_total += count
+
+        # 2) Count question‐items (e.g. “12.2.”) in “Significant Findings and Action Plan”
+        for sec in payload.get("sections", []):
+            if sec.get("name", "").startswith("Significant Findings"):
+                for line in sec.get("paragraphs", []):
+                    if re.match(r"^\d+\.\d+", line.strip()):
+                        sig_item_count += 1
+
+        return {
+            "remedial_by_section": remedial_by_sec,
+            "remedial_total":      remedial_total,
+            "sig_item_count":      sig_item_count
+        }
+    
     # ————— Q13: Significant Findings and Action Plan —————
     if question_number == 13:
         for sec in payload.get("sections", []):
@@ -65,6 +98,22 @@ def build_user_message(question_number, content):
         )
         logger.info("Built user message for question 4")
         return msg
+    
+        # Q5 prompt
+    if question_number == 5:
+        by_sec = content.get("remedial_by_section", {})
+        total  = content.get("remedial_total", 0)
+        sig_ct = content.get("sig_item_count", 0)
+        breakdown = ", ".join(f"{k}: {v}" for k, v in by_sec.items())
+
+        return (
+            "Water Hygiene/Legionella Risk Assessment QCC Query:\n\n"
+            "Question 5: Compare the number of remedial‐actions raised in Section 1.1 with the\n"
+            "number of items in “Significant Findings and Action Plan.”\n\n"
+            f"— Section 1.1 counts: {breakdown}  (Total = {total})\n"
+            f"— Significant Findings items found: {sig_ct}\n\n"
+            "If the totals match, reply “PASS”. Otherwise list each discrepancy."
+        )
 
     # Q13: Significant Findings…
     if question_number == 13:
