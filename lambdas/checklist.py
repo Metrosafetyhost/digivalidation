@@ -113,42 +113,51 @@ def extract_tables_grouped(blocks):
             tables.append({'page':pg,'header':header,'rows':rows,'bbox':b['Geometry']['BoundingBox']})
     return tables
 
-# Revised group_sections to use table parsing for Significant Findings
-def group_sections(pages_text, tables, kv_pairs):
+def group_sections(blocks, tables, fields, headings_map):
+    """
+    headings_map: { page_number: [(top, heading_text), …], … }
+    blocks: full Textract output (BLOCKS)
+    tables: list of tables you already extracted
+    fields: list of key/value pairs you already extracted
+    """
+
+    # 1) Build a flat, sorted “timeline” of headings + lines
+    events = []
+    for pg, heads in headings_map.items():
+        for top, txt in heads:
+            events.append({"type": "heading", "page": pg, "top": top, "text": txt})
+    for b in blocks:
+        if b["BlockType"] == "LINE":
+            events.append({
+                "type": "line",
+                "page":   b["Page"],
+                "top":     b["Geometry"]["BoundingBox"]["Top"],
+                "text":    b["Text"]
+            })
+
+    events.sort(key=lambda e: (e["page"], e["top"]))
+
+    # 2) Walk the timeline, opening a new “current” section on each heading
     sections = []
-    # detect section headings
-    for pg, lines in sorted(pages_text.items()):
-        for line in lines:
-            if is_major_heading(line):
-                sections.append({'name':line,'start_page':pg,'paragraphs':[],'tables':[], 'fields':[]})
-    # assign content
-    for idx, sec in enumerate(sections):
-        next_sec = sections[idx+1] if idx+1 < len(sections) else None
-        for pg, lines in pages_text.items():
-            if pg < sec['start_page'] or (next_sec and pg >= next_sec['start_page']):
-                continue
-            sec['paragraphs'].extend(lines)
-        # include tables on same page or next page for Significant Findings
-        sec['tables'] = [
-            t for t in tables
-            if (t['header']==sec['name'] and t['page']==sec['start_page'])
-               or (sec['name'].lower().startswith('significant findings') and t['page']==sec['start_page']+1)
-        ]
-        # collect key-values as before
-        for kv in kv_pairs:
-            if sec['start_page'] <= kv['page'] < (next_sec['start_page'] if next_sec else kv['page']+1):
-                sec['fields'].append({'key':kv['key'],'value':kv['value']})
-    # build final output, replacing line-based parsing for Significant Findings
-    final_sections = []
-    for sec in sections:
-        if sec['name'].lower().startswith('significant findings'):
-            for table in sec['tables']:
-                items = parse_significant_findings_table(table)
-                for item in items:
-                    final_sections.append({'name':sec['name'],'data':item})
-        else:
-            final_sections.append(sec)
-    return final_sections
+    current = None
+
+    for e in events:
+        if e["type"] == "heading":
+            # start a brand-new section
+            sec = {
+                "name":       e["text"],
+                "paragraphs": [],
+                "tables":     [t for t in tables if t["header"] == e["text"]],
+                "fields":     [f for f in fields if f["key"].startswith(e["text"] + " ")]
+            }
+            sections.append(sec)
+            current = sec
+
+        elif e["type"] == "line" and current:
+            # everything else just goes into the current section
+            current["paragraphs"].append(e["text"])
+
+    return sections
 
 
 def extract_key_value_pairs(blocks):
