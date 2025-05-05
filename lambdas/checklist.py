@@ -113,49 +113,40 @@ def extract_tables_grouped(blocks):
             tables.append({'page':pg,'header':header,'rows':rows,'bbox':b['Geometry']['BoundingBox']})
     return tables
 
-def group_sections(blocks, tables, fields, headings_map):
+def group_sections(blocks, tables, fields):
     """
-    headings_map: { page_number: [(top, heading_text), …], … }
-    blocks: full Textract output (BLOCKS)
-    tables: list of tables you already extracted
-    fields: list of key/value pairs you already extracted
+    Split the Textract output purely by heading text.
+    We assume is_major_heading(text) returns True for any of your IMPORTANT_HEADINGS.
     """
 
-    # 1) Build a flat, sorted “timeline” of headings + lines
-    events = []
-    for pg, heads in headings_map.items():
-        for top, txt in heads:
-            events.append({"type": "heading", "page": pg, "top": top, "text": txt})
-    for b in blocks:
-        if b["BlockType"] == "LINE":
-            events.append({
-                "type": "line",
-                "page":   b["Page"],
-                "top":     b["Geometry"]["BoundingBox"]["Top"],
-                "text":    b["Text"]
-            })
+    # 1) Grab all LINE blocks and sort them in reading order
+    lines = [
+        b for b in blocks
+        if b.get("BlockType") == "LINE" and b.get("Text", "").strip()
+    ]
+    lines.sort(key=lambda b: (b.get("Page", 1),
+                              b["Geometry"]["BoundingBox"]["Top"]))
 
-    events.sort(key=lambda e: (e["page"], e["top"]))
-
-    # 2) Walk the timeline, opening a new “current” section on each heading
     sections = []
     current = None
 
-    for e in events:
-        if e["type"] == "heading":
-            # start a brand-new section
-            sec = {
-                "name":       e["text"],
-                "paragraphs": [],
-                "tables":     [t for t in tables if t["header"] == e["text"]],
-                "fields":     [f for f in fields if f["key"].startswith(e["text"] + " ")]
-            }
-            sections.append(sec)
-            current = sec
+    # 2) Walk through every line in order
+    for b in lines:
+        txt = b["Text"].strip()
 
-        elif e["type"] == "line" and current:
-            # everything else just goes into the current section
-            current["paragraphs"].append(e["text"])
+        # If this line is one of our major headings, start a new section
+        if is_major_heading(txt):
+            current = {
+                "name":       txt,
+                "paragraphs": [],
+                "tables":     [t for t in tables if t["header"] == txt],
+                "fields":     [f for f in fields if f["key"].startswith(txt + " ")]
+            }
+            sections.append(current)
+
+        # Otherwise, dump the line into the current section’s paragraphs
+        elif current:
+            current["paragraphs"].append(txt)
 
     return sections
 
@@ -242,10 +233,9 @@ def process(event, context):
        FeatureTypes=['TABLES','FORMS']
     )
     blocks   = poll_for_job_completion(resp['JobId'])
-    pages    = extract_pages_text(blocks)
     tables   = extract_tables_grouped(blocks)
     kv_pairs = extract_key_value_pairs(blocks)
-    sections = group_sections(pages, tables, kv_pairs)
+    sections = group_sections(blocks, tables, kv_pairs,)
 
     result   = {'document':document_key, 'sections':sections}
     json_key = f"processed/{document_key.rsplit('/',1)[-1].replace('.pdf','.json')}"
