@@ -104,7 +104,7 @@ def send_to_bedrock(user_text):
         ]
     }
 
-    logger.info(f"Invoking Bedrock model {MODEL_ID}")
+    logger.info("Bedrock request payload: %s", json.dumps(payload))
     resp = bedrock.invoke_model(
         modelId     = MODEL_ID,
         body        = json.dumps(payload),
@@ -138,6 +138,7 @@ def process(event, context):
     # 3) build the Bedrock prompt & invoke
     user_msg = build_user_message(q_num, data)
     result   = send_to_bedrock(user_msg)
+    logger.info(f"Bedrock response payload: {result}")
 
     # 4) return the AI’s proofed text
     return {
