@@ -11,7 +11,6 @@ s3 = boto3.client('s3')
 IMPORTANT_HEADINGS = [
     "Significant Findings and Action Plan",
     "Contents",
-    "Legionella Water Risk Assessment",
     "Executive Summary",
     "Areas Identified Requiring Remedial Actions",
     "Building Description",
