@@ -27,34 +27,31 @@ def extract_json_data(json_content, question_number):
 
     # Q5: Remedial-actions vs Significant Findings count
     if question_number == 5:
-        remedial_by_sec = {}
-        remedial_total  = 0
-
-        # 1) Sum all ints in each row of the 1.1 table
+        # 1) Find the 1.1 Areas Identified table
         for sec in payload.get("sections", []):
             if sec.get("name", "").startswith("1.1 Areas Identified"):
-                rows = sec.get("tables", [])[0].get("rows", [])
-                for row in rows[1:]:  # skip header
-                    label = row[0].strip()
-                    # sum any integer cells in columns 1 and 2
-                    row_sum = sum(int(cell) for cell in row[1:] if cell.isdigit())
-                    remedial_by_sec[label] = row_sum
-                    remedial_total += row_sum
+                tbl  = sec["tables"][0]
+                rows = tbl["rows"]
 
-        # 2) Count distinct question IDs in the “Significant Findings” paragraphs
-        ids = set()
-        for sec in payload.get("sections", []):
-            if sec.get("name", "").startswith("Significant Findings"):
-                for line in sec.get("paragraphs", []):
-                    m = re.match(r"^(\d+\.\d+)", line.strip())
-                    if m:
-                        ids.add(m.group(1))
+                # Skip the header row, parse column 1 (“No. of Issues”) from each data row
+                issue_counts = [int(r[1]) for r in rows[1:]]
+                remedial_by_sec = { r[0]: int(r[1]) for r in rows[1:] }
+                total_issues   = sum(issue_counts)
 
-        return {
-            "remedial_by_section": remedial_by_sec,
-            "remedial_total":      remedial_total,
-            "sig_item_count":      len(ids)
-        }
+                # 2) Count question-IDs in “Significant Findings and Action Plan”
+                sig_ids = set()
+                for s2 in payload.get("sections", []):
+                    if s2.get("name", "").startswith("Significant Findings"):
+                        for line in s2.get("paragraphs", []):
+                            m = re.match(r"^(\d+\.\d+)", line.strip())
+                            if m:
+                                sig_ids.add(m.group(1))
+
+                return {
+                    "remedial_by_section": remedial_by_sec,
+                    "remedial_total":      total_issues,
+                    "sig_item_count":      len(sig_ids)
+                }
 
     # Q13: Significant Findings items
     if question_number == 13:
