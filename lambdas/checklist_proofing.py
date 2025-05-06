@@ -53,8 +53,36 @@ def extract_json_data(json_content, question_number):
                             return val.strip()
         return ""
 
-    # Q5: Remedial-actions vs Significant Findings count
     if question_number == 5:
+        water_desc = ""
+        assets     = []
+
+        for sec in payload.get("sections", []):
+            name = sec.get("name", "").lower()
+
+            # 1) Grab the narrative under “Description of the Water Systems”
+            if name.endswith("building description"):
+                for tbl in sec.get("tables", []):
+                    for key, val in tbl.get("rows", []):
+                        if key.strip().lower().startswith("description of the water systems"):
+                            water_desc = val.strip()
+
+            # 2) Collect every asset ID from the Water Assets section
+            if name.startswith("7.0 water assets") or name.startswith("water assets"):
+                for tbl in sec.get("tables", []):
+                    for row in tbl.get("rows", []):
+                        # the first cell is empty for the asset-ID row
+                        if row[0].strip() == "":
+                            assets.append(row[1].strip())
+
+        return {
+            "description": water_desc,
+            "assets":      assets
+        }
+    
+
+    # Q6: Remedial-actions vs Significant Findings count
+    if question_number == 6:
         # 1) Find the 1.1 Areas Identified table
         for sec in payload.get("sections", []):
             if sec.get("name", "").startswith("1.1 Areas Identified"):
@@ -122,9 +150,25 @@ def build_user_message(question_number, content):
             f"{content}\n\n"
             "If it’s good, reply “PASS”. Otherwise list any missing or unclear details."
         )
-
-    # Q5 prompt
+    
+        # Q5 prompt
     if question_number == 5:
+        desc   = content.get("description", "")
+        assets = content.get("assets", [])
+
+        return (
+            "Water Hygiene/Legionella Risk Assessment QCC Query:\n\n"
+            "Question 5: Read the Water Systems description and cross-check with the Water Assets forms.\n\n"
+            "--- Water Systems Description ---\n"
+            f"{desc}\n\n"
+            "--- Water Asset IDs Found ---\n"
+            f"{', '.join(assets) if assets else 'None found'}\n\n"
+            "If the counts and types in the description match the completed asset forms, reply “PASS”.\n"
+            "Otherwise, list each discrepancy (e.g. missing or extra asset)."
+        )
+
+    # Q6 prompt
+    if question_number == 6:
         by_sec = content.get("remedial_by_section", {})
         total  = content.get("remedial_total", 0)
         sig_ct = content.get("sig_item_count", 0)
