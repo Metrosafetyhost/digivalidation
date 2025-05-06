@@ -53,31 +53,32 @@ def extract_json_data(json_content, question_number):
                             return val.strip()
         return ""
 
+    # ——— Q5: Water Systems vs Water Assets ———
     if question_number == 5:
         water_desc = ""
-        assets     = []
+        assets     = set()
 
         for sec in payload.get("sections", []):
-            name = sec.get("name", "").lower()
+            sec_name = sec.get("name", "").lower()
 
-            # 1) Grab the narrative under “Description of the Water Systems”
-            if name.endswith("building description"):
+            # 1) Pull the narrative under “Description of the Water Systems”
+            if sec_name.endswith("building description"):
                 for tbl in sec.get("tables", []):
                     for key, val in tbl.get("rows", []):
-                        if key.strip().lower().startswith("description of the water systems"):
+                        if key.lower().startswith("description of the water systems"):
                             water_desc = val.strip()
 
-            # 2) Collect every asset ID from the Water Assets section
-            if name.startswith("7.0 water assets") or name.startswith("water assets"):
-                for tbl in sec.get("tables", []):
-                    for row in tbl.get("rows", []):
-                        # the first cell is empty for the asset-ID row
-                        if row[0].strip() == "":
-                            assets.append(row[1].strip())
+            # 2) Scan every table in the doc for asset IDs of the form “XXXXX-NN”
+            for tbl in sec.get("tables", []):
+                for row in tbl.get("rows", []):
+                    candidate = row[1].strip()
+                    # e.g. matches MCW-01, POU-01, MPOU-01, CWS-02, etc.
+                    if re.match(r"^[A-Za-z0-9]+-\d+$", candidate):
+                        assets.add(candidate)
 
         return {
             "description": water_desc,
-            "assets":      assets
+            "assets":      sorted(assets)
         }
     
 
@@ -151,7 +152,8 @@ def build_user_message(question_number, content):
             "If it’s good, reply “PASS”. Otherwise list any missing or unclear details."
         )
     
-        # Q5 prompt
+
+    # Q5 prompt
     if question_number == 5:
         desc   = content.get("description", "")
         assets = content.get("assets", [])
@@ -161,12 +163,14 @@ def build_user_message(question_number, content):
             "Question 5: Read the Water Systems description and cross-check with the Water Assets forms.\n\n"
             "--- Water Systems Description ---\n"
             f"{desc}\n\n"
-            "--- Water Asset IDs Found ---\n"
-            f"{', '.join(assets) if assets else 'None found'}\n\n"
-            "If the counts and types in the description match the completed asset forms, reply “PASS”.\n"
-            "Otherwise, list each discrepancy (e.g. missing or extra asset)."
+            "--- Water Asset IDs Found in Report ---\n"
+            f"{', '.join(assets) or 'None found'}\n\n"
+            "In the description you should see each asset type named (e.g. “Mains Cold Water Services (MCWS)”, "
+            "“Point of Use (POU-01)”, “Multipoint of Use (MPOU-01)”). In the Asset Forms you should see a matching "
+            "asset ID for each (e.g. MCW-01, POU-01, MPOU-01).\n\n"
+            "If every asset mentioned in the description has exactly one corresponding form entry and no extras, "
+            "reply “PASS”. Otherwise list what’s missing or extra."
         )
-
     # Q6 prompt
     if question_number == 6:
         by_sec = content.get("remedial_by_section", {})
@@ -175,7 +179,7 @@ def build_user_message(question_number, content):
         breakdown = ", ".join(f"{k}: {v}" for k, v in by_sec.items())
 
         return (
-            "Question 5: Compare the number of remedial‐actions raised in Section 1.1 with the\n"
+            "Question 6: Compare the number of remedial‐actions raised in Section 1.1 with the\n"
             "number of items in “Significant Findings and Action Plan.”\n\n"
             f"— Section 1.1 counts: {breakdown}  (Total = {total})\n"
             f"— Significant Findings items found: {sig_ct}\n\n"
