@@ -15,6 +15,34 @@ s3       = boto3.client('s3')
 def extract_json_data(json_content, question_number):
     payload = json.loads(json_content)
 
+    # ————— Q2: Verify Contents listing for Water Assets & Appendices A–D —————
+    if question_number == 2:
+        # 1) find the “Contents” section
+        toc_rows = []
+        for sec in payload.get("sections", []):
+            if sec.get("name", "").strip() == "Contents":
+                toc_rows = sec.get("tables", [])[0].get("rows", [])
+                break
+
+        # 2) pull out each TOC entry (skip header row)
+        headings = [r[0].strip() for r in toc_rows[1:]]
+
+        # 3) detect any row containing “Water Assets”
+        water_assets_entries = [h for h in headings if "Water Assets" in h]
+
+        # 4) detect all Appendix A–D entries
+        appendices = []
+        for h in headings:
+            m = re.match(r"^(APPENDIX [A-D])", h.upper())
+            if m:
+                appendices.append(m.group(1))
+
+        return {
+            "toc_headings":          headings,
+            "water_assets_entries":  water_assets_entries,
+            "appendices_found":      appendices
+        }
+
     # Q4: Building Description
     if question_number == 4:
         for sec in payload.get("sections", []):
@@ -64,10 +92,32 @@ def extract_json_data(json_content, question_number):
 
 
 def build_user_message(question_number, content):
+
+     # ————— Q2 prompt —————
+    if question_number == 2:
+        headings = content.get("toc_headings", [])
+        wa = content.get("water_assets_entries", [])
+        ap = content.get("appendices_found", [])
+
+        # compute which appendices A–D are missing
+        expected = ["APPENDIX A", "APPENDIX B", "APPENDIX C", "APPENDIX D"]
+        missing = [x for x in expected if x not in ap]
+
+        return (
+            "Question 2: On the Contents page, ensure that “Water Assets” is listed and that "
+            "Appendices A–D are all present.\n\n"
+            "--- Table of Contents ---\n"
+            f"{chr(10).join(headings)}\n\n"
+            f"Water Assets entries found: {', '.join(wa) or 'None'}\n"
+            f"Appendices found: {', '.join(ap) or 'None'}\n"
+            f"Missing appendices: {', '.join(missing) or 'None'}\n\n"
+            "If both Water Assets and all Appendices A–D appear, reply “PASS”. "
+            "Otherwise list what’s missing."
+        )
+
     # Q4 prompt
     if question_number == 4:
         return (
-            "Water Hygiene/Legionella Risk Assessment QCC Query:\n\n"
             "Question 4: Read the Building Description, ensuring it’s complete, concise and relevant.\n\n"
             f"{content}\n\n"
             "If it’s good, reply “PASS”. Otherwise list any missing or unclear details."
@@ -81,7 +131,6 @@ def build_user_message(question_number, content):
         breakdown = ", ".join(f"{k}: {v}" for k, v in by_sec.items())
 
         return (
-            "Water Hygiene/Legionella Risk Assessment QCC Query:\n\n"
             "Question 5: Compare the number of remedial‐actions raised in Section 1.1 with the\n"
             "number of items in “Significant Findings and Action Plan.”\n\n"
             f"— Section 1.1 counts: {breakdown}  (Total = {total})\n"
@@ -92,7 +141,6 @@ def build_user_message(question_number, content):
     # Q13: Significant Findings…
     if question_number == 13:
         msg = (
-            "Water Hygiene/Legionella Risk Assessment QCC Query:\n\n"
             "Question 13: “Significant Findings and Action Plan” – read through the Observations & Actions, "
             "checking for spelling mistakes, grammatical errors, technical inaccuracies or poor location descriptions. "
             "Confirm that the Priority labels make sense, and note any missing supplementary photographs.\n\n"
