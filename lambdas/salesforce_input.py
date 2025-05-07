@@ -66,6 +66,10 @@ def proof_table_content(html, record_id):
         
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
+            "system": (
+            "You are a meticulous proofreader. "
+            "Correct spelling, grammar and clarity only — no extra commentary or re-structuring."
+        ),
             "messages": [{
                 "role": "user",
                 "content": (
@@ -132,10 +136,14 @@ def proof_plain_text(text, record_id):
         logger.info(f"Proofing record {record_id}. Plain text: {plain_text}")
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
+            "system": (
+            "You are a meticulous proofreader. "
+            "Correct spelling, grammar and clarity only — no extra commentary or re-structuring."
+        ),
             "messages": [{
                 "role": "user",
                 "content": (
-                    "Proofread and correct the following text while ensuring:\n"
+                    "Proofread the following text according to these strict guidelines:\n"
                     "- Do NOT add any new introductory text or explanatory sentences before or after the original content.\n"
                     "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
                     "- Headings, section titles, and structure remain unchanged.\n"
@@ -143,11 +151,12 @@ def proof_plain_text(text, record_id):
                     "- Do NOT split, merge, or add any new sentences or content.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
-                    "Correct this text: " + plain_text
+                    "Text to proofread: " + plain_text
                 )
             }],
             "max_tokens": 1000,
             "temperature": 0.3
+            
         }
         logger.info("Sending payload to Bedrock: " + json.dumps(payload, indent=2))
         response = bedrock_client.invoke_model(

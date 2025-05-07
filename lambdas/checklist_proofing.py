@@ -42,6 +42,34 @@ def extract_json_data(json_content, question_number):
             "water_assets_entries":  water_assets_entries,
             "appendices_found":      appendices
         }
+    
+    # Q3: Remedial-actions vs Significant Findings count
+    if question_number == 3:
+        # 1) Find the 1.1 Areas Identified table
+        for sec in payload.get("sections", []):
+            if sec.get("name", "").startswith("1.1 Areas Identified"):
+                tbl  = sec["tables"][0]
+                rows = tbl["rows"]
+
+                # Skip the header row, parse column 1 (“No. of Issues”) from each data row
+                issue_counts = [int(r[1]) for r in rows[1:]]
+                remedial_by_sec = { r[0]: int(r[1]) for r in rows[1:] }
+                total_issues   = sum(issue_counts)
+
+                # 2) Count question-IDs in “Significant Findings and Action Plan”
+                sig_ids = set()
+                for s2 in payload.get("sections", []):
+                    if s2.get("name", "").startswith("Significant Findings"):
+                        for line in s2.get("paragraphs", []):
+                            m = re.match(r"^(\d+\.\d+)", line.strip())
+                            if m:
+                                sig_ids.add(m.group(1))
+
+                return {
+                    "remedial_by_section": remedial_by_sec,
+                    "remedial_total":      total_issues,
+                    "sig_item_count":      len(sig_ids)
+                }
 
     # Q4: Building Description
     if question_number == 4:
@@ -80,35 +108,6 @@ def extract_json_data(json_content, question_number):
             "description": water_desc,
             "assets":      sorted(assets)
         }
-    
-
-    # Q6: Remedial-actions vs Significant Findings count
-    if question_number == 6:
-        # 1) Find the 1.1 Areas Identified table
-        for sec in payload.get("sections", []):
-            if sec.get("name", "").startswith("1.1 Areas Identified"):
-                tbl  = sec["tables"][0]
-                rows = tbl["rows"]
-
-                # Skip the header row, parse column 1 (“No. of Issues”) from each data row
-                issue_counts = [int(r[1]) for r in rows[1:]]
-                remedial_by_sec = { r[0]: int(r[1]) for r in rows[1:] }
-                total_issues   = sum(issue_counts)
-
-                # 2) Count question-IDs in “Significant Findings and Action Plan”
-                sig_ids = set()
-                for s2 in payload.get("sections", []):
-                    if s2.get("name", "").startswith("Significant Findings"):
-                        for line in s2.get("paragraphs", []):
-                            m = re.match(r"^(\d+\.\d+)", line.strip())
-                            if m:
-                                sig_ids.add(m.group(1))
-
-                return {
-                    "remedial_by_section": remedial_by_sec,
-                    "remedial_total":      total_issues,
-                    "sig_item_count":      len(sig_ids)
-                }
 
     # Q13: Significant Findings items
     if question_number == 13:
@@ -133,7 +132,7 @@ def build_user_message(question_number, content):
         missing = [x for x in expected if x not in ap]
 
         return (
-            "Question 2: On the Contents page, ensure that “Water Assets” is listed and that "
+            "On the Contents page, ensure that “Water Assets” is listed and that "
             "Appendices A–D are all present.\n\n"
             "--- Table of Contents ---\n"
             f"{chr(10).join(headings)}\n\n"
@@ -142,6 +141,21 @@ def build_user_message(question_number, content):
             f"Missing appendices: {', '.join(missing) or 'None'}\n\n"
             "If both Water Assets and all Appendices A–D appear, reply “PASS”. "
             "Otherwise list what’s missing."
+        )
+    
+     # Q3 prompt
+    if question_number == 3:
+        by_sec = content.get("remedial_by_section", {})
+        total  = content.get("remedial_total", 0)
+        sig_ct = content.get("sig_item_count", 0)
+        breakdown = ", ".join(f"{k}: {v}" for k, v in by_sec.items())
+
+        return (
+            "Question 6: Compare the number of remedial‐actions raised in Section 1.1 with the\n"
+            "number of items in “Significant Findings and Action Plan.”\n\n"
+            f"— Section 1.1 counts: {breakdown}  (Total = {total})\n"
+            f"— Significant Findings items found: {sig_ct}\n\n"
+            "If the totals match, reply “PASS”. Otherwise list each discrepancy."
         )
 
     # Q4 prompt
@@ -171,20 +185,6 @@ def build_user_message(question_number, content):
             "If every asset mentioned in the description has exactly one corresponding form entry and no extras, "
             "reply “PASS”. Otherwise list what’s missing or extra."
         )
-    # Q6 prompt
-    if question_number == 6:
-        by_sec = content.get("remedial_by_section", {})
-        total  = content.get("remedial_total", 0)
-        sig_ct = content.get("sig_item_count", 0)
-        breakdown = ", ".join(f"{k}: {v}" for k, v in by_sec.items())
-
-        return (
-            "Question 6: Compare the number of remedial‐actions raised in Section 1.1 with the\n"
-            "number of items in “Significant Findings and Action Plan.”\n\n"
-            f"— Section 1.1 counts: {breakdown}  (Total = {total})\n"
-            f"— Significant Findings items found: {sig_ct}\n\n"
-            "If the totals match, reply “PASS”. Otherwise list each discrepancy."
-        )
 
     # Q13: Significant Findings…
     if question_number == 13:
@@ -213,7 +213,7 @@ def send_to_bedrock(user_text):
         "temperature":       0.0,
         "system": (
             "You are a meticulous proofreader. "
-            "Correct spelling, grammar and clarity only—no extra commentary or re-structuring."
+            "Correct spelling, grammar and clarity only — no extra commentary or re-structuring."
         ),
         "messages": [
             {
