@@ -148,7 +148,7 @@ def proof_plain_text(text, record_id):
             "messages": [{
                 "role": "user",
                 "content": (
-                    "Proofread the following text according to these strict guidelines:\n"
+                    "Proofread _only_ the text between `### BEGIN PROOF ###` and `### END PROOF ###` according to these strict guidelines:\n"
                     "- Do NOT add any new introductory text or explanatory sentences before or after the original content - aka  **Do not** add any introductory sentence such as “Here is the corrected text:” or similar.\n"
                     "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
                     "- Headings, section titles, and structure remain unchanged.\n"
