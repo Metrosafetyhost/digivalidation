@@ -131,12 +131,6 @@ def proof_plain_text(text, record_id):
         plain_text = text
     else:
         plain_text = strip_html(text)
-     # wrap in clear delimiters so Claude only edits between those markers
-    wrapped_text = (
-        "### BEGIN PROOF ###\n"
-        f"{plain_text}\n"
-        "### END PROOF ###"
-    )
     try:
         logger.info(f"Proofing record {record_id}. Plain text: {plain_text}")
         payload = {
@@ -148,7 +142,7 @@ def proof_plain_text(text, record_id):
             "messages": [{
                 "role": "user",
                 "content": (
-                    "Proofread _only_ the text between `### BEGIN PROOF ###` and `### END PROOF ###` according to these strict guidelines:\n"
+                    "Proofread the following text according to these strict guidelines:\n"
                     "- Do NOT add any new introductory text or explanatory sentences before or after the original content - aka  **Do not** add any introductory sentence such as “Here is the corrected text:” or similar.\n"
                     "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
                     "- Headings, section titles, and structure remain unchanged.\n"
@@ -156,7 +150,7 @@ def proof_plain_text(text, record_id):
                     "- Do NOT split, merge, or add any new sentences or content.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
-                    "Text to proofread: " + wrapped_text
+                    "Text to proofread: " + plain_text
                 )
             }],
             "max_tokens": 1500,
