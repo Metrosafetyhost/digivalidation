@@ -175,24 +175,58 @@ def proof_plain_text(text, record_id):
 
 def update_logs_csv(log_entries, filename, folder):
     """
-    Always overwrite the CSV for this work-order with only the current run’s entries.
+    Merge new log_entries into the existing CSV in S3, dedupe, and overwrite.
+    log_entries: list of dicts with keys recordId, header, original, proofed
     """
     s3_key = f"{folder}/{filename}.csv"
-    output = io.StringIO()
-    writer = csv.writer(output)
 
-    # write header row
-    writer.writerow(['recordId','header','original','proofed'])
+    # 1. Load existing rows (if any)
+    existing_rows = []
+    try:
+        obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
+        text = obj["Body"].read().decode("utf-8")
+        reader = csv.reader(io.StringIO(text))
+        existing_rows = list(reader)
+    except s3_client.exceptions.NoSuchKey:
+        pass
 
-    # write only this run’s rows
+    # 2. Build up merged, deduped rows
+    merged = []
+    seen = set()
+
+    # If no existing file, write header
+    if not existing_rows:
+        header = ["Record ID","Header","Original Text","Proofed Text"]
+        merged.append(header)
+    else:
+        # Keep whatever header/existing data is there
+        for row in existing_rows:
+            tup = tuple(row)
+            if tup not in seen:
+                merged.append(row)
+                seen.add(tup)
+
+    # 3. Add each new entry only if it doesn’t already exist
     for e in log_entries:
-        writer.writerow([e['recordId'], e['header'], e['original'], e['proofed']])
+        row = [
+            e.get("recordId",""),
+            e.get("header",""),
+            e.get("original",""),
+            e.get("proofed","")
+        ]
+        tup = tuple(row)
+        if tup not in seen:
+            merged.append(row)
+            seen.add(tup)
 
-    # overwrite in S3
+    # 4. Write the merged list back out, overwriting the S3 object
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerows(merged)
     s3_client.put_object(
         Bucket=BUCKET_NAME,
         Key=s3_key,
-        Body=output.getvalue()
+        Body=out.getvalue()
     )
 
     return s3_key
