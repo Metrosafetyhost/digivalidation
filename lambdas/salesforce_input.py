@@ -175,47 +175,25 @@ def proof_plain_text(text, record_id):
 
 def update_logs_csv(log_entries, filename, folder):
     """
-    Appends new log entries to a single CSV file in S3 (creating it if needed).
-    Each entry is a dict with keys: recordId, header, original, proofed.
+    Always overwrite the CSV for this work-order with only the current run’s entries.
     """
     s3_key = f"{folder}/{filename}.csv"
-
-    existing_rows = []
-    try:
-        # Attempt to read the existing CSV file from S3
-        existing_obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
-        existing_csv = existing_obj["Body"].read().decode("utf-8")
-        reader = csv.reader(io.StringIO(existing_csv))
-        existing_rows = list(reader)
-    except s3_client.exceptions.NoSuchKey:
-        # CSV file doesn't exist yet, so we'll create it fresh
-        pass
-
-    # Prepare a new CSV in memory
     output = io.StringIO()
     writer = csv.writer(output)
 
-    if not existing_rows:
-        # Write header row if file didn't exist or was empty
-        writer.writerow(["Record ID", "Header", "Original Text", "Proofed Text"])
-    else:
-        # Rewrite existing rows so we keep all previous data
-        for row in existing_rows:
-            writer.writerow(row)
+    # write header row
+    writer.writerow(['recordId','header','original','proofed'])
 
-    # Now write the new log entries
-    for entry in log_entries:
-        writer.writerow([
-            entry.get("recordId", ""),
-            entry.get("header", ""),
-            entry.get("original", ""),
-            entry.get("proofed", "")
-        ])
+    # write only this run’s rows
+    for e in log_entries:
+        writer.writerow([e['recordId'], e['header'], e['original'], e['proofed']])
 
-    # Upload the updated CSV to S3
-    new_csv_data = output.getvalue()
-    output.close()
-    s3_client.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=new_csv_data)
+    # overwrite in S3
+    s3_client.put_object(
+        Bucket=BUCKET_NAME,
+        Key=s3_key,
+        Body=output.getvalue()
+    )
 
     return s3_key
 
