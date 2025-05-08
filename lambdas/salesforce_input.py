@@ -26,6 +26,27 @@ BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 BUCKET_NAME = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
 TABLE_NAME = "ProofingMetadata"
 
+TAG_MAP = {
+  '<p>':  '[[P]]',
+  '</p>': '[[/P]]',
+  '<ul>': '[[UL]]',
+  '</ul>':'[[/UL]]',
+  '<li>': '[[LI]]',
+  '</li>':'[[/LI]]',
+  '<u>':  '[[U]]',
+  '</u>': '[[/U]]',
+}
+
+def protect_html(text):
+    for real, placeholder in TAG_MAP.items():
+        text = text.replace(real, placeholder)
+    return text
+
+def restore_html(text):
+    for real, placeholder in TAG_MAP.items():
+        text = text.replace(placeholder, real)
+    return text
+
 def strip_html(html):
     """Strip HTML tags from a string and return only text."""
     try:
@@ -52,8 +73,10 @@ def proof_table_content(html, record_id):
         for row in rows:
             tds = row.find_all("td")
             if len(tds) >= 2:
-                # Get the inner HTML as-is; leave any <p> tags intact.
-                cell_html = tds[1].decode_contents()
+
+                # protect before proofing
+                raw_html    = tds[1].decode_contents()
+                cell_html   = protect_html(raw_html)
                 original_texts.append(cell_html)
             else:
                 original_texts.append("")
@@ -75,7 +98,7 @@ def proof_table_content(html, record_id):
                 "content": (
                     "Proofread the following text according to these strict guidelines:\n"
                     "- Do NOT add any new introductory text or explanatory sentences before or after the original content - aka  **Do not** add any introductory sentence such as “Here is the corrected text:” or similar.\n"
-                    "- Keep every `<p>`, `<ul>`, `<li>`, `<u>`, exactly as-is, DO NOT remove or alter these HTML tags"
+                    "- Do NOT remove **without** altering any of the following placeholders (keep them exactly as written): [[P]]','[[/P]]','[[UL]]','[[/UL]]','[[LI]]','[[/LI]]','[[U]]','[[/U]]', keep them EXACTLY as is\n"
                     "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
                     "- Headings, section titles, and structure remain unchanged.\n"
                     "- Do NOT remove any words or phrases from the original content.\n"
@@ -114,10 +137,12 @@ def proof_table_content(html, record_id):
         for idx, row in enumerate(rows):
             tds = row.find_all("td")
             if len(tds) >= 2:
-                corrected = corrected_contents[idx] if idx < len(corrected_contents) else tds[1].get_text()
+            # restore real tags after proofing
+                prot      = corrected_contents[idx] if idx < len(corrected_contents) else tds[1].get_text()
+                restored  = restore_html(prot)
                 tds[1].clear()
-                # Append as HTML so that <p> tags are preserved for rich text rendering.
-                tds[1].append(BeautifulSoup(corrected, "html.parser"))
+                tds[1].append(BeautifulSoup(restored, "html.parser"))
+
                 header = tds[0].get_text(separator=" ", strip=True)
                 logger.info(f"Record {record_id} row {idx+1} header: {header}. Original: {original_texts[idx]}. Proofed: {corrected}")
                 log_entries.append({"header": header, "original": original_texts[idx], "proofed": corrected})
