@@ -144,8 +144,8 @@ def proof_table_content(html, record_id):
                 tds[1].append(BeautifulSoup(restored, "html.parser"))
 
                 header = tds[0].get_text(separator=" ", strip=True)
-                logger.info(f"Record {record_id} row {idx+1} header: {header}. Original: {original_texts[idx]}. Proofed: {corrected}")
-                log_entries.append({"header": header, "original": original_texts[idx], "proofed": corrected})
+                logger.info(f"Record {record_id} row {idx+1} header: {header}. Original: {original_texts[idx]}. Proofed: {restored}")
+                log_entries.append({"header": header, "original": original_texts[idx], "proofed": restored})
         return str(soup), log_entries
     except Exception as e:
         logger.error(f"Error proofing table content for record {record_id}: {str(e)}")
