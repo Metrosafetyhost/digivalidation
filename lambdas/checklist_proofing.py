@@ -108,7 +108,7 @@ def extract_json_data(json_content, question_number):
             "description": water_desc,
             "assets":      sorted(assets)
         }
-        # Q6: Risk Dashboard completeness
+    # Q6: Risk Dashboard completeness -- PARKED
     if question_number == 6:
         rr_levels   = []
         mcr_texts   = []
@@ -145,6 +145,54 @@ def extract_json_data(json_content, question_number):
             "risk_rating_levels":        rr_levels,
             "management_control_text":   mcr_texts,
             "inherent_risk_description": inherent_txt
+        }
+    # Q10
+    if question_number == 10:
+        resp_persons = []
+        accom_text   = ""
+        review_text  = ""
+
+        # 1) locate Section 3.0
+        for sec in payload.get("sections", []):
+            if sec.get("name", "").startswith("3.0 Management Responsibilities"):
+
+                # 2) extract 3.1 table rows
+                for tbl in sec.get("tables", []):
+                    if tbl["header"].startswith("3.0 Management Responsibilities"):
+                        # skip header row, unpack the rest
+                        for role, name, company in tbl["rows"][1:]:
+                            resp_persons.append({
+                                "Role":    role.strip(),
+                                "Name":    name.strip(),
+                                "Company": company.strip()
+                            })
+
+                # 3) extract 3.3 paragraphs
+                paras = sec.get("paragraphs", [])
+                # helper to grab block after a heading marker
+                def grab_block(marker):
+                    try:
+                        idx = next(i for i, L in enumerate(paras)
+                                   if L.startswith(marker))
+                    except StopIteration:
+                        return ""
+                    lines = []
+                    for L in paras[idx+1:]:
+                        # stop at next sub-heading (e.g. “3.4” or blank)
+                        if re.match(r"^\d\.\d+\s", L) and not L.startswith(marker):
+                            break
+                        if L.strip():
+                            lines.append(L.strip())
+                    return " ".join(lines)
+
+                accom_text  = grab_block("3.3 Accompanying the Risk Assessor")
+                review_text = grab_block("3.5 Risk Review and Reassessment")
+                break
+
+        return {
+            "responsible_persons":      resp_persons,
+            "accompanying_assessor":    accom_text,
+            "risk_review_reassessment": review_text
         }
 
     # Q13: Significant Findings items
@@ -241,6 +289,32 @@ def build_user_message(question_number, content):
             "--- Inherent Risk Narrative ---\n"
             f"{inherent or 'None found'}\n\n"
             "If all three components are present and populated, reply “PASS”. Otherwise list which part is missing."
+        )
+    
+    #Q10
+    if question_number == 10:
+        rp = content["responsible_persons"]
+        ac = content["accompanying_assessor"]
+        rv = content["risk_review_reassessment"]
+
+        rp_lines = "\n".join(
+            f"- {p['Role']}: {p['Name']} ({p['Company']})"
+            for p in rp
+        ) or "None found"
+
+        return (
+            "Question 10: Section 3.0 Management Responsibilities – ensure that:\n"
+            "  • Section 3.1 Responsible Persons is fully completed\n"
+            "  • Section 3.3 Accompanying the Risk Assessor is populated\n"
+            "  • Section 3.5 Risk Review and Reassessment is populated\n\n"
+            "--- 3.1 Responsible Persons ---\n"
+            f"{rp_lines}\n\n"
+            "--- 3.3 Accompanying the Risk Assessor ---\n"
+            f"{ac or 'None found'}\n\n"
+            "--- 3.5 Risk Review and Reassessment ---\n"
+            f"{rv or 'None found'}\n\n"
+            "If all three parts are present and complete, reply “PASS”. "
+            "Otherwise list which part is missing or incomplete."
         )
 
     # Q13: Significant Findings
