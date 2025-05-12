@@ -110,38 +110,45 @@ def extract_json_data(json_content, question_number):
         }
         # Q6: Risk Dashboard completeness
     if question_number == 6:
-        rr_levels       = []
-        mcr_entries     = []
-        inherent_entries= []
+        rr_levels   = []
+        mcr_texts   = []
+        inherent_txt = ""
 
-        # 1) Find the 2.0 Risk Dashboard section
+        # find section 2.0
         for sec in payload.get("sections", []):
             if sec.get("name", "").startswith("2.0 Risk Dashboard"):
-
-                # 2) Parse the Risk Rating ↔ Management Control table
+                # 1) pull Risk Rating ↔ Management Control table
                 for tbl in sec.get("tables", []):
                     hdr = [c.strip() for c in tbl["rows"][0]]
                     if hdr[0] == "Risk Rating" and "Management Control" in hdr[1]:
                         for rating, control in tbl["rows"][1:]:
                             rr_levels.append(rating.strip())
-                            mcr_entries.append(control.strip())
+                            mcr_texts.append(control.strip())
 
-                # 3) Parse the Risk Rating ↔ Inherent Risk table
-                for tbl in sec.get("tables", []):
-                    hdr = [c.strip() for c in tbl["rows"][0]]
-                    if hdr[0] == "Risk Rating" and re.search(r"Inher", hdr[1], re.IGNORECASE):
-                        for rating, text in tbl["rows"][1:]:
-                            inherent_entries.append({
-                                "rating": rating.strip(),
-                                "text":   text.strip()
-                            })
+                # 2) fallback: parse paragraphs for the inherent‐risk narrative
+                paras = sec.get("paragraphs", [])
+                # find “2.1 Current Risk Ratings”
+                start = next((i for i,l in enumerate(paras) 
+                              if re.match(r"^\s*2\.1\s+Current Risk Ratings", l)), None)
+                if start is not None:
+                    lines = []
+                    for line in paras[start+1:]:
+                        text = line.strip()
+                        # stop at footer
+                        if text.startswith("Printed from") or re.match(r"^Page \d+ of", text):
+                            break
+                        # skip single-word cruft
+                        if text.lower() in {"risk", "rating", "overall risk rating"}:
+                            continue
+                        lines.append(text)
+                    inherent_txt = " ".join(lines)
 
                 break
 
         return {
-            "risk_rating_levels":        rr_levels,
-            "management_control_text":   mcr_entries,
-            "inherent_risk_entries":     inherent_entries
+            "risk_rating_levels":       rr_levels,
+            "management_control_text":  mcr_texts,
+            "inherent_risk_description": inherent_txt
         }
 
     # Q13: Significant Findings items
@@ -223,31 +230,23 @@ def build_user_message(question_number, content):
     
     # Q6 prompt
     if question_number == 6:
-        levels   = content.get("risk_rating_levels", [])
-        controls = content.get("management_control_text", [])
-        inherent = content.get("inherent_risk_entries", [])
-
-        # format the inherent-risk table rows
-        if inherent:
-            inh_lines = [
-                f"{e['rating']}: {e['text']}" for e in inherent
-            ]
-            inh_block = "\n".join(inh_lines)
-        else:
-            inh_block = "None found"
+        levels  = content["risk_rating_levels"]
+        ctrls   = content["management_control_text"]
+        inherent= content["inherent_risk_description"]
 
         return (
+            "Water Hygiene/Legionella Risk Assessment QCC Query:\n\n"
             "Question 6: On the Risk Dashboard (Section 2.0), ensure that:\n"
             "  • Risk Rating entries are all completed (e.g. Trivial, Tolerable, Moderate…)\n"
             "  • Management Control of Legionella Risk entries are all completed\n"
-            "  • A Legionella Inherent Risk table is present and populated\n\n"
+            "  • An Inherent Risk narrative appears under “2.1 Current Risk Ratings”\n\n"
             "--- Risk Rating Levels ---\n"
             f"{', '.join(levels) or 'None found'}\n\n"
             "--- Management Control Text ---\n"
-            f"{'; '.join(controls) or 'None found'}\n\n"
-            "--- Inherent Risk Table ---\n"
-            f"{inh_block}\n\n"
-            "If all three components are present and populated, reply “PASS”. Otherwise list what's missing."
+            f"{'; '.join(ctrls) or 'None found'}\n\n"
+            "--- Inherent Risk Narrative ---\n"
+            f"{inherent or 'None found'}\n\n"
+            "If all three components are present and populated, reply “PASS”. Otherwise list which part is missing."
         )
 
     # Q13: Significant Findings
