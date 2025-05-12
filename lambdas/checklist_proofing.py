@@ -108,6 +108,34 @@ def extract_json_data(json_content, question_number):
             "description": water_desc,
             "assets":      sorted(assets)
         }
+        # Q6: Risk Dashboard completeness
+    if question_number == 6:
+        rr_entries = []
+        mcr_entries = []
+        inherent_text = ""
+
+        # 1) Locate the 2.0 Risk Dashboard section
+        for sec in payload.get("sections", []):
+            if sec.get("name", "").startswith("2.0 Risk Dashboard"):
+                # 2) Find the table whose header row is ["Risk Rating", "Management Control of Legionella Risk"]
+                for tbl in sec.get("tables", []):
+                    header = tbl["rows"][0]
+                    if header[0].strip() == "Risk Rating" and header[1].strip().startswith("Management Control"):
+                        # grab each data row
+                        for level, control in tbl["rows"][1:]:
+                            rr_entries.append(level.strip())
+                            mcr_entries.append(control.strip())
+                # 3) Pull any paragraph lines containing “inherent risk”
+                for line in sec.get("paragraphs", []):
+                    if re.search(r"inherent risk", line, re.IGNORECASE):
+                        inherent_text += line.strip() + " "
+                break
+
+        return {
+            "risk_rating_levels":       rr_entries,
+            "management_control_text":  mcr_entries,
+            "inherent_risk_description": inherent_text.strip()
+        }
 
     # Q13: Significant Findings items
     if question_number == 13:
@@ -185,6 +213,26 @@ def build_user_message(question_number, content):
             "If every asset mentioned in the description has exactly one corresponding form entry and no extras, "
             "reply “PASS”. Otherwise list what’s missing or extra."
         )
+        
+    if question_number == 6:
+        levels = content.get("risk_rating_levels", [])
+        controls = content.get("management_control_text", [])
+        inherent = content.get("inherent_risk_description", "")
+
+        return (
+            "Water Hygiene/Legionella Risk Assessment QCC Query:\n\n"
+            "Question 6: On the Risk Dashboard (Section 2.0), ensure that:\n"
+            "  • Risk Rating entries are completed\n"
+            "  • Management Control of Legionella Risk entries are completed\n"
+            "  • An Inherent Risk description is present\n\n"
+            "--- Risk Rating Levels ---\n"
+            f"{', '.join(levels) or 'None found'}\n\n"
+            "--- Management Control Text ---\n"
+            f"{'; '.join(controls) or 'None found'}\n\n"
+            "--- Inherent Risk Description ---\n"
+            f"{inherent or 'None found'}\n\n"
+            "If all three parts are fully completed, reply “PASS”. Otherwise list which part is missing or incomplete."
+    )
 
     # Q13: Significant Findings…
     if question_number == 13:
