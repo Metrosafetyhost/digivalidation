@@ -107,7 +107,11 @@ def proof_table_content(html, record_id):
             body=json.dumps(payload)
         )
         body = json.loads(response["body"].read())
+        # log the full Bedrock response so we know what keys it actually contains
+        logger.info(f"Record {record_id}: Bedrock response keys → {list(body.keys())}")
+        logger.info(f"Record {record_id}: full Bedrock body → {body}")
         raw = body["choices"][0]["message"]["content"].strip()
+        
         corrected = json.loads(raw)
         logger.info(f"Record {record_id}: received {len(corrected)} corrected fragments")
 
