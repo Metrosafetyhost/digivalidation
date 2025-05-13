@@ -201,6 +201,47 @@ def extract_json_data(json_content, question_number):
             if sec.get("name", "").strip().lower() == "significant findings and action plan":
                 return sec.get("items", [])
         return []
+    
+    #Q15:
+    if question_number == 15:
+        # 1) Pull counts from 6.0 System Asset Register
+        sys_counts = {}
+        for sec in data.get("sections", []):
+            if sec.get("name","").startswith("6.0 System Asset Register"):
+                # assume exactly one table
+                tbl = sec.get("tables", [])[0]
+                # skip header row, parse each [asset name, count]
+                for row in tbl["rows"][1:]:
+                    asset_name = row[0].strip()
+                    try:
+                        cnt = int(row[1].strip())
+                    except:
+                        cnt = 0
+                    sys_counts[asset_name] = cnt
+                break
+
+        total_sys_assets = sum(sys_counts.values())
+
+        # 2) Extract asset IDs from 7.0 Water Assets section
+        ids = []
+        pattern = re.compile(r"^[A-Z]{2,}-\d+")  # e.g. MCW-01, MPOU-01, POU-01
+        for sec in payload.get("sections", []):
+            if sec.get("name","").startswith("7.0 Water Assets"):
+                for line in sec.get("paragraphs", []):
+                    line = line.strip()
+                    if pattern.match(line):
+                        ids.append(line)
+                break
+
+        unique_ids = set(ids)
+        num_asset_forms = len(unique_ids)
+
+        return {
+            "system_counts":     sys_counts,
+            "total_sys_assets":  total_sys_assets,
+            "asset_form_ids":    sorted(unique_ids),
+            "num_asset_forms":   num_asset_forms
+        }
 
     return None
 
@@ -328,6 +369,28 @@ def build_user_message(question_number, content):
             "If everything looks good, reply “PASS”. Otherwise, list each discrepancy."
         )
         logger.info("Built user message for question 13")
+        return msg
+    
+    #Q15
+    if question_number == 14:
+        total = content["total_sys_assets"]
+        forms = content["num_asset_forms"]
+        ids   = content["asset_form_ids"]
+        sys_ct = "\n".join(f"- {name}: {cnt}" for name, cnt in content["system_counts"].items())
+
+        msg = (
+            f"--- System Asset Register counts (present) ---\n{sys_ct}\n\n"
+            f"Total assets present: {total}\n\n"
+            f"--- Unique Asset Form IDs found in Section 7.0 ---\n- " + "\n- ".join(ids) + f"\n\nCount of asset forms: {forms}\n\n"
+        )
+        if total == forms:
+            msg += "Totals match, reply “PASS”."
+        else:
+            diff = total - forms
+            msg += (
+                f"Discrepancy detected: {total} assets registered but {forms} asset forms found "
+                f"(difference of {diff:+d})."
+            )
         return msg
 
     # fallback
