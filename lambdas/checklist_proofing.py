@@ -206,7 +206,7 @@ def extract_json_data(json_content, question_number):
     if question_number == 15:
         # 1) Pull counts from 6.0 System Asset Register
         sys_counts = {}
-        for sec in data.get("sections", []):
+        for sec in payload.get("sections", []):
             if sec.get("name","").startswith("6.0 System Asset Register"):
                 # assume exactly one table
                 tbl = sec.get("tables", [])[0]
@@ -372,7 +372,7 @@ def build_user_message(question_number, content):
         return msg
     
     #Q15
-    if question_number == 14:
+    if question_number == 15:
         total = content["total_sys_assets"]
         forms = content["num_asset_forms"]
         ids   = content["asset_form_ids"]
@@ -381,7 +381,8 @@ def build_user_message(question_number, content):
         msg = (
             f"--- System Asset Register counts (present) ---\n{sys_ct}\n\n"
             f"Total assets present: {total}\n\n"
-            f"--- Unique Asset Form IDs found in Section 7.0 ---\n- " + "\n- ".join(ids) + f"\n\nCount of asset forms: {forms}\n\n"
+            f"--- Unique Asset Form IDs found in Section 7.0 ---\n- " + "\n- ".join(ids) +
+            f"\n\nCount of asset forms: {forms}\n\n"
         )
         if total == forms:
             msg += "Totals match, reply “PASS”."
@@ -392,7 +393,6 @@ def build_user_message(question_number, content):
                 f"(difference of {diff:+d})."
             )
         return msg
-
     # fallback
     logger.error(f"No handler for question_number={question_number}; returning empty message")
     return ""
