@@ -26,6 +26,27 @@ BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 BUCKET_NAME = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
 TABLE_NAME = "ProofingMetadata"
 
+TAG_MAP = {
+  '<p>':  '[[P]]',
+  '</p>': '[[/P]]',
+  '<ul>': '[[UL]]',
+  '</ul>':'[[/UL]]',
+  '<li>': '[[LI]]',
+  '</li>':'[[/LI]]',
+  '<u>':  '[[U]]',
+  '</u>': '[[/U]]',
+}
+
+def protect_html(text):
+    for real, placeholder in TAG_MAP.items():
+        text = text.replace(real, placeholder)
+    return text
+
+def restore_html(text):
+    for real, placeholder in TAG_MAP.items():
+        text = text.replace(placeholder, real)
+    return text
+
 def strip_html(html):
     """Strip HTML tags from a string and return only text."""
     try:
@@ -37,93 +58,84 @@ def strip_html(html):
 
 def proof_table_content(html, record_id):
     try:
+        # 1) parse the HTML
         soup = BeautifulSoup(html, "html.parser")
         table = soup.find("table")
         if not table:
-            logger.warning("No table found in HTML. Skipping proofing for record " + record_id)
+            logger.warning(f"No table found in HTML. Skipping proofing for record {record_id}")
             return html, []
-        
+
         rows = table.find_all("tr")
         if not rows:
-            logger.warning("No rows found in table for record " + record_id)
+            logger.warning(f"No rows found in table for record {record_id}")
             return html, []
-        
-        original_texts = []
-        for row in rows:
-            tds = row.find_all("td")
+
+        # 2) pull out each second-<td> as raw HTML and protect tags
+        fragments = []
+        for idx, tr in enumerate(rows):
+            tds = tr.find_all("td")
             if len(tds) >= 2:
-                # Get the inner HTML as-is; leave any <p> tags intact.
-                cell_html = tds[1].decode_contents()
-                original_texts.append(cell_html)
+                raw = tds[1].decode_contents()
+                prot = protect_html(raw)
+                fragments.append(prot)
             else:
-                original_texts.append("")
-        
-        # Use a unique delimiter to join the texts from all rows.
-        delimiter = "|||ROW_DELIM|||"
-        joined_content = delimiter.join(original_texts)
-        
-        logger.info(f"Proofing record {record_id}. Joined content: {joined_content}")
-        
+                fragments.append("")
+                logger.warning(f"Row {idx} missing <td> for record {record_id}")
+
+        # 3) send as JSON array to Claude
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
             "system": (
-            "You are a meticulous proofreader. "
-            "Correct spelling, grammar and clarity only — no extra commentary or re-structuring."
-        ),
+                "You are a meticulous proofreader. Correct only spelling, grammar and punctuation. "
+                "Do NOT add, remove, reorder, split or merge any text or HTML tags. "
+                "Preserve every <p> and </p> tag (and any other tags) exactly. "
+                "Output only the corrected JSON array of strings, matching the input array."
+            ),
             "messages": [{
                 "role": "user",
-                "content": (
-                    "Proofread the following text according to these strict guidelines:\n"
-                    "- Do NOT add any new introductory text or explanatory sentences before or after the original content - aka  **Do not** add any introductory sentence such as “Here is the corrected text:” or similar.\n"
-                    "- Keep every `<p>`, `<ul>`, `<li>`, `<u>`, exactly as-is, DO NOT remove or alter these HTML tags"
-                    "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
-                    "- Headings, section titles, and structure remain unchanged.\n"
-                    "- Do NOT remove any words or phrases from the original content.\n"
-                    "- Do NOT split, merge, or add any new sentences or content.\n"
-                    "- Ensure that lists, bullet points, and standalone words remain intact.\n"
-                    "- Proofread the text while preserving the exact sequence ‘|||ROW_DELIM|||’ as a marker. Additionally, if a list is detected (i.e. multiple standalone words), insert a newline between them only after the marker.\n"
-                    "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
-                    "Text to proofread: " + joined_content
-                )
+                "content": "Proofread this JSON array of HTML fragments (no commentary):\n\n"
+                           + json.dumps(fragments, ensure_ascii=False)
             }],
             "max_tokens": 3000,
-            "temperature": 0.3
+            "temperature": 0.0
         }
-        
-        logger.info("Sending payload to Bedrock: " + json.dumps(payload, indent=2))
-        
+        logger.info(f"Record {record_id}: sending {len(fragments)} fragments to Bedrock")
         response = bedrock_client.invoke_model(
             modelId=BEDROCK_MODEL_ID,
             contentType="application/json",
             accept="application/json",
             body=json.dumps(payload)
         )
-        
-        response_body = json.loads(response["body"].read().decode("utf-8"))
-        proofed_text = " ".join(
-            [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
-        ).strip()
-        
-        # Split the proofed result back into segments.
-        corrected_contents = proofed_text.split(delimiter)
-        if len(corrected_contents) != len(original_texts):
-            logger.warning(f"Expected {len(original_texts)} proofed segments, got {len(corrected_contents)} for record {record_id}")
-        
+        body = json.loads(response["body"].read())
+        raw = body["choices"][0]["message"]["content"].strip()
+        corrected = json.loads(raw)
+        logger.info(f"Record {record_id}: received {len(corrected)} corrected fragments")
+
+        # 4) re-insert each back into its <td>, restoring real tags
         log_entries = []
-        # Replace each row's second cell with the corresponding corrected text.
-        for idx, row in enumerate(rows):
-            tds = row.find_all("td")
+        for idx, (frag, tr) in enumerate(zip(corrected, rows)):
+            tds = tr.find_all("td")
             if len(tds) >= 2:
-                corrected = corrected_contents[idx] if idx < len(corrected_contents) else tds[1].get_text()
+                restored = restore_html(frag)
                 tds[1].clear()
-                # Append as HTML so that <p> tags are preserved for rich text rendering.
-                tds[1].append(BeautifulSoup(corrected, "html.parser"))
+                tds[1].append(BeautifulSoup(restored, "html.parser"))
+
                 header = tds[0].get_text(separator=" ", strip=True)
-                logger.info(f"Record {record_id} row {idx+1} header: {header}. Original: {original_texts[idx]}. Proofed: {corrected}")
-                log_entries.append({"header": header, "original": original_texts[idx], "proofed": corrected})
+                logger.info(
+                    f"Record {record_id} row {idx+1}: header={header!r}, "
+                    f"original={fragments[idx]!r}, proofed={restored!r}"
+                )
+                log_entries.append({
+                    "recordId": record_id,
+                    "header": header,
+                    "original": protect_html(fragments[idx]),
+                    "proofed": restored
+                })
+
         return str(soup), log_entries
+
     except Exception as e:
-        logger.error(f"Error proofing table content for record {record_id}: {str(e)}")
+        logger.error(f"Error proofing table content for record {record_id}: {e}")
         return html, []
 
 def proof_plain_text(text, record_id):
