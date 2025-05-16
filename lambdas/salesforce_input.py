@@ -371,6 +371,7 @@ def process(event, context):
     # Use a single file for all logs for this work order
     csv_filename = f"{workorder_id}_logs"
     # Store/append the new entries to the CSV
+    logger.info(f"[Action] about to write {len(csv_log_entries)} rows → {csv_log_entries}")
     csv_s3_key = update_logs_csv(csv_log_entries, csv_filename, "logs")
     logger.info(f"CSV logs stored in S3 at key: {csv_s3_key}")
 
