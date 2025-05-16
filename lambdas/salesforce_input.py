@@ -6,6 +6,7 @@ import time
 import io
 import csv
 from bs4 import BeautifulSoup
+import re
 
 # Initialise logger
 logger = logging.getLogger()
@@ -83,7 +84,7 @@ def proof_table_content(html, record_id):
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
             "system": (
-                "You are a meticulous proofreader. Correct only spelling, grammar and punctuation. "
+                "You are a meticulous proofreader. Correct only spelling, grammar and punctuation in British English. "
                 "Do NOT add, remove, reorder, split or merge any text or HTML tags. "
                 "Output only the corrected JSON array of strings, matching the input array exactly."
             ),
@@ -106,7 +107,12 @@ def proof_table_content(html, record_id):
         # 3) Parse the JSON array from Claude’s response
         body = json.loads(response["body"].read())
         raw  = body["content"][0]["text"].strip()
-        corrected_protected = json.loads(raw)   # <-- a list of strings
+        # remove a leading ```html\n or ```\n
+        raw = re.sub(r"^```(?:html)?\r?\n", "", raw)
+        # remove any trailing ``` fences
+        raw = re.sub(r"\r?\n```$", "", raw)
+
+        corrected_protected = json.loads(raw)
 
         # 4) Re-insert each fragment, restoring real tags
         log_entries = []
@@ -284,22 +290,22 @@ def load_payload(event):
         return None, None, {}, {}
     
 
-def notify_run(workorder_id, status):
-    subject = f"Work Order {workorder_id} Processed: {status}"
-    body = (
-        f"Hello team,\n\n"
-        f"The proofing Lambda has just run for Work Order ID: {workorder_id}.\n"
-        f"Overall status: {status}.\n\n"
-        f"Cheers,\nYour AWS Lambda"
-    )
-    ses_client.send_email(
-        Source=SENDER,
-        Destination={ "ToAddresses": [RECIPIENT] },
-        Message={
-            "Subject": { "Data": subject },
-            "Body": { "Text": { "Data": body } }
-        }
-    )
+# def notify_run(workorder_id, status):
+#     subject = f"Work Order {workorder_id} Processed: {status}"
+#     body = (
+#         f"Hello team,\n\n"
+#         f"The proofing Lambda has just run for Work Order ID: {workorder_id}.\n"
+#         f"Overall status: {status}.\n\n"
+#         f"Cheers,\nYour AWS Lambda"
+#     )
+#     ses_client.send_email(
+#         Source=SENDER,
+#         Destination={ "ToAddresses": [RECIPIENT] },
+#         Message={
+#             "Subject": { "Data": subject },
+#             "Body": { "Text": { "Data": body } }
+#         }
+#     )
 
 def process(event, context):
     """Main processing function"""
