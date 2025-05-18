@@ -139,7 +139,8 @@ def proof_table_content(html, record_id):
 
 
 def proof_plain_text(text, record_id):
-    if any(tag in text.lower() for tag in ['<p>', '<ul>', '<li>', '<u>']):
+    PRESERVE_TAGS = ['<p>', '<ul>', '<li>', '<u>', '</p>', ',</ul>', '</li>', '</u>']
+    if any(tag in text.lower() for tag in PRESERVE_TAGS):
         plain_text = text
     else:
         plain_text = strip_html(text)
