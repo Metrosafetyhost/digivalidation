@@ -155,67 +155,40 @@ def extract_json_data(json_content, question_number):
 
     # Q10
     if question_number == 10:
-        # 1) Find section 3.0
-        sec = next(
-            (s for s in payload.get("sections", [])
-            if s.get("name", "").startswith("3.0 Management Responsibilities")),
-            None
-        )
-        if not sec:
-            return {
-                "responsible_persons":        [],
-                "accompanying_assessor":      "",
-                "risk_review_reassessment":   ""
-            }
+        # 1) pull 3.1 Responsible Persons from the 3.0 section as you already do
+        sec30 = next(s for s in payload["sections"]
+                if s["name"].startswith("3.0 Management Responsibilities"))
+        rp_tbl = next(t for t in sec30["tables"]
+                if t["rows"][0][0].startswith("Responsible Persons"))
+        responsible_persons = [
+            {"Role":r[0].strip(), "Name":r[1].strip(), "Company":r[2].strip()}
+            for r in rp_tbl["rows"][1:]
+            if len(r)>=3
+        ]
 
-        # 2) Build responsible_persons exactly as before
-        rp_tbl = next(
-            (t for t in sec.get("tables", [])
-            if t["rows"][0][0].startswith("Responsible Persons")),
-            None
-        )
-        responsible_persons = []
-        if rp_tbl:
-            for row in rp_tbl["rows"][1:]:
-                if len(row) >= 3:
-                    responsible_persons.append({
-                        "Role":    row[0].strip(),
-                        "Name":    row[1].strip(),
-                        "Company": row[2].strip(),
-                    })
-
-        # 3) Clean out page-number paras
-        paras = [p for p in sec.get("paragraphs", []) if not p.strip().isdigit()]
-
-        # 4) Extract 3.3 Accompanying the Risk Assessor
+        # 2) pull 3.3 from its own section
+        sec33 = next((s for s in payload["sections"]
+                    if s["name"].startswith("3.3 Accompanying the Risk Assessor")),
+                    None)
         accompanying_assessor = ""
-        for i, p in enumerate(paras):
-            if re.match(r"^3\.3\b", p):
-                if i + 1 < len(paras):
-                    accompanying_assessor = paras[i+1].strip()
-                break
+        if sec33:
+            # join all paragraphs into one block, or pick the first line
+            accompanying_assessor = " ".join(sec33["paragraphs"]).strip()
 
-        # 5) Extract 3.5 Risk Review and Reassessment (all lines until next heading/“Printed from”)
+         # 3) pull 3.5 from its own section
+        sec35 = next((s for s in payload["sections"]
+                     if s["name"].startswith("3.5 Risk Review and Reassessment")),
+                    None)
         risk_review_reassessment = ""
-        for i, p in enumerate(paras):
-            if re.match(r"^3\.5\b", p):
-                lines = []
-                j = i + 1
-                while j < len(paras) and \
-                    not re.match(r"^\d+\.\d", paras[j]) and \
-                    not paras[j].startswith("Printed from"):
-                    lines.append(paras[j].strip())
-                    j += 1
-                risk_review_reassessment = " ".join(lines)
-                break
+        if sec35:
+            risk_review_reassessment = " ".join(sec35["paragraphs"]).strip()
 
-        # 6) Return the exact keys your prompt builder expects
+        # 4) return exactly the keys your prompt-builder expects
         return {
             "responsible_persons":        responsible_persons,
             "accompanying_assessor":      accompanying_assessor,
             "risk_review_reassessment":   risk_review_reassessment
-        }
-
+    }
     # Q13: Significant Findings items
     if question_number == 13:
         for sec in payload.get("sections", []):
