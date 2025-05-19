@@ -108,44 +108,56 @@ def extract_json_data(json_content, question_number):
             "description": water_desc,
             "assets":      sorted(assets)
         }
-    # Q6: Risk Dashboard completeness -- PARKED
-    if question_number == 6:
-        rr_levels   = []
-        mcr_texts   = []
-        inherent_txt = ""
-
-        # find the Risk Dashboard section
+    
+        # ————— Q9: Risk Dashboard – Management Control & Inherent Risk —————
+    if question_number == 9:
+        # 1) Find the “2.0 Risk Dashboard” section
         for sec in payload.get("sections", []):
             if sec.get("name", "").startswith("2.0 Risk Dashboard"):
+                tables = sec.get("tables", [])
+                paragraphs = sec.get("paragraphs", [])
 
-                # pull the Risk Rating ⇆ Management Control table as before
-                for tbl in sec.get("tables", []):
-                    hdr0, hdr1 = tbl["rows"][0]
-                    if hdr0.strip() == "Risk Rating" and "Management Control" in hdr1:
-                        for rating, control in tbl["rows"][1:]:
-                            rr_levels.append(rating.strip())
-                            mcr_texts.append(control.strip())
+                # 2) Management Control table
+                mgmt_tbl = next(
+                    (t for t in tables
+                     if t.get("rows", [[]])[0][1].startswith("Management Control")),
+                    None
+                )
+                management_controls = []
+                if mgmt_tbl:
+                    for row in mgmt_tbl["rows"][1:]:
+                        management_controls.append({
+                            "riskRating":         row[0],
+                            "managementControl":  row[1]
+                        })
 
-                # now pull the Inherent Risk narrative out of paragraphs
-                paras = sec.get("paragraphs", [])
-                for idx, line in enumerate(paras):
-                    if re.match(r"^\s*2\.1\s+Current Risk Ratings", line):
-                        # take the very next line that isn’t a known footer or heading
-                        for nxt in paras[idx+1:]:
-                            txt = nxt.strip()
-                            if not txt or txt.startswith("Overall Risk Rating") or txt.startswith("Printed from"):
-                                break
-                            inherent_txt = txt
+                # 3) Inherent Risk table (or fallback to paragraph)
+                inh_tbl = next(
+                    (t for t in tables
+                     if t.get("rows", [[]])[0][1].lower().startswith("inherent")),
+                    None
+                )
+                inherent_risks = []
+                if inh_tbl:
+                    for row in inh_tbl["rows"][1:]:
+                        inherent_risks.append({
+                            "riskRating":   row[0],
+                            "inherentRisk": row[1]
+                        })
+                else:
+                    # fallback: look for “inherent risk” in the text and grab the next line
+                    for idx, txt in enumerate(paragraphs):
+                        if "inherent risk" in txt.lower():
+                            if idx + 1 < len(paragraphs):
+                                inherent_risks = [{"description": paragraphs[idx+1]}]
                             break
-                        break
 
-                break
+                # 4) Return exactly what Q9 needs
+                return {
+                    "ManagementControl": management_controls,
+                    "InherentRisk":      inherent_risks
+                }
 
-        return {
-            "risk_rating_levels":        rr_levels,
-            "management_control_text":   mcr_texts,
-            "inherent_risk_description": inherent_txt
-        }
     # Q10
     if question_number == 10:
         resp_persons = []
@@ -318,14 +330,14 @@ def build_user_message(question_number, content):
             "reply “PASS”. Otherwise list what’s missing or extra."
         )
     
-    # Q6 prompt
-    if question_number == 6:
+    # Q9 prompt
+    if question_number == 9:
         levels  = content["risk_rating_levels"]
         controls= content["management_control_text"]
         inherent= content["inherent_risk_description"]
 
         return (
-            "Question 6: On the Risk Dashboard (Section 2.0), ensure that:\n"
+            "Question 9: On the Risk Dashboard (Section 2.0), ensure that:\n"
             "  • Risk Rating entries are all completed (e.g. Trivial, Tolerable, Moderate…)\n"
             "  • Management Control of Legionella Risk entries are all completed\n"
             "  • An Inherent Risk narrative appears under “2.1 Current Risk Ratings”\n\n"
