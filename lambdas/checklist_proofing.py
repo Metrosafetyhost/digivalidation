@@ -155,40 +155,54 @@ def extract_json_data(json_content, question_number):
 
     # Q10
     if question_number == 10:
-        # 1) pull 3.1 Responsible Persons from the 3.0 section as you already do
+        # 1) 3.1 Responsible Persons from the 3.0 section
         sec30 = next(s for s in payload["sections"]
-                if s["name"].startswith("3.0 Management Responsibilities"))
+                    if s["name"].startswith("3.0 Management Responsibilities"))
         rp_tbl = next(t for t in sec30["tables"]
-                if t["rows"][0][0].startswith("Responsible Persons"))
+                    if t["rows"][0][0].startswith("Responsible Persons"))
         responsible_persons = [
-            {"Role":r[0].strip(), "Name":r[1].strip(), "Company":r[2].strip()}
-            for r in rp_tbl["rows"][1:]
-            if len(r)>=3
+            {"Role": r[0].strip(), "Name": r[1].strip(), "Company": r[2].strip()}
+            for r in rp_tbl["rows"][1:] if len(r) >= 3
         ]
+        # helper to take lines until the next sub-heading
+        def grab(paras):
+            out = []
+            for p in paras:
+                p = p.strip()
+                if re.match(r"^\d+\.\d", p):  # stops at 3.4, 3.6, etc.
+                    break
+                out.append(p)
+            return " ".join(out)
+        
+        def is_real(sec):
+            # returns True if the section has at least one line of "real" text
+            for p in sec.get("paragraphs", []):
+               if not p.isdigit() and not re.match(r"^\d+\.\d", p):
+                return True
+            return False
 
-        # 2) pull 3.3 from its own section
-        sec33 = next((s for s in payload["sections"]
-                    if s["name"].startswith("3.3 Accompanying the Risk Assessor")),
-                    None)
-        accompanying_assessor = ""
-        if sec33:
-            # join all paragraphs into one block, or pick the first line
-            accompanying_assessor = " ".join(sec33["paragraphs"]).strip()
+        cands33 = [
+            s for s in payload["sections"]
+            if s["name"].startswith("3.3 Accompanying the Risk Assessor")
+        ]
+        sec33 = next((s for s in cands33 if is_real(s)), None)
+        accompanying_assessor = grab(sec33["paragraphs"]) if sec33 else ""
 
-         # 3) pull 3.5 from its own section
-        sec35 = next((s for s in payload["sections"]
-                     if s["name"].startswith("3.5 Risk Review and Reassessment")),
-                    None)
-        risk_review_reassessment = ""
-        if sec35:
-            risk_review_reassessment = " ".join(sec35["paragraphs"]).strip()
+        # 3.5 Risk Review and Reassessment
+        cands35 = [
+            s for s in payload["sections"]
+            if s["name"].startswith("3.5 Risk Review and Reassessment")
+        ]
+        sec35 = next((s for s in cands35 if is_real(s)), None)
+        risk_review_reassessment = grab(sec35["paragraphs"]) if sec35 else ""
 
-        # 4) return exactly the keys your prompt-builder expects
+        # 4) return exactly the keys your prompt‐builder expects
         return {
             "responsible_persons":        responsible_persons,
             "accompanying_assessor":      accompanying_assessor,
             "risk_review_reassessment":   risk_review_reassessment
     }
+
     # Q13: Significant Findings items
     if question_number == 13:
         for sec in payload.get("sections", []):
