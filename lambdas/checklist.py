@@ -37,81 +37,55 @@ def is_major_heading(text):
             return True
     return False
 
-# New helper: parse a TABLE block into structured items
-def parse_significant_findings_table(table):
-    """
-    Parses the Textract TABLE block rows for 'Significant Findings and Action Plan' section
-    and returns a list of dicts with keys: Question, Priority, Observation, Target Date, Action Required.
-    """
-    items = []
-    current = {}
-    for row in table['rows']:
-        # strip empty cells
-        cells = [c.strip() for c in row if c and c.strip()]
-        if not cells:
-            continue
-        first = cells[0]
-        # detect new question by pattern '12.3.' etc
-        if re.match(r'^\d+\.\d+', first):
-            # flush prior
-            if current:
-                items.append(current)
-            # start new item
-            q_text = ' '.join(cells)
-            current = {'Question': q_text}
-            continue
-        label = first.lower()
-        # map each label to its value
-        if label == 'priority' and len(cells) > 1:
-            current['Priority'] = cells[1]
-        elif label == 'observation':
-            current['Observation'] = ' '.join(cells[1:]) if len(cells) > 1 else ''
-        elif label == 'target date':
-            current['Target Date'] = cells[1] if len(cells) > 1 else ''
-        elif label == 'action required':
-            current['Action Required'] = ' '.join(cells[1:]) if len(cells) > 1 else ''
-    # append last
-    if current:
-        items.append(current)
-    return items
-
-# Extract tables grouped by detected headings (unchanged)
+# Extract tables grouped by detected headings
 def extract_tables_grouped(blocks):
+    """
+    Walk the entire document in reading order, remember the last major heading seen,
+    and assign that heading to every TABLE block until the next heading appears.
+    """
     tables = []
-    headings = {}
-    for b in blocks:
-        if b['BlockType'] == 'LINE' and is_major_heading(b.get('Text','')):
-            pg = b.get('Page',1)
-            top = b['Geometry']['BoundingBox']['Top']
-            headings.setdefault(pg,[]).append((top,b['Text']))
-    for b in blocks:
-        if b['BlockType'] == 'TABLE':
-            pg = b.get('Page',1)
-            top = b['Geometry']['BoundingBox']['Top']
-            # find closest header above the table
-            header = None
-            cand = [(y,t) for y,t in headings.get(pg,[]) if y < top]
-            if cand:
-                header = max(cand, key=lambda x: x[0])[1]
-            # collect rows
+    # 1) sort all blocks by page, then vertical position
+    sorted_blocks = sorted(
+        blocks,
+        key=lambda b: (b.get("Page", 1), b["Geometry"]["BoundingBox"]["Top"])
+    )
+
+    current_header = None
+    for b in sorted_blocks:
+        # whenever we hit a major heading line, update current_header
+        if b["BlockType"] == "LINE" and is_major_heading(b.get("Text", "")):
+            current_header = b["Text"].strip()
+
+        # whenever we hit a TABLE, grab its rows & attach the most recent header
+        if b["BlockType"] == "TABLE" and current_header:
+            # collect the rows just as you were doing before
             rows = []
-            for rel in b.get('Relationships',[]):
-                if rel['Type'] == 'CHILD':
-                    cells = [c for c in blocks if c['Id'] in rel['Ids'] and c['BlockType']=='CELL']
+            for rel in b.get("Relationships", []):
+                if rel["Type"] == "CHILD":
+                    cells = [c for c in blocks
+                             if c["Id"] in rel["Ids"]
+                             and c["BlockType"] == "CELL"]
                     rowm = {}
                     for c in cells:
-                        ri = c['RowIndex']
-                        txt = ''
-                        for r2 in c.get('Relationships',[]):
-                            if r2['Type']=='CHILD':
-                                for cid in r2['Ids']:
-                                    w = next((x for x in blocks if x['Id']==cid), None)
-                                    if w and w['BlockType'] in ('WORD','LINE'):
-                                        txt += w.get('Text','') + ' '
-                        rowm.setdefault(ri,[]).append(txt.strip())
+                        ri = c["RowIndex"]
+                        txt = ""
+                        for r2 in c.get("Relationships", []):
+                            if r2["Type"] == "CHILD":
+                                for cid in r2["Ids"]:
+                                    w = next((x for x in blocks if x["Id"] == cid), None)
+                                    if w and w["BlockType"] in ("WORD", "LINE"):
+                                        txt += w.get("Text", "") + " "
+                        rowm.setdefault(ri, []).append(txt.strip())
                     for ri in sorted(rowm):
                         rows.append(rowm[ri])
-            tables.append({'page':pg,'header':header,'rows':rows,'bbox':b['Geometry']['BoundingBox']})
+
+            tables.append({
+                "page": b.get("Page", 1),
+                "header": current_header,
+                "rows": rows,
+                "bbox": b["Geometry"]["BoundingBox"]
+            })
+
     return tables
 
 def group_sections(blocks, tables, fields):
