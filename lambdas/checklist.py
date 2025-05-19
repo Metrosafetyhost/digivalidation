@@ -14,6 +14,8 @@ IMPORTANT_HEADINGS = [
     "Executive Summary",
     "Areas Identified Requiring Remedial Actions",
     "Building Description",
+    "Accompanying the Risk Assessor",
+    "Risk Review and Reassessment",
     "Water Scope",
     "Risk Dashboard",
     "Management Responsibilities",

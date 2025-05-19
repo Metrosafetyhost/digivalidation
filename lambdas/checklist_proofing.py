@@ -111,100 +111,109 @@ def extract_json_data(json_content, question_number):
     
         # ————— Q9: Risk Dashboard – Management Control & Inherent Risk —————
     if question_number == 9:
+        rr_levels    = []
+        mcr_texts    = []
+        inherent_txt = ""
+
         # 1) Find the “2.0 Risk Dashboard” section
         for sec in payload.get("sections", []):
             if sec.get("name", "").startswith("2.0 Risk Dashboard"):
-                tables = sec.get("tables", [])
-                paragraphs = sec.get("paragraphs", [])
 
-                # 2) Management Control table
-                mgmt_tbl = next(
-                    (t for t in tables
-                     if t.get("rows", [[]])[0][1].startswith("Management Control")),
-                    None
-                )
-                management_controls = []
-                if mgmt_tbl:
-                    for row in mgmt_tbl["rows"][1:]:
-                        management_controls.append({
-                            "riskRating":         row[0],
-                            "managementControl":  row[1]
-                        })
+                # 2) Pull the Risk Rating ⇆ Management Control table
+                for tbl in sec.get("tables", []):
+                    # safely unpack only the first two cells
+                    hdr0, hdr1, *_ = tbl["rows"][0]
+                    if hdr0.strip() == "Risk Rating" and "Management Control" in hdr1:
+                        for row in tbl["rows"][1:]:
+                            # grab at most two columns
+                            rating = row[0].strip() if len(row) > 0 else ""
+                            control = row[1].strip() if len(row) > 1 else ""
+                            rr_levels.append(rating)
+                            mcr_texts.append(control)
 
-                # 3) Inherent Risk table (or fallback to paragraph)
-                inh_tbl = next(
-                    (t for t in tables
-                     if t.get("rows", [[]])[0][1].lower().startswith("inherent")),
-                    None
-                )
-                inherent_risks = []
-                if inh_tbl:
-                    for row in inh_tbl["rows"][1:]:
-                        inherent_risks.append({
-                            "riskRating":   row[0],
-                            "inherentRisk": row[1]
-                        })
-                else:
-                    # fallback: look for “inherent risk” in the text and grab the next line
-                    for idx, txt in enumerate(paragraphs):
-                        if "inherent risk" in txt.lower():
-                            if idx + 1 < len(paragraphs):
-                                inherent_risks = [{"description": paragraphs[idx+1]}]
+                # 3) Fallback: extract the “Inherent Risk” line from paragraphs
+                paras = sec.get("paragraphs", [])
+                for idx, line in enumerate(paras):
+                    if re.match(r"^\s*2\.1\s+Current Risk Ratings", line):
+                        # take the very next non‐footer, non‐heading line
+                        for nxt in paras[idx+1:]:
+                            txt = nxt.strip()
+                            if not txt or txt.startswith("Overall Risk Rating") or txt.startswith("Printed from"):
+                                break
+                            inherent_txt = txt
                             break
+                        break
 
-                # 4) Return exactly what Q9 needs
-                return {
-                    "ManagementControl": management_controls,
-                    "InherentRisk":      inherent_risks
-                }
+                break  # no need to scan further sections
+
+        # 4) Return exactly what build_user_message(q=6) needs
+        return {
+            "risk_rating_levels":        rr_levels,
+            "management_control_text":   mcr_texts,
+            "inherent_risk_description": inherent_txt
+        }
 
     # Q10
     if question_number == 10:
-        resp_persons = []
-        accom_text   = ""
-        review_text  = ""
+        # 1) Find section 3.0
+        sec = next(
+            (s for s in payload.get("sections", [])
+            if s.get("name", "").startswith("3.0 Management Responsibilities")),
+            None
+        )
+        if not sec:
+            return {
+                "responsible_persons":        [],
+                "accompanying_assessor":      "",
+                "risk_review_reassessment":   ""
+            }
 
-        # 1) locate Section 3.0
-        for sec in payload.get("sections", []):
-            if sec.get("name", "").startswith("3.0 Management Responsibilities"):
+        # 2) Build responsible_persons exactly as before
+        rp_tbl = next(
+            (t for t in sec.get("tables", [])
+            if t["rows"][0][0].startswith("Responsible Persons")),
+            None
+        )
+        responsible_persons = []
+        if rp_tbl:
+            for row in rp_tbl["rows"][1:]:
+                if len(row) >= 3:
+                    responsible_persons.append({
+                        "Role":    row[0].strip(),
+                        "Name":    row[1].strip(),
+                        "Company": row[2].strip(),
+                    })
 
-                # 2) extract 3.1 table rows
-                for tbl in sec.get("tables", []):
-                    if tbl["header"].startswith("3.0 Management Responsibilities"):
-                        # skip header row, unpack the rest
-                        for role, name, company in tbl["rows"][1:]:
-                            resp_persons.append({
-                                "Role":    role.strip(),
-                                "Name":    name.strip(),
-                                "Company": company.strip()
-                            })
+        # 3) Clean out page-number paras
+        paras = [p for p in sec.get("paragraphs", []) if not p.strip().isdigit()]
 
-                # 3) extract 3.3 paragraphs
-                paras = sec.get("paragraphs", [])
-                # helper to grab block after a heading marker
-                def grab_block(marker):
-                    try:
-                        idx = next(i for i, L in enumerate(paras)
-                                   if L.startswith(marker))
-                    except StopIteration:
-                        return ""
-                    lines = []
-                    for L in paras[idx+1:]:
-                        # stop at next sub-heading (e.g. “3.4” or blank)
-                        if re.match(r"^\d\.\d+\s", L) and not L.startswith(marker):
-                            break
-                        if L.strip():
-                            lines.append(L.strip())
-                    return " ".join(lines)
-
-                accom_text  = grab_block("3.3 Accompanying the Risk Assessor")
-                review_text = grab_block("3.5 Risk Review and Reassessment")
+        # 4) Extract 3.3 Accompanying the Risk Assessor
+        accompanying_assessor = ""
+        for i, p in enumerate(paras):
+            if re.match(r"^3\.3\b", p):
+                if i + 1 < len(paras):
+                    accompanying_assessor = paras[i+1].strip()
                 break
 
+        # 5) Extract 3.5 Risk Review and Reassessment (all lines until next heading/“Printed from”)
+        risk_review_reassessment = ""
+        for i, p in enumerate(paras):
+            if re.match(r"^3\.5\b", p):
+                lines = []
+                j = i + 1
+                while j < len(paras) and \
+                    not re.match(r"^\d+\.\d", paras[j]) and \
+                    not paras[j].startswith("Printed from"):
+                    lines.append(paras[j].strip())
+                    j += 1
+                risk_review_reassessment = " ".join(lines)
+                break
+
+        # 6) Return the exact keys your prompt builder expects
         return {
-            "responsible_persons":      resp_persons,
-            "accompanying_assessor":    accom_text,
-            "risk_review_reassessment": review_text
+            "responsible_persons":        responsible_persons,
+            "accompanying_assessor":      accompanying_assessor,
+            "risk_review_reassessment":   risk_review_reassessment
         }
 
     # Q13: Significant Findings items
@@ -330,7 +339,7 @@ def build_user_message(question_number, content):
             "reply “PASS”. Otherwise list what’s missing or extra."
         )
     
-    # Q9 prompt
+    # Q9 prompt -> Inherent doesn;t print as table, so if each one is the same this can be done, however would be slightly inconsistent.
     if question_number == 9:
         levels  = content["risk_rating_levels"]
         controls= content["management_control_text"]
