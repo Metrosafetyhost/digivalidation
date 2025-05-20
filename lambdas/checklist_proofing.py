@@ -276,20 +276,24 @@ def extract_json_data(json_content, question_number):
     
     if question_number == 16:
         issues = []
+        # pattern to match asset IDs like POU-01, MCW-01, etc.
+        id_pattern = re.compile(r'^[A-Z]{2,}-\d+')
         for sec in payload.get("sections", []):
             if sec.get("name", "").startswith("7.0"):
-                tables = sec.get("tables", [])
-                # Only first three asset tables (7.1-7.3)
-                for table in tables[:3]:
+                for table in sec.get("tables", []):
                     rows = table.get("rows", [])
-                    if not rows:
+                    if not rows or len(rows) < 1:
                         continue
-                    # Map field names to row values
-                    field_map = {row[0].lower(): row[1:] for row in rows if row}
-                    record_cells = field_map.get("", [])
-                    record_id = record_cells[0].strip() if record_cells else "<unknown>"
+                    # record ID in first row, second cell
+                    first_row = rows[0]
+                    if len(first_row) < 2:
+                        continue
+                    record_id = str(first_row[1]).strip()
+                    # only process known asset tables
+                    if not id_pattern.match(record_id):
+                        continue
                     missing = []
-                    # Check blank fields (skip record id row)
+                    # 1) blank fields check
                     for r in rows[1:]:
                         for cell in r[1:]:
                             if not str(cell).strip():
@@ -297,14 +301,21 @@ def extract_json_data(json_content, question_number):
                                 break
                         if "blank fields" in missing:
                             break
-                    # Comments check
-                    comment_cells = field_map.get("comments", [])
-                    comment_text = " ".join(str(c) for c in comment_cells).strip()
+                    # 2) comments check
+                    comment_text = ""
+                    for r in rows:
+                        if r and r[0].lower() == "comments":
+                            comment_text = " ".join(str(c) for c in r[1:]).strip()
+                            break
                     if not comment_text:
                         missing.append("comments")
-                    # Photos check (textract can't see photos)
-                    photo_cells = field_map.get("photo/s", field_map.get("photo", []))
-                    if not any(str(c).strip() for c in photo_cells):
+                    # 3) photos check
+                    photo_text = ""
+                    for r in rows:
+                        if r and r[0].lower().startswith("photo"):
+                            photo_text = " ".join(str(c) for c in r[1:]).strip()
+                            break
+                    if not photo_text:
                         missing.append("photos")
                     if missing:
                         issues.append({"record": record_id, "missing": sorted(set(missing))})
