@@ -279,17 +279,17 @@ def extract_json_data(json_content, question_number):
         for sec in payload.get("sections", []):
             if sec.get("name", "").startswith("7.0"):
                 tables = sec.get("tables", [])
+                # Only first three asset tables (7.1-7.3)
                 for table in tables[:3]:
                     rows = table.get("rows", [])
                     if not rows:
                         continue
-                    # Map field names to values
+                    # Map field names to row values
                     field_map = {row[0].lower(): row[1:] for row in rows if row}
-                    # Record ID
-                    rid_list = field_map.get("", [])
-                    record_id = rid_list[0].strip() if rid_list else "<unknown>"
+                    record_cells = field_map.get("", [])
+                    record_id = record_cells[0].strip() if record_cells else "<unknown>"
                     missing = []
-                    # Check for any blank fields (skip record ID row)
+                    # Check blank fields (skip record id row)
                     for r in rows[1:]:
                         for cell in r[1:]:
                             if not str(cell).strip():
@@ -297,20 +297,17 @@ def extract_json_data(json_content, question_number):
                                 break
                         if "blank fields" in missing:
                             break
-                    # Comments
+                    # Comments check
                     comment_cells = field_map.get("comments", [])
                     comment_text = " ".join(str(c) for c in comment_cells).strip()
                     if not comment_text:
                         missing.append("comments")
-                    # Photos
+                    # Photos check (textract can't see photos)
                     photo_cells = field_map.get("photo/s", field_map.get("photo", []))
                     if not any(str(c).strip() for c in photo_cells):
                         missing.append("photos")
                     if missing:
-                        issues.append({
-                            "record": record_id,
-                            "missing": sorted(set(missing))
-                        })
+                        issues.append({"record": record_id, "missing": sorted(set(missing))})
                 break
         return {"assets_issues": issues}
 
@@ -475,10 +472,20 @@ def build_user_message(question_number, content):
     # ——— Q16 Prompt ———
     if question_number == 16:
         issues = content.get("assets_issues", [])
+        # No issues at all
         if not issues:
             return (
                 "Question 16: Section 7.0 Water Assets – all asset forms are fully completed with no blank fields, comments present, and photographs uploaded. PASS."
             )
+        # If only photos are missing
+        all_photos_missing = all(set(i['missing']) <= {"photos"} for i in issues)
+        if all_photos_missing:
+            record_list = ", ".join(i['record'] for i in issues)
+            return (
+                "Question 16: Section 7.0 Water Assets – everything else is fully completed. "
+                f"Please manually verify that photographs have been uploaded for these entries: {record_list}."
+            )
+        # Otherwise list all missing
         detail_lines = "\n".join(
             f"- {i['record']}: missing {', '.join(i['missing'])}" for i in issues
         )
