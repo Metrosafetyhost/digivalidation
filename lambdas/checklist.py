@@ -21,6 +21,7 @@ IMPORTANT_HEADINGS = [
     "Management Responsibilities",
     "Legionella Control Programme",
     "Audit Detail",
+    "Water Control Scheme",
     "System Asset Register",
     "Water Assets",
     "Appendices",
