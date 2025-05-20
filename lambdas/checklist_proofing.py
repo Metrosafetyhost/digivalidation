@@ -279,22 +279,24 @@ def extract_json_data(json_content, question_number):
         # pattern to match asset IDs like POU-01, MCW-01, etc.
         id_pattern = re.compile(r'^[A-Z]{2,}-\d+')
         for sec in payload.get("sections", []):
-            if sec.get("name", "").startswith("7.0"):
+            # match any section whose name contains "Water Asset"
+            if "Water Asset" in sec.get("name", ""):
                 for table in sec.get("tables", []):
                     rows = table.get("rows", [])
-                    if not rows or len(rows) < 1:
+                    if not rows or len(rows) < 2:
                         continue
                     # record ID in first row, second cell
                     first_row = rows[0]
                     if len(first_row) < 2:
                         continue
                     record_id = str(first_row[1]).strip()
-                    # only process known asset tables
                     if not id_pattern.match(record_id):
                         continue
                     missing = []
-                    # 1) blank fields check
+                    # 1) blank fields check (skip photo row)
                     for r in rows[1:]:
+                        if r[0].lower().startswith("photo"):
+                            continue
                         for cell in r[1:]:
                             if not str(cell).strip():
                                 missing.append("blank fields")
@@ -321,6 +323,7 @@ def extract_json_data(json_content, question_number):
                         issues.append({"record": record_id, "missing": sorted(set(missing))})
                 break
         return {"assets_issues": issues}
+
 
     return None
 
@@ -483,20 +486,17 @@ def build_user_message(question_number, content):
     # ——— Q16 Prompt ———
     if question_number == 16:
         issues = content.get("assets_issues", [])
-        # No issues at all
         if not issues:
             return (
                 "Question 16: Section 7.0 Water Assets – all asset forms are fully completed with no blank fields, comments present, and photographs uploaded. PASS."
             )
-        # If only photos are missing
-        all_photos_missing = all(set(i['missing']) <= {"photos"} for i in issues)
+        all_photos_missing = all(set(i['missing']) == {"photos"} for i in issues)
         if all_photos_missing:
-            record_list = ", ".join(i['record'] for i in issues)
+            ids = ", ".join(i['record'] for i in issues)
             return (
                 "Question 16: Section 7.0 Water Assets – everything else is fully completed. "
-                f"Please manually verify that photographs have been uploaded for these entries: {record_list}."
+                f"Please manually verify that photographs have been uploaded for these records: {ids}."
             )
-        # Otherwise list all missing
         detail_lines = "\n".join(
             f"- {i['record']}: missing {', '.join(i['missing'])}" for i in issues
         )
