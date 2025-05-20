@@ -203,6 +203,30 @@ def extract_json_data(json_content, question_number):
             "risk_review_reassessment":   risk_review_reassessment
     }
 
+     # ——— Q12: Written Scheme of Control ———
+    if question_number == 12:
+        issues = []
+        # Locate the "4.1 Water Control Scheme" section
+        for sec in payload.get("sections", []):
+            if sec.get("name", "").startswith("4.1"):
+                tables = sec.get("tables", [])
+                if tables:
+                    rows = tables[0].get("rows", [])
+                    # Skip header row
+                    for row in rows[1:]:
+                        task = row[0].strip()
+                        comment = row[2].strip() if len(row) > 2 else ""
+                        missing = []
+                        if not comment:
+                            missing.append("comment")
+                        # Look for a date in dd/mm/yyyy format
+                        if not re.search(r"\b\d{2}/\d{2}/\d{4}\b", comment):
+                            missing.append("date")
+                        if missing:
+                            issues.append({"task": task, "missing": missing})
+                break
+        return {"scheme_issues": issues}
+
     # Q13: Significant Findings items
     if question_number == 13:
         for sec in payload.get("sections", []):
@@ -370,6 +394,26 @@ def build_user_message(question_number, content):
             f"{rv or 'None found'}\n\n"
             "If all three parts are present and complete, reply “PASS”. "
             "Otherwise list which part is missing or incomplete."
+        )
+    
+    # ——— Q12 Prompt ———
+    if question_number == 12:
+        issues = content.get("scheme_issues", [])
+        # If no missing fields, it's a PASS
+        if not issues:
+            return (
+                "Question 12: Section 4.0 Legionella Control Programme of Preventative Works and the Written Scheme of Control – "
+                "All tasks have both a date and a comment. PASS."
+            )
+        # Build a list of missing items
+        detail_lines = "\n".join(
+            f"- {i['task']}: missing {', '.join(i['missing'])}"
+            for i in issues
+        )
+        return (
+            "Question 12: Section 4.0 Legionella Control Programme of Preventative Works and the Written Scheme of Control – ensure each task has a date (dd/mm/yyyy) and a meaningful comment.\n\n"
+            f"{detail_lines}\n\n"
+            "If all entries have dates and comments, reply “PASS”. Otherwise list which tasks are missing which fields."
         )
 
     # Q13: Significant Findings
