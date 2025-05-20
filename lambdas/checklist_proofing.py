@@ -227,36 +227,6 @@ def extract_json_data(json_content, question_number):
                 break
         return {"scheme_issues": issues}
 
-    # Q13: Significant Findings items
-    if question_number == 13:
-        findings = []
-        for sec in payload.get("sections", []):
-            if sec.get("header", "").startswith("Significant Findings"):
-                rows = sec.get("rows", [])
-                # Process in pairs: ["Priority...","Observation..."], ["Target Date...","Action Required..."]
-                i = 0
-                while i < len(rows):
-                    row = rows[i]
-                    # Identify a priority/observation row
-                    if row[0].lower().startswith("priority") and len(row) > 1:
-                        priority = row[0].split(" ", 1)[1]
-                        observation = row[1].replace("Observation ", "", 1).strip()
-                        # Next row should contain action
-                        action = None
-                        if i+1 < len(rows):
-                            next_row = rows[i+1]
-                            if next_row[0].lower().startswith("target date") and len(next_row) > 1:
-                                action = next_row[1].replace("Action Required ", "", 1).strip()
-                        findings.append({
-                            "priority": priority,
-                            "observation": observation,
-                            "action": action or ""
-                        })
-                        i += 2
-                    else:
-                        i += 1
-        return {"findings": findings}
-    
     #Q15:
     if question_number == 15:
         # 1) Read counts from 6.0 System Asset Register
@@ -303,6 +273,46 @@ def extract_json_data(json_content, question_number):
             "asset_form_ids":   unique_ids,
             "num_asset_forms":  num_asset_ids
         }
+    
+    if question_number == 16:
+        issues = []
+        for sec in payload.get("sections", []):
+            if sec.get("name", "").startswith("7.0"):
+                tables = sec.get("tables", [])
+                for table in tables[:3]:
+                    rows = table.get("rows", [])
+                    if not rows:
+                        continue
+                    # Map field names to values
+                    field_map = {row[0].lower(): row[1:] for row in rows if row}
+                    # Record ID
+                    rid_list = field_map.get("", [])
+                    record_id = rid_list[0].strip() if rid_list else "<unknown>"
+                    missing = []
+                    # Check for any blank fields (skip record ID row)
+                    for r in rows[1:]:
+                        for cell in r[1:]:
+                            if not str(cell).strip():
+                                missing.append("blank fields")
+                                break
+                        if "blank fields" in missing:
+                            break
+                    # Comments
+                    comment_cells = field_map.get("comments", [])
+                    comment_text = " ".join(str(c) for c in comment_cells).strip()
+                    if not comment_text:
+                        missing.append("comments")
+                    # Photos
+                    photo_cells = field_map.get("photo/s", field_map.get("photo", []))
+                    if not any(str(c).strip() for c in photo_cells):
+                        missing.append("photos")
+                    if missing:
+                        issues.append({
+                            "record": record_id,
+                            "missing": sorted(set(missing))
+                        })
+                break
+        return {"assets_issues": issues}
 
     return None
 
@@ -438,26 +448,6 @@ def build_user_message(question_number, content):
             f"{detail_lines}\n\n" 
             "If all entries have dates and comments, reply “PASS”. Otherwise list which tasks are missing which fields."
         )
-
-    # Q13: Significant Findings
-    if question_number == 13:
-        findings = content.get("findings", [])
-        if not findings:
-            return (
-                "Question 13: Significant Findings and Action Plan – no findings detected. PASS."
-            )
-        # Build detail lines
-        lines = []
-        for f in findings:
-            lines.append(
-                f"- Priority {f['priority']}: Observation: {f['observation']}; Action Required: {f['action']}"
-            )
-        detail = "\n".join(lines)
-        return (
-            "Question 13: Significant Findings and Action Plan – read through each finding below, checking for spelling mistakes, grammatical errors, technical errors, or poor location descriptions; ensure the Priority is appropriate and that supplementary photographs are attached where relevant.\n\n"
-            f"{detail}\n\n"
-            "If all findings are correct and appropriately documented, reply “PASS”. Otherwise list which entries need correction and why."
-        )
     
     #Q15
     if question_number == 15:
@@ -481,6 +471,22 @@ def build_user_message(question_number, content):
                 f"(difference of {diff:+d})."
             )
         return msg
+    
+    # ——— Q16 Prompt ———
+    if question_number == 16:
+        issues = content.get("assets_issues", [])
+        if not issues:
+            return (
+                "Question 16: Section 7.0 Water Assets – all asset forms are fully completed with no blank fields, comments present, and photographs uploaded. PASS."
+            )
+        detail_lines = "\n".join(
+            f"- {i['record']}: missing {', '.join(i['missing'])}" for i in issues
+        )
+        return (
+            "Question 16: Section 7.0 Water Assets – ensure that all asset forms are fully completed with no blank boxes, that photographs have been uploaded and suitable comments made.\n\n"
+            f"{detail_lines}\n\n"
+            "If all asset entries are correct, reply “PASS”. Otherwise list which entries are missing which fields."
+        )
     # fallback
     logger.error(f"No handler for question_number={question_number}; returning empty message")
     return ""
