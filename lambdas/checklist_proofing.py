@@ -275,55 +275,9 @@ def extract_json_data(json_content, question_number):
         }
     
     if question_number == 16:
-        issues = []
-        # pattern to match asset IDs like POU-01, MCW-01, etc.
-        id_pattern = re.compile(r'^[A-Z]{2,}-\d+')
-        for sec in payload.get("sections", []):
-            # match any section whose name contains "Water Asset"
-            if "Water Asset" in sec.get("name", ""):
-                for table in sec.get("tables", []):
-                    rows = table.get("rows", [])
-                    if not rows or len(rows) < 2:
-                        continue
-                    # record ID in first row, second cell
-                    first_row = rows[0]
-                    if len(first_row) < 2:
-                        continue
-                    record_id = str(first_row[1]).strip()
-                    if not id_pattern.match(record_id):
-                        continue
-                    missing = []
-                    # 1) blank fields check (skip photo row)
-                    for r in rows[1:]:
-                        if r[0].lower().startswith("photo"):
-                            continue
-                        for cell in r[1:]:
-                            if not str(cell).strip():
-                                missing.append("blank fields")
-                                break
-                        if "blank fields" in missing:
-                            break
-                    # 2) comments check
-                    comment_text = ""
-                    for r in rows:
-                        if r and r[0].lower() == "comments":
-                            comment_text = " ".join(str(c) for c in r[1:]).strip()
-                            break
-                    if not comment_text:
-                        missing.append("comments")
-                    # 3) photos check
-                    photo_text = ""
-                    for r in rows:
-                        if r and r[0].lower().startswith("photo"):
-                            photo_text = " ".join(str(c) for c in r[1:]).strip()
-                            break
-                    if not photo_text:
-                        missing.append("photos")
-                    if missing:
-                        issues.append({"record": record_id, "missing": sorted(set(missing))})
-                break
+        # Local Water Assets validation
+        issues = validate_water_assets(payload.get("sections", []))
         return {"assets_issues": issues}
-
 
     return None
 
@@ -486,24 +440,25 @@ def build_user_message(question_number, content):
     # ——— Q16 Prompt ———
     if question_number == 16:
         issues = content.get("assets_issues", [])
-        if not issues:
+
+        # Separate cases: only photos vs other issues
+        photo_only = all(all(item == "photos manual check" for item in entry["missing"]) for entry in issues)
+        if photo_only:
+            ids = ", ".join(entry['record'] for entry in issues)
             return (
-                "Question 16: Section 7.0 Water Assets – all asset forms are fully completed with no blank fields, comments present, and photographs uploaded. PASS."
+                "Question 16: Section 7.0 Water Assets – data fields and comments are present. "
+                f"Please manually verify photographs for records: {ids}."
             )
-        all_photos_missing = all(set(i['missing']) == {"photos"} for i in issues)
-        if all_photos_missing:
-            ids = ", ".join(i['record'] for i in issues)
-            return (
-                "Question 16: Section 7.0 Water Assets – everything else is fully completed. "
-                f"Please manually verify that photographs have been uploaded for these records: {ids}."
-            )
-        detail_lines = "\n".join(
-            f"- {i['record']}: missing {', '.join(i['missing'])}" for i in issues
-        )
+        # Otherwise detail all missing
+        lines = []
+        for entry in issues:
+            items = ", ".join(entry['missing'])
+            lines.append(f"- {entry['record']}: {items}")
+        detail = "\n".join(lines)
         return (
-            "Question 16: Section 7.0 Water Assets – ensure that all asset forms are fully completed with no blank boxes, that photographs have been uploaded and suitable comments made.\n\n"
-            f"{detail_lines}\n\n"
-            "If all asset entries are correct, reply “PASS”. Otherwise list which entries are missing which fields."
+            "Question 16: Section Water Assets – please check the following asset entries for missing data/comments/photos:\n\n"
+            f"{detail}\n\n"
+            "Once corrected or verified, reply “PASS”."
         )
     # fallback
     logger.error(f"No handler for question_number={question_number}; returning empty message")
@@ -540,6 +495,60 @@ def send_to_bedrock(user_text):
     logger.info("Received response from Bedrock")
     return response_text
 
+def validate_water_assets(sections):
+    """
+    Locally validate Water Assets tables - Question 16: check each asset record for blank data fields (excluding photo rows),
+    ensure comments row is non-empty, and note that photos are never extractable by Textract so flag them.
+
+    Returns a list of dicts: {record: <ID>, missing: [<issues>]}
+    """
+    issues = []
+    id_pattern = re.compile(r'^[A-Z]{2,}-\d+')
+
+    for sec in sections:
+        name = sec.get("name", "").lower()
+        if "water asset" not in name:
+            continue
+
+        for table in sec.get("tables", []):
+            rows = table.get("rows", [])
+            if len(rows) < 2:
+                continue
+
+            # record ID from first row, second cell
+            first = rows[0]
+            record_id = str(first[1]).strip() if len(first) > 1 else "<unknown>"
+            if not id_pattern.match(record_id):
+                continue
+
+            missing = []
+            # 1) Check all data fields except photo row
+            for r in rows[1:]:
+                field_name = str(r[0]).strip()
+                if field_name.lower().startswith("photo"):
+                    continue
+                # if any cell in row is blank
+                for cell in r[1:]:
+                    if not str(cell).strip():
+                        missing.append(f"blank value in '{field_name}'")
+                        break
+
+            # 2) Comments row must have text
+            comment_row = next((r for r in rows if str(r[0]).strip().lower() == "comments"), None)
+            if comment_row:
+                comment_text = " ".join(str(c) for c in comment_row[1:]).strip()
+                if not comment_text:
+                    missing.append("comments missing")
+            else:
+                missing.append("comments row missing")
+
+            # 3) Photos always flagged for manual check
+            missing.append("photos manual check")
+
+            if missing:
+                issues.append({"record": record_id, "missing": missing})
+
+    return issues
 
 def process(event, context):
     """
@@ -562,10 +571,18 @@ def process(event, context):
 
     # 3) build the Bedrock prompt & invoke
     user_msg = build_user_message(q_num, data)
-    result   = send_to_bedrock(user_msg)
+
+    # 4) QUESTION 16 is purely local → no AI call
+    if q_num == 16:
+        return {
+            "statusCode": 200,
+            "body":       json.dumps({"response": user_msg})
+        }
+
+    # 5) All other questions go through Bedrock/Claude
+    result = send_to_bedrock(user_msg)
     logger.info(f"Bedrock response payload: {result}")
 
-    # 4) return the AI’s proofed text
     return {
         "statusCode": 200,
         "body":       json.dumps({"bedrock_response": result})
