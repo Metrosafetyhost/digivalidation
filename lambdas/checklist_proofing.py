@@ -229,10 +229,33 @@ def extract_json_data(json_content, question_number):
 
     # Q13: Significant Findings items
     if question_number == 13:
+        findings = []
         for sec in payload.get("sections", []):
-            if sec.get("name", "").strip().lower() == "significant findings and action plan":
-                return sec.get("items", [])
-        return []
+            if sec.get("header", "").startswith("Significant Findings"):
+                rows = sec.get("rows", [])
+                # Process in pairs: ["Priority...","Observation..."], ["Target Date...","Action Required..."]
+                i = 0
+                while i < len(rows):
+                    row = rows[i]
+                    # Identify a priority/observation row
+                    if row[0].lower().startswith("priority") and len(row) > 1:
+                        priority = row[0].split(" ", 1)[1]
+                        observation = row[1].replace("Observation ", "", 1).strip()
+                        # Next row should contain action
+                        action = None
+                        if i+1 < len(rows):
+                            next_row = rows[i+1]
+                            if next_row[0].lower().startswith("target date") and len(next_row) > 1:
+                                action = next_row[1].replace("Action Required ", "", 1).strip()
+                        findings.append({
+                            "priority": priority,
+                            "observation": observation,
+                            "action": action or ""
+                        })
+                        i += 2
+                    else:
+                        i += 1
+        return {"findings": findings}
     
     #Q15:
     if question_number == 15:
@@ -382,10 +405,10 @@ def build_user_message(question_number, content):
         ) or "None found"
 
         return (
-            "Question 10: Section 3.0 Management Responsibilities – ensure that:\n"
-            "  • Section 3.1 Responsible Persons is fully completed\n"
-            "  • Section 3.3 Accompanying the Risk Assessor is populated\n"
-            "  • Section 3.5 Risk Review and Reassessment is populated\n\n"
+            "Question 10: ensure that:\n"
+            "  Section 3.1 Responsible Persons is fully completed\n"
+            "  Section 3.3 Accompanying the Risk Assessor is populated\n"
+            "  Section 3.5 Risk Review and Reassessment is populated\n\n"
             "--- 3.1 Responsible Persons ---\n"
             f"{rp_lines}\n\n"
             "--- 3.3 Accompanying the Risk Assessor ---\n"
@@ -411,23 +434,30 @@ def build_user_message(question_number, content):
             for i in issues
         )
         return (
-            "Question 12: Section 4.0 Legionella Control Programme of Preventative Works and the Written Scheme of Control – ensure each task has a date (dd/mm/yyyy) and a meaningful comment.\n\n"
-            f"{detail_lines}\n\n"
+            "Question 12: Section 4.0 Legionella Control Programme of Preventative Works and the Written Scheme of Control –ensure each task has a date (dd/mm/yyyy) and a meaningful comment.\n\n"
+            f"{detail_lines}\n\n" 
             "If all entries have dates and comments, reply “PASS”. Otherwise list which tasks are missing which fields."
         )
 
     # Q13: Significant Findings
     if question_number == 13:
-        msg = (
-            "Question 13: “Significant Findings and Action Plan” – read through the Observations & Actions, "
-            "checking for spelling mistakes, grammatical errors, technical inaccuracies or poor location descriptions. "
-            "Confirm that the Priority labels make sense, and note any missing supplementary photographs.\n\n"
-            "--- Significant Findings and Action Plan ---\n"
-            f"{content}\n\n"
-            "If everything looks good, reply “PASS”. Otherwise, list each discrepancy."
+        findings = content.get("findings", [])
+        if not findings:
+            return (
+                "Question 13: Significant Findings and Action Plan – no findings detected. PASS."
+            )
+        # Build detail lines
+        lines = []
+        for f in findings:
+            lines.append(
+                f"- Priority {f['priority']}: Observation: {f['observation']}; Action Required: {f['action']}"
+            )
+        detail = "\n".join(lines)
+        return (
+            "Question 13: Significant Findings and Action Plan – read through each finding below, checking for spelling mistakes, grammatical errors, technical errors, or poor location descriptions; ensure the Priority is appropriate and that supplementary photographs are attached where relevant.\n\n"
+            f"{detail}\n\n"
+            "If all findings are correct and appropriately documented, reply “PASS”. Otherwise list which entries need correction and why."
         )
-        logger.info("Built user message for question 13")
-        return msg
     
     #Q15
     if question_number == 15:
