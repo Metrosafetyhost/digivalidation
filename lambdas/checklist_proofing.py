@@ -574,10 +574,7 @@ def process(event, context):
 
     # 4) QUESTION 16 is purely local → no AI call
     if q_num == 16:
-        return {
-            "statusCode": 200,
-            "body":       json.dumps({"response": user_msg})
-        }
+        logger.info(f"Q16 local response: {user_msg}")
 
     # 5) All other questions go through Bedrock/Claude
     result = send_to_bedrock(user_msg)
