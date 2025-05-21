@@ -115,15 +115,13 @@ def group_sections(blocks, tables, fields):
 
         # If this line is one of our major headings, start a new section
         if is_major_heading(txt):
-        # skip if it’s exactly the same as the last section
-            if current is None or current["name"] != txt:
-                current = {
-                    "name": txt,
-                    "paragraphs": [],
-                        "tables": [t for t in tables if t["header"] == txt],
-                "fields": [f for f in fields if f["key"].startswith(txt + " ")]
-                }
-                sections.append(current)
+            current = {
+                "name":       txt,
+                "paragraphs": [],
+                "tables":     [t for t in tables if t["header"] == txt],
+                "fields":     [f for f in fields if f["key"].startswith(txt + " ")]
+            }
+            sections.append(current)
 
         # Otherwise, dump the line into the current section’s paragraphs
         elif current:
