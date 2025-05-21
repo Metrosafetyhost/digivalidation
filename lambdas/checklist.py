@@ -109,41 +109,40 @@ def extract_tables_grouped(blocks):
 
 def group_sections(blocks, tables, fields):
     """
-    Split the Textract output purely by heading text.
-    We assume is_major_heading(text) returns True for any of your IMPORTANT_HEADINGS.
+    Split the Textract output by heading text, but only when it appears
+    in the main content area of the page (not in headers/footers).
     """
-
-    # 1) Grab all LINE blocks and sort them in reading order
-    lines = [
-        b for b in blocks
-        if b.get("BlockType") == "LINE" and b.get("Text", "").strip()
-    ]
-    lines.sort(key=lambda b: (b.get("Page", 1),
-                              b["Geometry"]["BoundingBox"]["Top"]))
+    # 1) grab & sort all LINE blocks
+    lines = sorted(
+        [b for b in blocks if b.get("BlockType") == "LINE" and b.get("Text", "").strip()],
+        key=lambda b: (b.get("Page", 1), b["Geometry"]["BoundingBox"]["Top"])
+    )
 
     sections = []
+    seen = set()
     current = None
 
-    # 2) Walk through every line in order
     for b in lines:
         txt = b["Text"].strip()
+        top = b["Geometry"]["BoundingBox"]["Top"]
 
-        # If this line is one of our major headings, start a new section
-        if is_major_heading(txt):
-            current = {
-                "name":       txt,
-                "paragraphs": [],
-                "tables":     [t for t in tables if t["header"] == txt],
-                "fields":     [f for f in fields if f["key"].startswith(txt + " ")]
-            }
-            sections.append(current)
-
-        # Otherwise, dump the line into the current section’s paragraphs
+        # only treat it as a heading if it matches AND it's in the content area
+        if is_major_heading(txt) and 0.10 < top < 0.80:
+            if txt not in seen:
+                seen.add(txt)
+                current = {
+                    "name":       txt,
+                    "paragraphs": [],
+                    "tables":     [t for t in tables if t["header"] == txt],
+                    "fields":     [f for f in fields if f["key"].startswith(txt + " ")]
+                }
+                sections.append(current)
+            else:
+                current = None
         elif current:
             current["paragraphs"].append(txt)
 
     return sections
-
 
 def extract_key_value_pairs(blocks):
     id_map = {b['Id']: b for b in blocks}
