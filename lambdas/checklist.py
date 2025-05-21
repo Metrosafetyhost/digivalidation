@@ -112,7 +112,6 @@ def group_sections(blocks, tables, fields):
     Split the Textract output by heading text, but only when it appears
     in the main content area of the page (not in headers/footers).
     """
-    # 1) grab & sort all LINE blocks
     lines = sorted(
         [b for b in blocks if b.get("BlockType") == "LINE" and b.get("Text", "").strip()],
         key=lambda b: (b.get("Page", 1), b["Geometry"]["BoundingBox"]["Top"])
@@ -126,8 +125,7 @@ def group_sections(blocks, tables, fields):
         txt = b["Text"].strip()
         top = b["Geometry"]["BoundingBox"]["Top"]
 
-        # only treat it as a heading if it matches AND it's in the content area
-        if is_major_heading(txt) and 0.10 < top < 0.80:
+        if is_major_heading(txt) and 0.06 < top < 0.85:
             if txt not in seen:
                 seen.add(txt)
                 current = {
@@ -143,6 +141,7 @@ def group_sections(blocks, tables, fields):
             current["paragraphs"].append(txt)
 
     return sections
+
 
 def extract_key_value_pairs(blocks):
     id_map = {b['Id']: b for b in blocks}
