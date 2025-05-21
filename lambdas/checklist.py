@@ -28,7 +28,6 @@ IMPORTANT_HEADINGS = [
     "Appendices",
     "Risk Assessment Checklist",
     "Legionella Control Programme of Preventative Works",
-    "System Asset Register"
 ]
 
 def normalize(text):
@@ -41,12 +40,11 @@ def is_major_heading(text):
             return True
     return False
 
-# Extract tables grouped by detected headings
 def extract_tables_grouped(blocks):
     """
     Walk the entire document in reading order, remember the last major heading seen,
     and assign that heading to every TABLE block until the next heading appears.
-    """
+    Also remove any duplicate rows within each table."""
     tables = []
     # 1) sort all blocks by page, then vertical position
     sorted_blocks = sorted(
@@ -62,13 +60,17 @@ def extract_tables_grouped(blocks):
 
         # whenever we hit a TABLE, grab its rows & attach the most recent header
         if b["BlockType"] == "TABLE" and current_header:
-            # collect the rows just as you were doing before
             rows = []
             for rel in b.get("Relationships", []):
                 if rel["Type"] == "CHILD":
-                    cells = [c for c in blocks
-                             if c["Id"] in rel["Ids"]
-                             and c["BlockType"] == "CELL"]
+                    # find each CELL under this TABLE
+                    cells = [
+                        c for c in blocks
+                        if c["Id"] in rel["Ids"]
+                        and c["BlockType"] == "CELL"
+                    ]
+
+                    # group words/lines into rows by RowIndex
                     rowm = {}
                     for c in cells:
                         ri = c["RowIndex"]
@@ -80,14 +82,27 @@ def extract_tables_grouped(blocks):
                                     if w and w["BlockType"] in ("WORD", "LINE"):
                                         txt += w.get("Text", "") + " "
                         rowm.setdefault(ri, []).append(txt.strip())
+
+                    # append rows in order
                     for ri in sorted(rowm):
                         rows.append(rowm[ri])
 
+            # remove duplicate rows within this table 
+            unique_rows = []
+            seen = set()
+            for row in rows:
+                key = tuple(cell for cell in row)
+                if key not in seen:
+                    seen.add(key)
+                    unique_rows.append(row)
+            rows = unique_rows
+            # ─────────────────────────────────────────────────────
+
             tables.append({
-                "page": b.get("Page", 1),
+                "page":   b.get("Page", 1),
                 "header": current_header,
-                "rows": rows,
-                "bbox": b["Geometry"]["BoundingBox"]
+                "rows":   rows,
+                "bbox":   b["Geometry"]["BoundingBox"]
             })
 
     return tables
