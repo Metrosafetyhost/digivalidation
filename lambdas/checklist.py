@@ -23,6 +23,7 @@ IMPORTANT_HEADINGS = [
     "Audit Detail",
     "Water Control Scheme",
     "System Asset Register",
+    "Outlet Temperature Profile",
     "Water Assets",
     "Appendices",
     "Risk Assessment Checklist",
