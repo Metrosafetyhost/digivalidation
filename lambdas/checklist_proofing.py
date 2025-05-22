@@ -155,29 +155,14 @@ def extract_json_data(json_content, question_number):
 
     # Q10
     if question_number == 10:
-        sec_mgmt = next(
-            (s for s in payload["sections"]
-             if "Management Responsibilities" in s.get("name", "")),
-            None
-        )
-        if sec_mgmt is None:
-            raise ValueError("Could not find the 'Management Responsibilities' section for Q10.")
-
-        # 2) Extract the Responsible Persons table
-        rp_table = next(
-            (t for t in sec_mgmt.get("tables", [])
-             if t.get("rows")
-             and t["rows"][0][0].strip().lower().startswith("responsible persons")),
-            None
-        )
-        if rp_table is None:
-            raise ValueError("Could not find the 'Responsible Persons' table in Q10.")
-
-        # 3) Build lines for 3.1
-        rp_lines = [
-            f"{row[0].strip()}: {row[1].strip()} – {row[2].strip()}"
-            for row in rp_table["rows"][1:]
-            if len(row) >= 3
+         # 1) 3.1 Responsible Persons from the 3.0 section
+        sec30 = next(s for s in payload["sections"]
+                    if s["name"].startswith("3.0 Management Responsibilities"))
+        rp_tbl = next(t for t in sec30["tables"]
+                    if t["rows"][0][0].startswith("Responsible Persons"))
+        responsible_persons = [
+            {"Role": r[0].strip(), "Name": r[1].strip(), "Company": r[2].strip()}
+            for r in rp_tbl["rows"][1:] if len(r) >= 3
         ]
 
         # 4) Grab paragraphs for 3.3 and 3.5
@@ -196,7 +181,7 @@ def extract_json_data(json_content, question_number):
         rv_lines = sec_3_5.get("paragraphs", []) if sec_3_5 else []
 
         return {
-            "responsible_persons": rp_lines,
+            "responsible_persons": responsible_persons,
             "accompanying_the_assessor": ac_lines,
             "risk_review_and_reassessment": rv_lines
         }
