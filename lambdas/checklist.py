@@ -139,6 +139,9 @@ def group_sections(blocks, tables, fields):
                 current = None
         elif current:
             current["paragraphs"].append(txt)
+        elif current and 0.06 < top < 0.85:
+            # only body text (skip headers/footers)
+            current["paragraphs"].append(txt)
 
     return sections
 

@@ -361,7 +361,7 @@ def build_user_message(question_number, content):
             f"{', '.join(levels) or 'None found'}\n\n"
             "--- Management Control Text ---\n"
             f"{'; '.join(controls) or 'None found'}\n\n"
-            "If all two components are present and populated, reply “PASS, check Legionella Inherant Risk manually”. Otherwise list which part is missing. "
+            "If all two components are present and populated, reply “PASS, both Risk Rating Levels, and Management Control Text are completecheck Legionella Inherant Risk manually, and ensure no content is missing”. Otherwise list which part is missing. "
         )
     
     #Q10
@@ -468,10 +468,6 @@ def send_to_bedrock(user_text):
         "anthropic_version": "bedrock-2023-05-31",
         "max_tokens":        1000,
         "temperature":       0.0,
-        "system": (
-            "You are a meticulous proofreader. "
-            "Correct spelling, grammar and clarity only — no extra commentary or re-structuring."
-        ),
         "messages": [
             {
                 "role":    "user",
@@ -546,58 +542,58 @@ def validate_water_assets(sections):
 
     return issues
 
-def validate_outlet_temperature_table(sections):
-    """
-    Handle Q17: check Outlet Temperature Profile for out-of-range temps
-    and match against Significant Findings and Action Plan.
-    Returns a string local_response.
-    """
-    # find the Outlet Temperature Profile section (7.3)
-    ot_section = next(
-        (s for s in sections
-         if s.get("name", "").startswith("7.3 Outlet Temperature Profile")),
-        None
-    )
-    if not ot_section or not ot_section.get("tables"):
-        return "⚠️ Could not find the Outlet Temperature Profile table."
+# def validate_outlet_temperature_table(sections):
+#     """
+#     Handle Q17: check Outlet Temperature Profile for out-of-range temps
+#     and match against Significant Findings and Action Plan.
+#     Returns a string local_response.
+#     """
+#     # find the Outlet Temperature Profile section (7.3)
+#     ot_section = next(
+#         (s for s in sections
+#          if s.get("name", "").startswith("7.3 Outlet Temperature Profile")),
+#         None
+#     )
+#     if not ot_section or not ot_section.get("tables"):
+#         return "Could not find the Outlet Temperature Profile table."
 
-    rows = ot_section["tables"][0]["rows"]
-    anomalies = []
-    # column 13 holds the hot-water temperature
-    for row in rows:
-        try:
-            hot = float(row[13])
-        except Exception:
-            continue
-        if hot < 50 or hot > 60:
-            anomalies.append({"location": row[2], "temp": hot})
+#     rows = ot_section["tables"][0]["rows"]
+#     anomalies = []
+#     # column 13 holds the hot-water temperature
+#     for row in rows:
+#         try:
+#             hot = float(row[13])
+#         except Exception:
+#             continue
+#         if hot < 50 or hot > 60:
+#             anomalies.append({"location": row[2], "temp": hot})
 
-    if not anomalies:
-        return "✅ All hot-water temperatures are between 50 °C and 60 °C; no action needed."
+#     if not anomalies:
+#         return "All hot-water temperatures are between 50 °C and 60 °C; no action needed."
 
-    # look for matching actions in Significant Findings and Action Plan
-    sig_section = next(
-        (s for s in sections
-         if s.get("name", "").startswith("Significant Findings and Action Plan")),
-        {}
-    )
-    actions = []
-    for tbl in sig_section.get("tables", []):
-        for row in tbl.get("rows", []):
-            text = " ".join(row).lower()
-            if "temperature" in text or "scald" in text:
-                actions.append(text)
+#     # look for matching actions in Significant Findings and Action Plan
+#     sig_section = next(
+#         (s for s in sections
+#          if s.get("name", "").startswith("Significant Findings and Action Plan")),
+#         {}
+#     )
+#     actions = []
+#     for tbl in sig_section.get("tables", []):
+#         for row in tbl.get("rows", []):
+#             text = " ".join(row).lower()
+#             if "temperature" in text or "scald" in text:
+#                 actions.append(text)
 
-    if actions:
-        return (
-            f"❗ Out-of-range temperatures at {anomalies}; "
-            f"matching actions found: {actions}"
-        )
-    else:
-        return (
-            f"❗ Out-of-range temperatures at {anomalies}, "
-            "but no related action in Significant Findings and Action Plan!"
-        )
+#     if actions:
+#         return (
+#             f"Out-of-range temperatures at {anomalies}; "
+#             f"matching actions found: {actions}"
+#         )
+#     else:
+#         return (
+#             f"Out-of-range temperatures at {anomalies}, "
+#             "but no related action in Significant Findings and Action Plan!"
+#         )
 
 
 def process(event, context):
