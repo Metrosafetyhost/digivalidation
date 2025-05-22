@@ -149,6 +149,17 @@ def group_sections(blocks, tables, fields):
                 deduped.append(p)
         sec["paragraphs"] = deduped
 
+    # ──────────────────────────────────────────────────────────────────────
+    # remove duplicate sections by name
+    unique_sections = []
+    seen_names = set()
+    for sec in sections:
+        if sec["name"] not in seen_names:
+            seen_names.add(sec["name"])
+            unique_sections.append(sec)
+    sections = unique_sections
+    # ──────────────────────────────────────────────────────────────────────
+
     return sections
 
 
