@@ -108,57 +108,37 @@ def extract_tables_grouped(blocks):
     return tables
 
 def group_sections(blocks, tables, fields):
-    # Sort all LINE blocks, no geometry filter here
+    """
+    Split the Textract output by heading text, but only when it appears
+    in the main content area of the page (not in headers/footers).
+    """
     lines = sorted(
-        [b for b in blocks if b['BlockType']=='LINE' and b.get('Text','').strip()],
-        key=lambda b: (b.get('Page',1), b['Geometry']['BoundingBox']['Top'])
+        [b for b in blocks if b.get("BlockType") == "LINE" and b.get("Text", "").strip()],
+        key=lambda b: (b.get("Page", 1), b["Geometry"]["BoundingBox"]["Top"])
     )
 
     sections = []
+    seen = set()
     current = None
 
     for b in lines:
-        txt = b['Text'].strip()
-        top = b['Geometry']['BoundingBox']['Top']
+        txt = b["Text"].strip()
+        top = b["Geometry"]["BoundingBox"]["Top"]
 
-        # 1) Identify new section headings purely by regex
-        if re.match(r'^\d+\.\d+\s', txt):
-            current = {
-                "name":       txt,
-                "paragraphs": [],
-                # only apply geom-filter for table assignment
-                "tables":     [t for t in tables
-                               if t["header"]==txt
-                               and 0.06 < t["bbox"]["Top"] < 0.85],
-                "fields":     [f for f in fields if f["key"].startswith(txt)]
-            }
-            sections.append(current)
-            continue
-
-        # 2) Otherwise, if we’re inside a section, just grab it
-        if current:
+        if is_major_heading(txt) and 0.06 < top < 0.85:
+            if txt not in seen:
+                seen.add(txt)
+                current = {
+                    "name":       txt,
+                    "paragraphs": [],
+                    "tables":     [t for t in tables if t["header"] == txt],
+                    "fields":     [f for f in fields if f["key"].startswith(txt + " ")]
+                }
+                sections.append(current)
+            else:
+                current = None
+        elif current:
             current["paragraphs"].append(txt)
-
-    # 3) Finally, de-dupe any repeated lines in each section
-    for sec in sections:
-        seen = set()
-        deduped = []
-        for p in sec["paragraphs"]:
-            if p not in seen:
-                seen.add(p)
-                deduped.append(p)
-        sec["paragraphs"] = deduped
-
-    # ──────────────────────────────────────────────────────────────────────
-    # remove duplicate sections by name
-    unique_sections = []
-    seen_names = set()
-    for sec in sections:
-        if sec["name"] not in seen_names:
-            seen_names.add(sec["name"])
-            unique_sections.append(sec)
-    sections = unique_sections
-    # ──────────────────────────────────────────────────────────────────────
 
     return sections
 
