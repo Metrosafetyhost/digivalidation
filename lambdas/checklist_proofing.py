@@ -155,10 +155,11 @@ def extract_json_data(json_content, question_number):
 
     # Q10
     if question_number == 10:
+    # 1) Section 3.1 Responsible Persons (where the table actually lives)
         sec31 = next(
-        (s for s in payload["sections"]
-         if s.get("name", "").startswith("3.1 Responsible Persons")),
-        None
+            (s for s in payload["sections"]
+             if s.get("name", "").startswith("3.1 Responsible Persons")),
+            None
         )
         if not sec31 or not sec31.get("tables"):
             raise ValueError("Could not find section '3.1 Responsible Persons' or its table for Q10.")
@@ -167,31 +168,31 @@ def extract_json_data(json_content, question_number):
         # 2) Extract the table rows (skip header)
         responsible_persons = [
             {"Role": row[0].strip(), "Name": row[1].strip(), "Company": row[2].strip()}
-            for row in rp_tbl["rows"][1:]
+             for row in rp_tbl["rows"][1:]
             if len(row) >= 3
         ]
 
         # 3) Grab paragraphs for 3.3 Accompanying the Risk Assessor
         sec_3_3 = next(
             (s for s in payload["sections"]
-            if s.get("name", "").startswith("3.3")),
+             if s.get("name", "").startswith("3.3")),
             None
         )
-        accompanying = sec_3_3.get("paragraphs", []) if sec_3_3 else []
+        accompanying_assessor = sec_3_3.get("paragraphs", []) if sec_3_3 else []
 
         # 4) Grab paragraphs for 3.5 Risk Review and Reassessment
         sec_3_5 = next(
             (s for s in payload["sections"]
-            if s.get("name", "").startswith("3.5")),
-        None
+             if s.get("name", "").startswith("3.5")),
+            None
         )
-        risk_review = sec_3_5.get("paragraphs", []) if sec_3_5 else []
+        risk_review_and_reassessment = sec_3_5.get("paragraphs", []) if sec_3_5 else []
 
         return {
             "responsible_persons": responsible_persons,
-            "accompanying_the_assessor": accompanying,
-            "risk_review_and_reassessment": risk_review
-    }
+            "accompanying_assessor": accompanying_assessor,
+            "risk_review_and_reassessment": risk_review_and_reassessment
+        }
 
      # ——— Q12: Written Scheme of Control ———
     if question_number == 12:
