@@ -186,12 +186,12 @@ def extract_json_data(json_content, question_number):
              if s.get("name", "").startswith("3.5")),
             None
         )
-        risk_review_and_reassessment = sec_3_5.get("paragraphs", []) if sec_3_5 else []
+        risk_review_reassessment = sec_3_5.get("paragraphs", []) if sec_3_5 else []
 
         return {
             "responsible_persons": responsible_persons,
             "accompanying_assessor": accompanying_assessor,
-            "risk_review_and_reassessment": risk_review_and_reassessment
+            "risk_review_reassessment": risk_review_reassessment
         }
 
      # ——— Q12: Written Scheme of Control ———
