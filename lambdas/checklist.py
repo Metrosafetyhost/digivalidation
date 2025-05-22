@@ -143,6 +143,29 @@ def group_sections(blocks, tables, fields):
              and not re.match(r"^\d+\.\d", txt):
             current["paragraphs"].append(txt)
 
+    lines = sorted(
+        [b for b in blocks if b.get("BlockType") == "LINE" and b.get("Text","").strip()],
+        key=lambda b: (b.get("Page", 1), b["Geometry"]["BoundingBox"]["Top"])
+    )
+    for sec in sections:
+        if not sec["tables"] and not sec["paragraphs"]:
+            collected = []
+            saw_heading = False
+            for b in lines:
+                txt = b["Text"].strip()
+                if not saw_heading:
+                    if txt == sec["name"]:
+                        saw_heading = True
+                    continue
+                # stop at the next major heading
+                if is_major_heading(txt):
+                    break
+                # skip page numbers
+                if txt.isdigit():
+                    continue
+                collected.append(txt)
+            sec["paragraphs"] = collected
+
     return sections
 
 
