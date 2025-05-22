@@ -341,20 +341,22 @@ def build_user_message(question_number, content):
     
     # Q9 prompt -> Inherent doesn;t print as table, so if each one is the same this can be done, however would be slightly inconsistent.
     if question_number == 9:
-        levels  = content["risk_rating_levels"]
-        controls= content["management_control_text"]
+        levels   = content["risk_rating_levels"]
+        controls = content["management_control_text"]
 
         return (
-            "Question 9: On the Risk Dashboard (Section 2.0), ensure that:\n"
-            "  • Risk Rating entries are all completed (e.g. Trivial, Tolerable, Moderate…)\n"
-            "  • Management Control of Legionella Risk entries are all completed\n"
-            "--- Risk Rating Levels ---\n"
+            "Question 9: On the Risk Dashboard (Section 2.0), confirm that both of the following sections are present and populated:\n"
+            "  1. Risk Rating Levels\n"
+            "  2. Management Control of Legionella Risk\n\n"
+            "Below are the values we found under each heading:\n\n"
+            "--- Risk Rating Levels (extracted entries) ---\n"
             f"{', '.join(levels) or 'None found'}\n\n"
-            "--- Management Control Text ---\n"
+            "--- Management Control Text (extracted entries) ---\n"
             f"{'; '.join(controls) or 'None found'}\n\n"
-            "If all two components are present and populated, reply “PASS, both Risk Rating Levels, and Management Control Text are completecheck Legionella Inherant Risk manually, and ensure no content is missing”. Otherwise list which part is missing. "
+            "If both lists contain at least one entry, reply:\n"
+            "PASS: Both Risk Rating Levels and Management Control Text are complete. Check Legionella Inherent Risk manually and ensure no content is missing.\n"
+            "Otherwise, name which section is missing or empty."
         )
-    
     #Q10
     if question_number == 10:
         rp = content["responsible_persons"]
