@@ -155,36 +155,43 @@ def extract_json_data(json_content, question_number):
 
     # Q10
     if question_number == 10:
-         # 1) 3.1 Responsible Persons from the 3.0 section
-        sec30 = next(s for s in payload["sections"]
-                    if s["name"].startswith("3.0 Management Responsibilities"))
-        rp_tbl = next(t for t in sec30["tables"]
-                    if t["rows"][0][0].startswith("Responsible Persons"))
+        sec31 = next(
+        (s for s in payload["sections"]
+         if s.get("name", "").startswith("3.1 Responsible Persons")),
+        None
+        )
+        if not sec31 or not sec31.get("tables"):
+            raise ValueError("Could not find section '3.1 Responsible Persons' or its table for Q10.")
+        rp_tbl = sec31["tables"][0]
+
+        # 2) Extract the table rows (skip header)
         responsible_persons = [
-            {"Role": r[0].strip(), "Name": r[1].strip(), "Company": r[2].strip()}
-            for r in rp_tbl["rows"][1:] if len(r) >= 3
+            {"Role": row[0].strip(), "Name": row[1].strip(), "Company": row[2].strip()}
+            for row in rp_tbl["rows"][1:]
+            if len(row) >= 3
         ]
 
-        # 4) Grab paragraphs for 3.3 and 3.5
+        # 3) Grab paragraphs for 3.3 Accompanying the Risk Assessor
         sec_3_3 = next(
             (s for s in payload["sections"]
-             if s.get("name", "").startswith("3.3")),
+            if s.get("name", "").startswith("3.3")),
             None
         )
-        ac_lines = sec_3_3.get("paragraphs", []) if sec_3_3 else []
+        accompanying = sec_3_3.get("paragraphs", []) if sec_3_3 else []
 
+        # 4) Grab paragraphs for 3.5 Risk Review and Reassessment
         sec_3_5 = next(
             (s for s in payload["sections"]
-             if s.get("name", "").startswith("3.5")),
-            None
+            if s.get("name", "").startswith("3.5")),
+        None
         )
-        rv_lines = sec_3_5.get("paragraphs", []) if sec_3_5 else []
+        risk_review = sec_3_5.get("paragraphs", []) if sec_3_5 else []
 
         return {
             "responsible_persons": responsible_persons,
-            "accompanying_the_assessor": ac_lines,
-            "risk_review_and_reassessment": rv_lines
-        }
+            "accompanying_the_assessor": accompanying,
+            "risk_review_and_reassessment": risk_review
+    }
 
      # ——— Q12: Written Scheme of Control ———
     if question_number == 12:
