@@ -147,24 +147,36 @@ def group_sections(blocks, tables, fields):
         [b for b in blocks if b.get("BlockType") == "LINE" and b.get("Text","").strip()],
         key=lambda b: (b.get("Page", 1), b["Geometry"]["BoundingBox"]["Top"])
     )
+
+    def is_spurious(p):
+        p = p.strip()
+        return p.isdigit() or bool(re.match(r'^\d+(\.\d+)?\s', p))
+
     for sec in sections:
-        if not sec["tables"] and not sec["paragraphs"]:
-            collected = []
-            saw_heading = False
-            for b in lines:
-                txt = b["Text"].strip()
-                if not saw_heading:
-                    if txt == sec["name"]:
-                        saw_heading = True
-                    continue
-                # stop at the next major heading
-                if is_major_heading(txt):
-                    break
-                # skip page numbers
-                if txt.isdigit():
-                    continue
-                collected.append(txt)
-            sec["paragraphs"] = collected
+        # if there's a table, leave it alone
+        if sec["tables"]:
+            continue
+
+        # if paragraphs are entirely spurious (or empty), override
+        paras = sec.get("paragraphs", [])
+        if paras and not all(is_spurious(p) for p in paras):
+            continue
+
+        # now collect real lines between this header and the next header
+        collected = []
+        saw = False
+        for b in lines:
+            txt = b["Text"].strip()
+            if not saw:
+                if txt == sec["name"]:
+                    saw = True
+                continue
+            if is_major_heading(txt):
+                break
+            if txt.isdigit():
+                continue
+            collected.append(txt)
+        sec["paragraphs"] = collected
 
     return sections
 
