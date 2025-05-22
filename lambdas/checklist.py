@@ -107,18 +107,17 @@ def extract_tables_grouped(blocks):
 
     return tables
 
-def group_sections(blocks, tables, fields):
-    """
-    Split the Textract output by heading text, but only when it appears
-    in the main content area of the page (not in headers/footers).
-    """
-    toc_page = 2  # skip the Table of Contents page entirely
+HEADING_RE = re.compile(r'^\d+(\.\d+)*\s+')
+def is_major_heading(txt):
+    return bool(HEADING_RE.match(txt))
 
-    # Gather all non-empty lines, sorted by page then vertical position
+def group_sections(blocks, tables, fields):
+    toc_page = 2
+
+    # sort all lines by page then vertical position
     lines = sorted(
-        [b for b in blocks
-         if b.get("BlockType") == "LINE" and b.get("Text", "").strip()],
-        key=lambda b: (b.get("Page", 1), b["Geometry"]["BoundingBox"]["Top"])
+        (b for b in blocks if b.get("BlockType")=="LINE" and b.get("Text","").strip()),
+        key=lambda b: (b.get("Page",1), b["Geometry"]["BoundingBox"]["Top"])
     )
 
     sections = []
@@ -126,31 +125,35 @@ def group_sections(blocks, tables, fields):
     current = None
 
     for b in lines:
-        txt = b["Text"].strip()
-        page = b.get("Page", 1)
+        txt  = b["Text"].strip()
+        page = b.get("Page",1)
         top  = b["Geometry"]["BoundingBox"]["Top"]
 
-        # 1) If this is a major heading (and not on the ToC page), start a new section
-        if is_major_heading(txt) and 0.06 < top < 0.85 and page != toc_page:
-            if txt not in seen:
-                seen.add(txt)
+        # 1) Section start: either "Contents" anywhere, or a numeric heading off page 2
+        if (txt.lower() == "contents") or (
+            is_major_heading(txt) and page != toc_page and 0.06 < top < 0.85
+        ):
+            name = txt
+            if name not in seen:
+                seen.add(name)
                 current = {
-                    "name":       txt,
+                    "name":       name,
                     "paragraphs": [],
-                    "tables":     [t for t in tables if t["header"] == txt],
-                    "fields":     [f for f in fields if f["key"].startswith(txt + " ")]
+                    "tables":     [t for t in tables if t["header"] == name],
+                    "fields":     [f for f in fields if f["key"].startswith(name + " ")]
                 }
                 sections.append(current)
             else:
-                # duplicate heading—end the last section
+                # duplicate heading—end current
                 current = None
-
-        # 2) Skip all lines from the ToC page
-        elif page == toc_page:
             continue
 
-        # 3) Otherwise, if we’re inside a section and this isn’t itself a heading, collect it
-        elif current and not is_major_heading(txt):
+        # 2) Skip all lines on page 2 unless we're inside the Contents section
+        if page == toc_page and (not current or current["name"] != "Contents"):
+            continue
+
+        # 3) Anything else—if we're inside a section and it's not a heading—append as paragraph
+        if current and not is_major_heading(txt):
             current["paragraphs"].append(txt)
 
     return sections
