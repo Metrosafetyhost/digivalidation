@@ -109,73 +109,80 @@ def extract_tables_grouped(blocks):
 
 def group_sections(blocks, tables, fields):
     """
-    Split the Textract output by heading text, but only when it appears
-    in the main content area of the page (not in headers/footers).
+    1) Split the Textract output by heading text (within the body region).
+    2) Fallback: if a section ends up with no table and no “real” paragraphs,
+       pull all the LINE blocks between its heading and the next heading.
     """
+    # 1) Sort all LINEs in reading order
     lines = sorted(
-        [b for b in blocks if b.get("BlockType") == "LINE" and b.get("Text", "").strip()],
-        key=lambda b: (b.get("Page", 1), b["Geometry"]["BoundingBox"]["Top"])
+        [b for b in blocks if b.get("BlockType")=="LINE" and b.get("Text","").strip()],
+        key=lambda b: (b.get("Page",1), b["Geometry"]["BoundingBox"]["Top"])
     )
 
+    # 2) Build your sections exactly as before
     sections = []
-    seen = set()
-    current = None
+    seen     = set()
+    current  = None
 
     for b in lines:
         txt = b["Text"].strip()
         top = b["Geometry"]["BoundingBox"]["Top"]
 
-        # Start a new section at a major heading within the body region
         if is_major_heading(txt) and 0.06 < top < 0.85:
             if txt not in seen:
                 seen.add(txt)
                 current = {
                     "name":       txt,
                     "paragraphs": [],
-                    "tables":     [t for t in tables if t["header"] == txt],
-                    "fields":     [f for f in fields if f["key"].startswith(txt + " ")]
+                    "tables":     [t for t in tables if t["header"]==txt],
+                    "fields":     [f for f in fields if f["key"].startswith(txt+" ")]
                 }
                 sections.append(current)
             else:
                 current = None
+
         elif current and 0.06 < top < 0.85 \
              and not txt.isdigit() \
              and not re.match(r"^\d+\.\d", txt):
             current["paragraphs"].append(txt)
 
-    lines = sorted(
-        [b for b in blocks if b.get("BlockType") == "LINE" and b.get("Text","").strip()],
-        key=lambda b: (b.get("Page", 1), b["Geometry"]["BoundingBox"]["Top"])
-    )
-
+    # 3) Fallback: for any section with no tables _and_ no real text,
+    #    collect all the lines between this heading and the next heading.
     def is_spurious(p):
         p = p.strip()
-        return p.isdigit() or bool(re.match(r'^\d+(\.\d+)?\s', p))
+        return p.isdigit() or bool(re.match(r"^\d+(\.\d+)?\s", p))
 
     for sec in sections:
-        # if there's a table, leave it alone
+        # if there’s a real table, leave it alone
         if sec["tables"]:
             continue
 
-        # if paragraphs are entirely spurious (or empty), override
         paras = sec.get("paragraphs", [])
-        if paras and not all(is_spurious(p) for p in paras):
+        # if ANY paragraph is _not_ just “spurious” (digit or next-heading),
+        # assume you already have real text and skip fallback
+        if any(not is_spurious(p) for p in paras):
             continue
 
-        # now collect real lines between this header and the next header
+        # otherwise: grab everything between sec["name"] and the next major heading
         collected = []
-        saw = False
+        saw_heading = False
         for b in lines:
             txt = b["Text"].strip()
-            if not saw:
+            if not saw_heading:
                 if txt == sec["name"]:
-                    saw = True
+                    saw_heading = True
                 continue
+
+            # stop once we hit the next major heading
             if is_major_heading(txt):
                 break
-            if txt.isdigit():
+
+            # skip page-numbers or any “X.Y …” labels
+            if txt.isdigit() or re.match(r"^\d+(\.\d+)?\s", txt):
                 continue
+
             collected.append(txt)
+
         sec["paragraphs"] = collected
 
     return sections
