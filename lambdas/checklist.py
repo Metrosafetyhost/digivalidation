@@ -33,12 +33,15 @@ IMPORTANT_HEADINGS = [
 def normalize(text):
     return re.sub(r'[^a-z0-9 ]+', ' ', text.lower()).strip()
 
-def is_major_heading(text):
-    norm = normalize(text)
-    for phrase in IMPORTANT_HEADINGS:
-        if all(w in norm for w in phrase.lower().split()):
-            return True
-    return False
+HEADING_RE = re.compile(r'^\d+(\.\d+)*\s+')
+
+def is_major_heading(txt):
+    norm = normalize(txt)
+    # first, check if it’s one of your named sections
+    if any(all(w in norm for w in h.lower().split()) for h in IMPORTANT_HEADINGS):
+        return True
+    # otherwise fall back to “1.2”, “3.5”, etc
+    return bool(HEADING_RE.match(txt))
 
 def extract_tables_grouped(blocks):
     """
@@ -106,10 +109,6 @@ def extract_tables_grouped(blocks):
             })
 
     return tables
-
-HEADING_RE = re.compile(r'^\d+(\.\d+)*\s+')
-def is_major_heading(txt):
-    return bool(HEADING_RE.match(txt))
 
 def group_sections(blocks, tables, fields):
     toc_page = 2
