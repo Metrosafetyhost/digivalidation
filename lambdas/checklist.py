@@ -112,8 +112,12 @@ def group_sections(blocks, tables, fields):
     Split the Textract output by heading text, but only when it appears
     in the main content area of the page (not in headers/footers).
     """
+    toc_page = 2  # skip the Table of Contents page entirely
+
+    # Gather all non-empty lines, sorted by page then vertical position
     lines = sorted(
-        [b for b in blocks if b.get("BlockType") == "LINE" and b.get("Text", "").strip()],
+        [b for b in blocks
+         if b.get("BlockType") == "LINE" and b.get("Text", "").strip()],
         key=lambda b: (b.get("Page", 1), b["Geometry"]["BoundingBox"]["Top"])
     )
 
@@ -123,9 +127,11 @@ def group_sections(blocks, tables, fields):
 
     for b in lines:
         txt = b["Text"].strip()
-        top = b["Geometry"]["BoundingBox"]["Top"]
+        page = b.get("Page", 1)
+        top  = b["Geometry"]["BoundingBox"]["Top"]
 
-        if is_major_heading(txt) and 0.06 < top < 0.85:
+        # 1) If this is a major heading (and not on the ToC page), start a new section
+        if is_major_heading(txt) and 0.06 < top < 0.85 and page != toc_page:
             if txt not in seen:
                 seen.add(txt)
                 current = {
@@ -136,8 +142,15 @@ def group_sections(blocks, tables, fields):
                 }
                 sections.append(current)
             else:
+                # duplicate heading—end the last section
                 current = None
-        elif current:
+
+        # 2) Skip all lines from the ToC page
+        elif page == toc_page:
+            continue
+
+        # 3) Otherwise, if we’re inside a section and this isn’t itself a heading, collect it
+        elif current and not is_major_heading(txt):
             current["paragraphs"].append(txt)
 
     return sections
