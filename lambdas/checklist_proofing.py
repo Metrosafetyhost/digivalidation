@@ -155,53 +155,51 @@ def extract_json_data(json_content, question_number):
 
     # Q10
     if question_number == 10:
-        # 1) 3.1 Responsible Persons from the 3.0 section
-        sec30 = next(s for s in payload["sections"]
-                    if s["name"].startswith("3.0 Management Responsibilities"))
-        rp_tbl = next(t for t in sec30["tables"]
-                    if t["rows"][0][0].startswith("Responsible Persons"))
-        responsible_persons = [
-            {"Role": r[0].strip(), "Name": r[1].strip(), "Company": r[2].strip()}
-            for r in rp_tbl["rows"][1:] if len(r) >= 3
-        ]
-        # helper to take lines until the next sub-heading
-        def grab(paras):
-            out = []
-            for p in paras:
-                p = p.strip()
-                if re.match(r"^\d+\.\d", p):  # stops at 3.4, 3.6, etc.
-                    break
-                out.append(p)
-            return " ".join(out)
-        
-        def is_real(sec):
-            # returns True if the section has at least one line of "real" text
-            for p in sec.get("paragraphs", []):
-               if not p.isdigit() and not re.match(r"^\d+\.\d", p):
-                return True
-            return False
+        sec_mgmt = next(
+            (s for s in payload["sections"]
+             if "Management Responsibilities" in s.get("name", "")),
+            None
+        )
+        if sec_mgmt is None:
+            raise ValueError("Could not find the 'Management Responsibilities' section for Q10.")
 
-        cands33 = [
-            s for s in payload["sections"]
-            if s["name"].startswith("3.3 Accompanying the Risk Assessor")
-        ]
-        sec33 = next((s for s in cands33 if is_real(s)), None)
-        accompanying_assessor = grab(sec33["paragraphs"]) if sec33 else ""
+        # 2) Extract the Responsible Persons table
+        rp_table = next(
+            (t for t in sec_mgmt.get("tables", [])
+             if t.get("rows")
+             and t["rows"][0][0].strip().lower().startswith("responsible persons")),
+            None
+        )
+        if rp_table is None:
+            raise ValueError("Could not find the 'Responsible Persons' table in Q10.")
 
-        # 3.5 Risk Review and Reassessment
-        cands35 = [
-            s for s in payload["sections"]
-            if s["name"].startswith("3.5 Risk Review and Reassessment")
+        # 3) Build lines for 3.1
+        rp_lines = [
+            f"{row[0].strip()}: {row[1].strip()} – {row[2].strip()}"
+            for row in rp_table["rows"][1:]
+            if len(row) >= 3
         ]
-        sec35 = next((s for s in cands35 if is_real(s)), None)
-        risk_review_reassessment = grab(sec35["paragraphs"]) if sec35 else ""
 
-        # 4) return exactly the keys your prompt‐builder expects
+        # 4) Grab paragraphs for 3.3 and 3.5
+        sec_3_3 = next(
+            (s for s in payload["sections"]
+             if s.get("name", "").startswith("3.3")),
+            None
+        )
+        ac_lines = sec_3_3.get("paragraphs", []) if sec_3_3 else []
+
+        sec_3_5 = next(
+            (s for s in payload["sections"]
+             if s.get("name", "").startswith("3.5")),
+            None
+        )
+        rv_lines = sec_3_5.get("paragraphs", []) if sec_3_5 else []
+
         return {
-            "responsible_persons":        responsible_persons,
-            "accompanying_assessor":      accompanying_assessor,
-            "risk_review_reassessment":   risk_review_reassessment
-    }
+            "responsible_persons": rp_lines,
+            "accompanying_the_assessor": ac_lines,
+            "risk_review_and_reassessment": rv_lines
+        }
 
      # ——— Q12: Written Scheme of Control ———
     if question_number == 12:
