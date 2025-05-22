@@ -125,6 +125,7 @@ def group_sections(blocks, tables, fields):
         txt = b["Text"].strip()
         top = b["Geometry"]["BoundingBox"]["Top"]
 
+        # Start a new section at a major heading within the body region
         if is_major_heading(txt) and 0.06 < top < 0.85:
             if txt not in seen:
                 seen.add(txt)
@@ -137,10 +138,9 @@ def group_sections(blocks, tables, fields):
                 sections.append(current)
             else:
                 current = None
-        elif current:
-            current["paragraphs"].append(txt)
-        elif current and 0.06 < top < 0.85:
-            # only body text (skip headers/footers)
+        elif current and 0.06 < top < 0.85 \
+             and not txt.isdigit() \
+             and not re.match(r"^\d+\.\d", txt):
             current["paragraphs"].append(txt)
 
     return sections
