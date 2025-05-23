@@ -239,12 +239,11 @@ def extract_json_data(json_content, question_number):
         total_sys_assets = sum(sys_counts.values())
 
         # 2) Find all asset-form IDs under “Water Assets”
-        # match IDs like CAL-01, CALP-02, MCWS-01, MULTI-01, SHOWER-03, etc.
-        id_pattern = re.compile(r"\b[A-Z]{2,6}-\d{2}\b")
+        # IDs like CAL-01, CALP-02, MCWS-01, MULTI-01, SHOWER-04, etc.
+        id_pattern = re.compile(r"^[A-Z]{2,6}-\d{2}$")
         asset_ids = []
 
         sections = payload.get("sections", [])
-        # locate index of the “Water Assets” section
         start_idx = next(
             (i for i, s in enumerate(sections)
              if re.search(r"Water Assets\s*$", s.get("name", ""), re.IGNORECASE)),
@@ -252,35 +251,38 @@ def extract_json_data(json_content, question_number):
         )
 
         if start_idx is not None:
-            # scan following subsections until the next top-level section (e.g. “9.0 …”)
             for s in sections[start_idx + 1:]:
                 name = s.get("name", "")
+                # stop at next top-level section (e.g. “9.0 …”)
                 if re.match(r"^\d+\.0\s+", name) and not re.search(r"Water Assets", name, re.IGNORECASE):
                     break
 
-                # gather every possible text candidate
-                candidates = []
-                candidates.extend(s.get("paragraphs", []))
+                # 2a) paragraphs: full-match ID only
+                for line in s.get("paragraphs", []):
+                    txt = line.strip()
+                    if id_pattern.fullmatch(txt):
+                        asset_ids.append(txt)
+
+                # 2b) tables: extract all IDs anywhere in cells
                 for tbl in s.get("tables", []):
                     for row in tbl.get("rows", []):
-                        candidates.extend(row)
+                        for cell in row:
+                            for m in id_pattern.findall(cell or ""):
+                                asset_ids.append(m)
+
+                # 2c) fields: some extra extracted values
                 for field in s.get("fields", []):
                     if isinstance(field, dict):
-                        candidates.append(field.get("value", ""))
+                        val = field.get("value", "").strip()
+                        if id_pattern.fullmatch(val):
+                            asset_ids.append(val)
 
-                # extract all matching IDs from each piece of text
-                for txt in candidates:
-                    for match in id_pattern.findall(txt):
-                        asset_ids.append(match)
-
-        unique_ids    = sorted(set(asset_ids))
-        num_asset_ids = len(unique_ids)
-
+        unique_ids = sorted(set(asset_ids))
         return {
             "system_counts":    sys_counts,
             "total_sys_assets": total_sys_assets,
             "asset_form_ids":   unique_ids,
-            "num_asset_forms":  num_asset_ids
+            "num_asset_forms":  len(unique_ids)
         }
     
     if question_number == 16:
