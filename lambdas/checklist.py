@@ -138,7 +138,8 @@ def group_sections(blocks, tables, fields):
                 current = {
                     "name":       name,
                     "paragraphs": [],
-                    "tables":     [t for t in tables if t["header"] == name],
+                    "tables": [t for t in tables
+                                if name in t["header"] or t["header"] in name],
                     "fields":     [f for f in fields if f["key"].startswith(name + " ")]
                 }
                 sections.append(current)
