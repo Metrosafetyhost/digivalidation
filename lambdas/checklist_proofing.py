@@ -238,12 +238,13 @@ def extract_json_data(json_content, question_number):
 
         total_sys_assets = sum(sys_counts.values())
 
-        # 2) Find all asset-form IDs in the “Water Assets” hierarchy
-        id_pattern = re.compile(r"^[A-Za-z0-9]+-\d+$")
+        # 2) Find all asset-form IDs under “Water Assets”
+        # match IDs like CAL-01, CALP-02, MCWS-01, MULTI-01, SHOWER-03, etc.
+        id_pattern = re.compile(r"\b[A-Za-z0-9]+-[0-9]+\b")
         asset_ids = []
 
         sections = payload.get("sections", [])
-        # locate "Water Assets" section index
+        # locate index of the “Water Assets” section
         start_idx = next(
             (i for i, s in enumerate(sections)
              if re.search(r"Water Assets\s*$", s.get("name", ""), re.IGNORECASE)),
@@ -251,25 +252,26 @@ def extract_json_data(json_content, question_number):
         )
 
         if start_idx is not None:
-            # scan from the next section until the next new major section
+            # scan following subsections until the next top-level section (e.g. “9.0 …”)
             for s in sections[start_idx + 1:]:
                 name = s.get("name", "")
-                # break if we hit the next top-level section, e.g. “9.0 …”
                 if re.match(r"^\d+\.0\s+", name) and not re.search(r"Water Assets", name, re.IGNORECASE):
                     break
 
-                # collect IDs from paragraphs
-                for line in s.get("paragraphs", []):
-                    txt = line.strip()
-                    if id_pattern.match(txt):
-                        asset_ids.append(txt)
-                # collect IDs from tables
+                # gather every possible text candidate
+                candidates = []
+                candidates.extend(s.get("paragraphs", []))
                 for tbl in s.get("tables", []):
                     for row in tbl.get("rows", []):
-                        for cell in row:
-                            txt = cell.strip()
-                            if id_pattern.match(txt):
-                                asset_ids.append(txt)
+                        candidates.extend(row)
+                for field in s.get("fields", []):
+                    if isinstance(field, dict):
+                        candidates.append(field.get("value", ""))
+
+                # extract all matching IDs from each piece of text
+                for txt in candidates:
+                    for match in id_pattern.findall(txt):
+                        asset_ids.append(match)
 
         unique_ids    = sorted(set(asset_ids))
         num_asset_ids = len(unique_ids)
