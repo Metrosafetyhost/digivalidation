@@ -240,7 +240,7 @@ def extract_json_data(json_content, question_number):
 
         # 2) Find all asset-form IDs under “Water Assets”
         # match IDs like CAL-01, CALP-02, MCWS-01, MULTI-01, SHOWER-03, etc.
-        id_pattern = re.compile(r"\b[A-Za-z0-9]+-[0-9]+\b")
+        id_pattern = re.compile(r"\b[A-Z]{2,6}-\d{2}\b")
         asset_ids = []
 
         sections = payload.get("sections", [])
