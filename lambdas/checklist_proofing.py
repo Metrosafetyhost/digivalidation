@@ -220,40 +220,48 @@ def extract_json_data(json_content, question_number):
 
     #Q15:
     if question_number == 15:
-        # 1) Read counts from 6.0 System Asset Register
+        # 1) Read counts from the “System Asset Register” section
         sys_counts = {}
-        for sec in payload.get("sections", []):
-            if sec.get("name", "").startswith("6.0 System Asset Register"):
-                tbl = sec.get("tables", [])[0]
-                # skip header row, parse name→count
-                for asset_name, cnt_str in tbl["rows"][1:]:
-                    try:
-                        cnt = int(cnt_str)
-                    except ValueError:
-                        cnt = 0
-                    sys_counts[asset_name.strip()] = cnt
-                break
+        sys_sec = next(
+            (s for s in payload.get("sections", [])
+             if re.search(r"System Asset Register", s.get("name", ""), re.IGNORECASE)),
+            None
+        )
+        if sys_sec and sys_sec.get("tables"):
+            tbl = sys_sec["tables"][0]
+            # skip header row, parse each asset name → count
+            for asset_name, cnt_str in tbl["rows"][1:]:
+                try:
+                    cnt = int(cnt_str)
+                except ValueError:
+                    cnt = 0
+                sys_counts[asset_name.strip()] = cnt
 
         total_sys_assets = sum(sys_counts.values())
 
-        # 2) Find all asset IDs in 7.0 Water Assets (from paragraphs AND tables)
+        # 2) Find all asset-form IDs in the “Water Assets” section
         asset_ids = []
-        pattern = re.compile(r"^[A-Za-z0-9]+-\d+$")
-        for sec in payload.get("sections", []):
-            if sec.get("name", "").startswith("7.0 Water Assets"):
-                # scan paragraphs
-                for line in sec.get("paragraphs", []):
-                    txt = line.strip()
-                    if pattern.match(txt):
-                        asset_ids.append(txt)
-                # scan every cell in every table
-                for tbl in sec.get("tables", []):
-                    for row in tbl.get("rows", []):
-                        for cell in row:
-                            txt = cell.strip()
-                            if pattern.match(txt):
-                                asset_ids.append(txt)
-                break
+        ids_sec = next(
+            (s for s in payload.get("sections", [])
+             if re.search(r"Water Assets\s*$", s.get("name", ""), re.IGNORECASE)),
+            None
+        )
+        # IDs look like “ABC-1234”; adjust regex if your IDs use a different pattern
+        id_pattern = re.compile(r"^[A-Za-z0-9]+-\d+$")
+
+        if ids_sec:
+            # check paragraphs
+            for line in ids_sec.get("paragraphs", []):
+                txt = line.strip()
+                if id_pattern.match(txt):
+                    asset_ids.append(txt)
+            # check tables
+            for tbl in ids_sec.get("tables", []):
+                for row in tbl.get("rows", []):
+                    for cell in row:
+                        txt = cell.strip()
+                        if id_pattern.match(txt):
+                            asset_ids.append(txt)
 
         unique_ids    = sorted(set(asset_ids))
         num_asset_ids = len(unique_ids)
