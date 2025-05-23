@@ -229,7 +229,6 @@ def extract_json_data(json_content, question_number):
         )
         if sys_sec and sys_sec.get("tables"):
             tbl = sys_sec["tables"][0]
-            # skip header row, parse each asset name → count
             for asset_name, cnt_str in tbl["rows"][1:]:
                 try:
                     cnt = int(cnt_str)
@@ -239,29 +238,38 @@ def extract_json_data(json_content, question_number):
 
         total_sys_assets = sum(sys_counts.values())
 
-        # 2) Find all asset-form IDs in the “Water Assets” section
+        # 2) Find all asset-form IDs in the “Water Assets” hierarchy
+        id_pattern = re.compile(r"^[A-Za-z0-9]+-\d+$")
         asset_ids = []
-        ids_sec = next(
-            (s for s in payload.get("sections", [])
+
+        sections = payload.get("sections", [])
+        # locate "Water Assets" section index
+        start_idx = next(
+            (i for i, s in enumerate(sections)
              if re.search(r"Water Assets\s*$", s.get("name", ""), re.IGNORECASE)),
             None
         )
-        # IDs look like “ABC-1234”; adjust regex if your IDs use a different pattern
-        id_pattern = re.compile(r"^[A-Za-z0-9]+-\d+$")
 
-        if ids_sec:
-            # check paragraphs
-            for line in ids_sec.get("paragraphs", []):
-                txt = line.strip()
-                if id_pattern.match(txt):
-                    asset_ids.append(txt)
-            # check tables
-            for tbl in ids_sec.get("tables", []):
-                for row in tbl.get("rows", []):
-                    for cell in row:
-                        txt = cell.strip()
-                        if id_pattern.match(txt):
-                            asset_ids.append(txt)
+        if start_idx is not None:
+            # scan from the next section until the next new major section
+            for s in sections[start_idx + 1:]:
+                name = s.get("name", "")
+                # break if we hit the next top-level section, e.g. “9.0 …”
+                if re.match(r"^\d+\.0\s+", name) and not re.search(r"Water Assets", name, re.IGNORECASE):
+                    break
+
+                # collect IDs from paragraphs
+                for line in s.get("paragraphs", []):
+                    txt = line.strip()
+                    if id_pattern.match(txt):
+                        asset_ids.append(txt)
+                # collect IDs from tables
+                for tbl in s.get("tables", []):
+                    for row in tbl.get("rows", []):
+                        for cell in row:
+                            txt = cell.strip()
+                            if id_pattern.match(txt):
+                                asset_ids.append(txt)
 
         unique_ids    = sorted(set(asset_ids))
         num_asset_ids = len(unique_ids)
@@ -421,7 +429,7 @@ def build_user_message(question_number, content):
         msg = (
             f"--- System Asset Register counts (present) ---\n{sys_ct}\n\n"
             f"Total assets present: {total}\n\n"
-            f"--- Unique Asset Form IDs found in Section 7.0 ---\n- " + "\n- ".join(ids) +
+            f"--- Unique Asset Form IDs found in Water Assets ---\n- " + "\n- ".join(ids) +
             f"\n\nCount of asset forms: {forms}\n\n"
         )
         if total == forms:
