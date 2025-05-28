@@ -87,6 +87,7 @@ def proof_table_content(html, record_id):
                 "You are a meticulous proofreader. Correct only spelling, grammar and punctuation in British English. "
                 "Do NOT add, remove, reorder, split or merge any text or HTML tags. "
                 "Output only the corrected JSON array of strings, matching the input array exactly."
+                "Ensure each sentence ends with a full stop unless it already ends with appropriate punctuation (e.g. '.', '!', '?')"
             ),
             "messages": [{
                 "role": "user",
@@ -151,6 +152,7 @@ def proof_plain_text(text, record_id):
             "system": (
             "You are a meticulous proofreader. "
             "Correct spelling, grammar and clarity only — no extra commentary or re-structuring."
+            "Ensure each sentence ends with a full stop unless it already ends with appropriate punctuation (e.g. '.', '!', '?')"
         ),
             "messages": [{
                 "role": "user",
