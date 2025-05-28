@@ -45,31 +45,49 @@ def extract_json_data(json_content, question_number):
     
     # Q3: Remedial-actions vs Significant Findings count
     if question_number == 3:
-        # 1) Find the 1.1 Areas Identified table
+    # —————————————————————————————————————————————
+    # 1) Sum all remedial‐action counts from Section 1.1
+        remedial_by_section = {}
+        total_issues = 0
+
         for sec in payload.get("sections", []):
-            if sec.get("name", "").startswith("1.1 Areas Identified"):
-                tbl  = sec["tables"][0]
-                rows = tbl["rows"]
+            if sec.get("name", "").startswith("1.1"):
+                for tbl in sec.get("tables", []):
+                # skip header row
+                    for row in tbl.get("rows", [])[1:]:
+                        try:
+                            count = int(row[1])
+                            remedial_by_section[row[0]] = count
+                            total_issues += count
+                        except (IndexError, ValueError):
+                            continue
 
-                # Skip the header row, parse column 1 (“No. of Issues”) from each data row
-                issue_counts = [int(r[1]) for r in rows[1:]]
-                remedial_by_sec = { r[0]: int(r[1]) for r in rows[1:] }
-                total_issues   = sum(issue_counts)
+    # —————————————————————————————————————————————
+    # 2A) Easiest: count one table per finding
+        sig_item_count = 0
+        for sec in payload.get("sections", []):
+            if sec.get("name", "").startswith("Significant Findings"):
+                sig_item_count = len(sec.get("tables", []))
+                break
 
-                # 2) Count question-IDs in “Significant Findings and Action Plan”
-                sig_ids = set()
-                for s2 in payload.get("sections", []):
-                    if s2.get("name", "").startswith("Significant Findings"):
-                        for line in s2.get("paragraphs", []):
-                            m = re.match(r"^(\d+\.\d+)", line.strip())
-                            if m:
-                                sig_ids.add(m.group(1))
+    # —————————————————————————————————————————————
+    # 2B) Alternative: regex on paragraphs to pick up “X.Y.” headings
+    # sig_ids = set()
+    # for sec in payload.get("sections", []):
+    #     if sec.get("name", "").startswith("Significant Findings"):
+    #         for line in sec.get("paragraphs", []):
+    #             m = re.match(r"^(\d+\.\d+)", line.strip())
+    #             if m:
+    #                 sig_ids.add(m.group(1))
+    # sig_item_count = len(sig_ids)
 
-                return {
-                    "remedial_by_section": remedial_by_sec,
-                    "remedial_total":      total_issues,
-                    "sig_item_count":      len(sig_ids)
-                }
+    # —————————————————————————————————————————————
+    # return these to Bedrock for its PASS/FAIL logic
+        return {
+            "remedial_by_section": remedial_by_section,
+            "remedial_total":      total_issues,
+            "sig_item_count":      sig_item_count
+        }
 
     # Q4: Building Description
     if question_number == 4:
