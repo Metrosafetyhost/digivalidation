@@ -190,7 +190,7 @@ def proof_plain_text(text, record_id):
 
 def update_logs_csv(log_entries, filename, folder):
     """
-    Merge new log_entries into the existing CSV in S3, dedupe, and overwrite.
+    Merge new log_entries into the existing CSV in S3, dedupe, flatten newlines, and overwrite.
     log_entries: list of dicts with keys recordId, header, original, proofed
     """
     s3_key = f"{folder}/{filename}.csv"
@@ -199,49 +199,64 @@ def update_logs_csv(log_entries, filename, folder):
     existing_rows = []
     try:
         obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
-        text = obj["Body"].read().decode("utf-8")
+        text = obj['Body'].read().decode('utf-8')
         reader = csv.reader(io.StringIO(text))
         existing_rows = list(reader)
     except s3_client.exceptions.NoSuchKey:
+        # No existing file, we'll start fresh
         pass
 
-    # 2. Build up merged, deduped rows
+    # 2. Initialize merged list and seen set
     merged = []
     seen = set()
 
-    # If no existing file, write header
+    # 3. Add header row
+    header = ['Record ID', 'Header', 'Original Text', 'Proofed Text']
     if not existing_rows:
-        header = ["Record ID","Header","Original Text","Proofed Text"]
         merged.append(header)
     else:
-        # Keep whatever header/existing data is there
         for row in existing_rows:
             tup = tuple(row)
             if tup not in seen:
                 merged.append(row)
                 seen.add(tup)
 
-    # 3. Add each new entry only if it doesn’t already exist
+    # 4. Add each new entry, flatten any embedded newlines
     for e in log_entries:
+        orig = e.get('original', '')
+        proof = e.get('proofed', '')
+
+        # Replace real line-breaks with a space
+        orig_clean = re.sub(r'[\r\n]+', ' ', orig).strip()
+        proof_clean = re.sub(r'[\r\n]+', ' ', proof).strip()
+
         row = [
-            e.get("recordId",""),
-            e.get("header",""),
-            e.get("original",""),
-            e.get("proofed","")
+            e.get('recordId', ''),
+            e.get('header', ''),
+            orig_clean,
+            proof_clean
         ]
         tup = tuple(row)
         if tup not in seen:
             merged.append(row)
             seen.add(tup)
 
-    # 4. Write the merged list back out, overwriting the S3 object
+    # 5. Write merged list back out as a well-formed CSV
     out = io.StringIO()
-    writer = csv.writer(out)
+    writer = csv.writer(
+        out,
+        delimiter=',',
+        quotechar='"',
+        quoting=csv.QUOTE_MINIMAL,
+        escapechar='\\',
+        lineterminator='\n'
+    )
     writer.writerows(merged)
+
     s3_client.put_object(
         Bucket=BUCKET_NAME,
         Key=s3_key,
-        Body=out.getvalue()
+        Body=out.getvalue().encode('utf-8')
     )
 
     return s3_key

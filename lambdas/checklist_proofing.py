@@ -45,8 +45,6 @@ def extract_json_data(json_content, question_number):
     
     # Q3: Remedial-actions vs Significant Findings count
     if question_number == 3:
-    # —————————————————————————————————————————————
-    # 1) Sum all remedial‐action counts from Section 1.1
         remedial_by_section = {}
         total_issues = 0
 
@@ -61,28 +59,11 @@ def extract_json_data(json_content, question_number):
                             total_issues += count
                         except (IndexError, ValueError):
                             continue
-
-    # —————————————————————————————————————————————
-    # 2A) Easiest: count one table per finding
         sig_item_count = 0
         for sec in payload.get("sections", []):
             if sec.get("name", "").startswith("Significant Findings"):
                 sig_item_count = len(sec.get("tables", []))
                 break
-
-    # —————————————————————————————————————————————
-    # 2B) Alternative: regex on paragraphs to pick up “X.Y.” headings
-    # sig_ids = set()
-    # for sec in payload.get("sections", []):
-    #     if sec.get("name", "").startswith("Significant Findings"):
-    #         for line in sec.get("paragraphs", []):
-    #             m = re.match(r"^(\d+\.\d+)", line.strip())
-    #             if m:
-    #                 sig_ids.add(m.group(1))
-    # sig_item_count = len(sig_ids)
-
-    # —————————————————————————————————————————————
-    # return these to Bedrock for its PASS/FAIL logic
         return {
             "remedial_by_section": remedial_by_section,
             "remedial_total":      total_issues,
