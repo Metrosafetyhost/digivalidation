@@ -362,11 +362,6 @@ def process(event, context):
     logger.info("Parsed workTypeRef=%s, buildingName=%s, workOrderId=%s",
                 work_type, buildingName, workorder_id)
 
-    # ────────────────────────────────────────────────────────────────────────────────
-    # 2) Run your “old JSON-proofing” code exactly as before.
-    #    (This uses load_payload(event), loops over proofing_requests, calls proof_table_content or proof_plain_text,
-    #    builds one CSV, writes it to s3://<BUCKET_NAME>/logs/{workorder_id}_logs.csv, and calls store_metadata().)
-    # ────────────────────────────────────────────────────────────────────────────────
     try:
         wo_id_old, content_type, proofing_requests, table_data = load_payload(event)
         if not wo_id_old:
@@ -452,61 +447,43 @@ def process(event, context):
     if work_type == "C-WRA":
         logger.info("workTypeRef == C-WRA → running checklist.process(...) for Textract…")
 
-        # 3a) List all PDFs under s3://<your-pdf-bucket>/<workorder_id>/<buildingName>/
-        #     Replace "your-sf-reports-bucket" with whatever bucket Salesforce is dumping PDFs into.
-        bucket_name = "your-sf-reports-bucket"
-        prefix      = f"{workorder_id}/{buildingName}/"
+        # Replace the old prefix logic with this:
+        bucket_name = "metrosafetyprodfiles"   # ← your actual bucket
+        workorder_id = workorder_id
+        prefix = f"WorkOrders/{workorder_id}/"
 
         try:
+            # 1) List everything under WorkOrder/<workorder_id>/
             paginator = s3_client.get_paginator("list_objects_v2")
-            page_iter = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
+            pages = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
 
-            all_pdfs = []
-            for page in page_iter:
+            all_files = []
+            for page in pages:
                 for obj in page.get("Contents", []):
-                    key = obj["Key"]
-                    if key.lower().endswith(".pdf"):
-                        all_pdfs.append({
-                            "Key":         key,
-                            "LastModified": obj["LastModified"]
-                        })
+                    all_files.append({
+                        "Key": obj["Key"],
+                        "LastModified": obj["LastModified"]
+                    })
 
-            if not all_pdfs:
-                logger.warning("No PDFs found under %s; skipping Textract path.", prefix)
+            if not all_files:
+                logger.warning("No files found under %s; skipping Textract path.", prefix)
             else:
-                # 3b) Pick the single most recently‐modified PDF
-                latest_pdf = sorted(all_pdfs,
-                                    key=lambda x: x["LastModified"],
-                                    reverse=True)[0]
-                latest_key = latest_pdf["Key"]
-                logger.info("Latest PDF = %s (modified %s)",
-                            latest_key, latest_pdf["LastModified"])
+                # 2) Sort by LastModified descending → pick the newest
+                latest = sorted(all_files, key=lambda x: x["LastModified"], reverse=True)[0]
+                latest_key = latest["Key"]
+                logger.info("Most recently uploaded key: %s", latest_key)
 
-                # 3c) Build a “Textract event” for checklist.process(...)
+                # 3) Build a Textract event and call checklist.process(...)
                 textract_event = {
                     "bucket":       bucket_name,
                     "document_key": latest_key
-                    # If your checklist.process(…) needs an “output_bucket” override,
-                    # you can also pass "output_bucket": "some‐other‐bucket", but by default
-                    # checklist.process uses event.get('output_bucket','textract-output-digival').
                 }
-
-                # 3d) Call the Textract logic in checklist.py
-                #     (–> this will store a JSON under “processed/…” in the output_bucket, and
-                #      return { 'statusCode': 200, 'body': '{"json_s3_key":"processed/…"}' })
                 from checklist import process as textract_process
 
                 tex_start = time.time()
                 resp = textract_process(textract_event, None)
                 tex_end = time.time()
-                logger.info("Textract process(...) returned: %s  (took %.1f s)",
-                            resp, tex_end - tex_start)
-
-                # 3e) If you want to do something with the returned JSON (e.g. proof it),
-                #     you could now parse resp["body"] to get “json_s3_key” and then fetch that JSON from S3.
-                #
-                #     But since you only asked to “run this class if the field is there,” we will stop here.
-                #     checklist.process(...) has already written “processed/<filename>.json” to S3.
+                logger.info("Textract process(...) returned: %s  (took %.1f s)", resp, tex_end - tex_start)
 
         except Exception as e:
             logger.error("Error during C-WRA Textract path: %s", e, exc_info=True)
@@ -514,6 +491,7 @@ def process(event, context):
                 "statusCode": 500,
                 "body": json.dumps({"error": "C-WRA Textract processing failed"})
             }
+
 
     else:
         logger.info("workTypeRef != C-WRA → skipping Textract path.")
