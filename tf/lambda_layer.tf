@@ -372,30 +372,3 @@ resource "aws_iam_role_policy_attachment" "checklist_textract_read_attach" {
   role       = aws_iam_role.bedrock_lambda_checklist_proofing.name
   policy_arn = aws_iam_policy.checklist_textract_read_policy.arn
 }
-
-
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "AllowListAndGetOnProdFiles",
-      "Effect": "Allow",
-      "Action": [
-        "s3:ListBucket"
-      ],
-      "Resource": [
-        "arn:aws:s3:::metrosafetyprodfiles"
-      ]
-    },
-    {
-      "Sid": "AllowGetObjectOnProdFiles",
-      "Effect": "Allow",
-      "Action": [
-        "s3:GetObject"
-      ],
-      "Resource": [
-        "arn:aws:s3:::metrosafetyprodfiles/*"
-      ]
-    }
-  ]
-}
