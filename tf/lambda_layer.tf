@@ -64,6 +64,45 @@ resource "aws_iam_role_policy_attachment" "lambda_s3" {
   role       = "bedrock-lambda-salesforce_input"
 }
 
+# 1) Define a standalone policy that allows ListBucket + GetObject on "metrosafetyprodfiles"
+resource "aws_iam_policy" "lambda_s3_read_metrosafetyprodfiles" {
+  name        = "LambdaS3ReadMetroSafetyProdFiles"
+  description = "Allow Lambda to ListBucket and GetObject on metrosafetyprodfiles"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Sid    = "AllowListBucketOnProdFiles",
+        Effect = "Allow",
+        Action = [
+          "s3:ListBucket"
+        ],
+        Resource = [
+          "arn:aws:s3:::metrosafetyprodfiles"
+        ]
+      },
+      {
+        Sid    = "AllowGetObjectsOnProdFiles",
+        Effect = "Allow",
+        Action = [
+          "s3:GetObject"
+        ],
+        Resource = [
+          "arn:aws:s3:::metrosafetyprodfiles/*"
+        ]
+      }
+    ]
+  })
+}
+
+# 2) Attach that policy to the same role your salesforce_input lambda uses:
+resource "aws_iam_role_policy_attachment" "attach_s3_read_metrosafetyprod" {
+  role       = "bedrock-lambda-salesforce_input"
+  policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprodfiles.arn
+}
+
+
 
 #############################
 # Unified Lambda Execution Role
@@ -332,4 +371,31 @@ resource "aws_iam_policy" "checklist_textract_read_policy" {
 resource "aws_iam_role_policy_attachment" "checklist_textract_read_attach" {
   role       = aws_iam_role.bedrock_lambda_checklist_proofing.name
   policy_arn = aws_iam_policy.checklist_textract_read_policy.arn
+}
+
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowListAndGetOnProdFiles",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::metrosafetyprodfiles"
+      ]
+    },
+    {
+      "Sid": "AllowGetObjectOnProdFiles",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::metrosafetyprodfiles/*"
+      ]
+    }
+  ]
 }
