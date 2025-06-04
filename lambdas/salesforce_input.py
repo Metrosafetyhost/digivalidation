@@ -447,68 +447,72 @@ def process(event, context):
     if work_type == "C-WRA":
         logger.info("workTypeRef == C-WRA → running checklist.process(...) for Textract…")
 
-        # Replace the old prefix logic with this:
-        bucket_name = "metrosafetyprodfiles"   # ← your actual bucket
-        workorder_id = workorder_id
+        bucket_name = "metrosafetyprodfiles"
         prefix = f"WorkOrders/{workorder_id}/"
 
+        # → STEP 0: Check for an existing “marker” file
+        marker_key = f"WorkOrders/{workorder_id}/.textract_ran"
         try:
-            # 1) List everything under WorkOrder/<workorder_id>/
+            s3_client.head_object(Bucket=bucket_name, Key=marker_key)
+            logger.info(
+                "Marker %s already exists; skipping Textract path for workOrderId=%s",
+                marker_key, workorder_id
+            )
+        except s3_client.exceptions.NoSuchKey:
+            # Marker doesn't exist → first time for this workOrderId
+            # → STEP 1: List only PDFs under WorkOrders/<workorder_id>/
             paginator = s3_client.get_paginator("list_objects_v2")
             pages = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
 
-            all_files = []
+            all_pdfs = []
             for page in pages:
                 for obj in page.get("Contents", []):
-                    all_files.append({
-                        "Key": obj["Key"],
-                        "LastModified": obj["LastModified"]
-                    })
+                    key = obj["Key"]
+                    if key.lower().endswith(".pdf"):
+                        all_pdfs.append({
+                            "Key":          key,
+                            "LastModified": obj["LastModified"]
+                        })
 
-            if not all_files:
-                logger.warning("No files found under %s; skipping Textract path.", prefix)
+            if not all_pdfs:
+                logger.warning("No PDFs found under %s; skipping Textract path.", prefix)
             else:
-                # 2) Sort by LastModified descending → pick the newest
-                latest = sorted(all_files, key=lambda x: x["LastModified"], reverse=True)[0]
+                # → STEP 2: Pick the most recently modified PDF
+                latest = sorted(all_pdfs, key=lambda x: x["LastModified"], reverse=True)[0]
                 latest_key = latest["Key"]
-                logger.info("Most recently uploaded key: %s", latest_key)
+                logger.info("Most recently uploaded PDF key: %s", latest_key)
 
-                # 3) Build a Textract event and call checklist.process(...)
+                # → STEP 3: Run checklist.process(...) one time
                 textract_event = {
                     "bucket":       bucket_name,
                     "document_key": latest_key
                 }
                 from checklist import process as textract_process
 
-                tex_start = time.time()
-                resp = textract_process(textract_event, None)
-                tex_end = time.time()
-                logger.info("Textract process(...) returned: %s  (took %.1f s)", resp, tex_end - tex_start)
+                try:
+                    tex_start = time.time()
+                    resp = textract_process(textract_event, None)
+                    tex_end = time.time()
+                    logger.info(
+                        "Textract (checklist.process) returned: %s  (took %.1f s)",
+                        resp, (tex_end - tex_start)
+                    )
+                except Exception as e:
+                    logger.error("Failed to run checklist.process(...): %s", e, exc_info=True)
+                    # if you want to fail the Lambda here, return a 500 or raise.
 
-        except Exception as e:
-            logger.error("Error during C-WRA Textract path: %s", e, exc_info=True)
-            return {
-                "statusCode": 500,
-                "body": json.dumps({"error": "C-WRA Textract processing failed"})
-            }
+                # → STEP 4: Create a zero-byte “.textract_ran” marker so we won’t run again
+                try:
+                    s3_client.put_object(
+                        Bucket=bucket_name,
+                        Key=marker_key,
+                        Body=b"" 
+                    )
+                    logger.info("Wrote Textract marker -> %s", marker_key)
+                except Exception as e:
+                    logger.error("Unable to write marker file %s: %s", marker_key, e, exc_info=True)
 
+        # else:  # if head_object did find that marker, we skip the above block
 
     else:
         logger.info("workTypeRef != C-WRA → skipping Textract path.")
-
-    # ────────────────────────────────────────────────────────────────────────────────
-    # 4) Build your final response exactly as before: all JSON-proofed entries (we did not
-    #    proof-and-return the PDF contents here, we merely ran checklist.process(...)).
-    # ────────────────────────────────────────────────────────────────────────────────
-    unique_proofed = { entry["recordId"]: entry for entry in combined_proofed }
-    final_response = {
-        "workOrderId":   workorder_id,
-        "contentType":   content_type,
-        "sectionContents": list(unique_proofed.values())
-    }
-    logger.info("Returning final response: %s", json.dumps(final_response, indent=2))
-
-    return {
-        "statusCode": 200,
-        "body": json.dumps(final_response)
-    }
