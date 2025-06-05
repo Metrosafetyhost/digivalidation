@@ -639,35 +639,46 @@ def process(event, context):
     # 1) Download the Textract JSON from S3
     try:
         resp = s3.get_object(Bucket=tex_bucket, Key=tex_key)
-        content = resp["Body"].read().decode("utf-8")
-        payload = json.loads(content)
+        content = resp["Body"].read().decode("utf-8")   # ‘content’ is the raw JSON string
     except Exception as e:
-        logger.error("Failed to download or parse Textract JSON: %s", e, exc_info=True)
+        logger.error("Failed to download Textract JSON from s3://%s/%s: %s", tex_bucket, tex_key, e, exc_info=True)
         return
 
-    # 2) Iterate through each question (1–15)
+    # ────────────────────────────────────────────────────────────────────────────────
+    # 2) Loop through questions 1–15, calling extract_json_data(json_string, question_number)
+    # ────────────────────────────────────────────────────────────────────────────────
     proofing_results = {}
     for q_num in range(1, 16):
         try:
-            proofing_results[f"Q{q_num}"] = extract_json_data(q_num, payload)
+            # Pass ‘content’ (raw JSON string) first, then the question number
+            proofing_results[f"Q{q_num}"] = extract_json_data(content, q_num)
         except Exception as ex:
             logger.warning("Error extracting data for question %d: %s", q_num, ex)
 
-    # 3) Write all proofing results back to S3
-    output_bucket = os.environ.get("OUTPUT_BUCKET")
-    if not output_bucket:
-        logger.error("Missing OUTPUT_BUCKET environment variable")
-        return
+    # ────────────────────────────────────────────────────────────────────────────────
+    # 3) Write the proofing_results dict back to S3
+    #    — use exactly the same env‐var name that you set in Lambda configuration
+    # ────────────────────────────────────────────────────────────────────────────────
 
-    output_key = f"proofing/{work_order_id}_proof.json"
-    try:
-        s3.put_object(
-            Bucket=output_bucket,
-            Key=output_key,
-            Body=json.dumps(proofing_results),
-            ContentType="application/json"
-        )
-        logger.info("Wrote proofing results to s3://%s/%s", output_bucket, output_key)
-    except Exception as e:
-        logger.error("Failed to write proofing results to S3: %s", e, exc_info=True)
+    logger.info("Proofing results for workOrderId %s:\n%s",
+            work_order_id,
+            json.dumps(proofing_results, indent=2))
+    
+
+    # output_bucket = os.environ.get("CHECKLIST_OUTPUT_BUCKET")
+    # if not output_bucket:
+    #     logger.error("Missing CHECKLIST_OUTPUT_BUCKET environment variable")
+    #     return
+
+    # output_key = f"proofing/{work_order_id}_proof.json"
+    # try:
+    #     s3.put_object(
+    #         Bucket=output_bucket,
+    #         Key=output_key,
+    #         Body=json.dumps(proofing_results),
+    #         ContentType="application/json"
+    #     )
+    #     logger.info("Wrote proofing results to s3://%s/%s", output_bucket, output_key)
+    # except Exception as e:
+    #     logger.error("Failed to write proofing results to S3: %s", e, exc_info=True)
 
