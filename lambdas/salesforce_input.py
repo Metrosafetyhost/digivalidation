@@ -4,6 +4,7 @@ import logging
 import uuid
 import time
 import io
+import os
 import csv
 from bs4 import BeautifulSoup
 import re
@@ -11,6 +12,8 @@ import re
 # Initialise logger
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+lambda_client = boto3.client("lambda")
 
 # AWS clients
 bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
@@ -347,10 +350,10 @@ def process(event, context):
             "statusCode": 400,
             "body": json.dumps({"error": "Invalid JSON format"})
         }
-
     work_type    = body.get("workTypeRef")      # e.g. "C-WRA" or something else
     buildingName = body.get("buildingName")     # e.g. "Main Office"
     workorder_id = body.get("workOrderId")      # e.g. "00X123456789"
+    bucket_name = "metrosafetyprodfiles"
 
     if not workorder_id or not buildingName:
         logger.error("Missing workOrderId or buildingName in payload.")
@@ -444,75 +447,54 @@ def process(event, context):
     # ────────────────────────────────────────────────────────────────────────────────
     # 3) If this is a C-WRA job, run the extra “fetch latest PDF → Textract” via checklist.py
     # ────────────────────────────────────────────────────────────────────────────────
-    if work_type == "C-WRA":
-        logger.info("workTypeRef == C-WRA → running checklist.process(...) for Textract…")
+    if work_type == "C-WRA" and workorder_id:
+            bucket_name = os.environ["SOURCE_BUCKET"]
+            prefix      = f"WorkOrders/{workorder_id}/"
 
-        bucket_name = "metrosafetyprodfiles"
-        prefix = f"WorkOrders/{workorder_id}/"
+            # Check for the zero-byte marker
+            marker_key = prefix + ".textract_ran"
+            try:
+                s3_client.head_object(Bucket=bucket_name, Key=marker_key)
+                logger.info("Marker exists (%s); skipping Textract for %s", marker_key, workorder_id)
+            except s3_client.exceptions.ClientError as ce:
+                if ce.response.get("Error", {}).get("Code") == "404":
+                    # Marker not found – find the newest PDF
+                    resp = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+                    contents = resp.get("Contents", [])
+                    pdf_objs = [obj for obj in contents if obj["Key"].lower().endswith(".pdf")]
 
-        # → STEP 0: Check for an existing “marker” file
-        marker_key = f"WorkOrders/{workorder_id}/.textract_ran"
-        try:
-            s3_client.head_object(Bucket=bucket_name, Key=marker_key)
-            logger.info(
-                "Marker %s already exists; skipping Textract path for workOrderId=%s",
-                marker_key, workorder_id
-            )
-        except s3_client.exceptions.NoSuchKey:
-            # Marker doesn't exist → first time for this workOrderId
-            # → STEP 1: List only PDFs under WorkOrders/<workorder_id>/
-            paginator = s3_client.get_paginator("list_objects_v2")
-            pages = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
+                    if not pdf_objs:
+                        logger.error("No PDF found under %s", prefix)
+                        return {"statusCode": 400, "body": "No PDF file to process."}
 
-            all_pdfs = []
-            for page in pages:
-                for obj in page.get("Contents", []):
-                    key = obj["Key"]
-                    if key.lower().endswith(".pdf"):
-                        all_pdfs.append({
-                            "Key":          key,
-                            "LastModified": obj["LastModified"]
-                        })
+                    # Select the most recently modified PDF
+                    newest = max(pdf_objs, key=lambda o: o["LastModified"])
+                    document_key = newest["Key"]
+                    logger.info("Picked newest PDF: s3://%s/%s", bucket_name, document_key)
 
-            if not all_pdfs:
-                logger.warning("No PDFs found under %s; skipping Textract path.", prefix)
-            else:
-                # → STEP 2: Pick the most recently modified PDF
-                latest = sorted(all_pdfs, key=lambda x: x["LastModified"], reverse=True)[0]
-                latest_key = latest["Key"]
-                logger.info("Most recently uploaded PDF key: %s", latest_key)
+                    # Write the zero-byte marker so we don’t re-run next time
+                    s3_client.put_object(Bucket=bucket_name, Key=marker_key, Body=b"")
+                    logger.info("Created marker %s", marker_key)
 
-                # → STEP 3: Run checklist.process(...) one time
-                textract_event = {
-                    "bucket":       bucket_name,
-                    "document_key": latest_key
-                }
-                from checklist import process as textract_process
-
-                try:
-                    tex_start = time.time()
-                    resp = textract_process(textract_event, None)
-                    tex_end = time.time()
-                    logger.info(
-                        "Textract (checklist.process) returned: %s  (took %.1f s)",
-                        resp, (tex_end - tex_start)
+                    # Invoke checklist.py asynchronously
+                    checklist_payload = {
+                        "bucket_name":   bucket_name,
+                        "document_key":  document_key,
+                        "workOrderId":   workorder_id
+                    }
+                    lambda_client.invoke(
+                        FunctionName   = os.environ["CHECKLIST_LAMBDA_ARN"],
+                        InvocationType = "Event",  # async “fire & forget”
+                        Payload        = json.dumps(checklist_payload).encode("utf-8")
                     )
-                except Exception as e:
-                    logger.error("Failed to run checklist.process(...): %s", e, exc_info=True)
-                    # if you want to fail the Lambda here, return a 500 or raise.
+                    logger.info("Invoked checklist.py for %s", document_key)
 
-                # → STEP 4: Create a zero-byte “.textract_ran” marker so we won’t run again
-                try:
-                    s3_client.put_object(
-                        Bucket=bucket_name,
-                        Key=marker_key,
-                        Body=b"" 
-                    )
-                    logger.info("Wrote Textract marker -> %s", marker_key)
-                except Exception as e:
-                    logger.error("Unable to write marker file %s: %s", marker_key, e, exc_info=True)
-
-        # else:  # if head_object did find that marker, we skip the above block
+                else:
+                    # Some other S3 error
+                    logger.error("Error checking marker %s: %s", marker_key, ce, exc_info=True)
+                    raise
 
     else:
-        logger.info("workTypeRef != C-WRA → skipping Textract path.")
+            logger.info("Not C-WRA or missing workOrderId; skipping Textract trigger.")
+
+    return {"statusCode": 200, "body": "salesforce_input complete"}

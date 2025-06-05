@@ -1,11 +1,16 @@
-import boto3
 import json
+import os
 import time
-import re
+import boto3
+import logging
 
-# AWS clients
-textract = boto3.client('textract', region_name='eu-west-2')
-s3      = boto3.client('s3')
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+textract       = boto3.client("textract", region_name="eu-west-2")
+s3             = boto3.client("s3")
+lambda_client  = boto3.client("lambda")
+
 
 IMPORTANT_HEADINGS = [
     "Significant Findings and Action Plan",
@@ -191,51 +196,6 @@ textract       = boto3.client("textract", region_name="eu-west-2")
 s3             = boto3.client("s3")
 lambda_client  = boto3.client("lambda")
 
-# ────────────────────────────────────────────────────────────────────────────────
-# (A) Your existing helper functions go here, unmodified from your old file:
-#
-# def poll_for_job_completion(job_id):
-#     """
-#     Polls textract.get_document_analysis until JobStatus == "SUCCEEDED",
-#     then pages through NextToken to gather all blocks. Returns a list of blocks.
-#     """
-#     all_blocks = []
-#     next_token = None
-#     while True:
-#         kwargs = {"JobId": job_id}
-#         if next_token:
-#             kwargs["NextToken"] = next_token
-#         resp = textract.get_document_analysis(**kwargs)
-#
-#         status = resp.get("JobStatus")
-#         if status == "SUCCEEDED":
-#             all_blocks.extend(resp.get("Blocks", []))
-#             next_token = resp.get("NextToken")
-#             # If there’s more data, page through it:
-#             while next_token:
-#                 resp = textract.get_document_analysis(JobId=job_id, NextToken=next_token)
-#                 all_blocks.extend(resp.get("Blocks", []))
-#                 next_token = resp.get("NextToken")
-#             return all_blocks
-#         elif status == "FAILED":
-#             raise RuntimeError(f"Textract job {job_id} failed")
-#         else:
-#             time.sleep(5)
-#
-# def extract_tables_grouped(blocks):
-#     # Your exact logic to merge TABLE blocks into Python structures
-#     pass
-#
-# def extract_key_value_pairs(blocks):
-#     # Your exact logic to merge FORM / KeyValue blocks
-#     pass
-#
-# def group_sections(blocks, tables, fields):
-#     # Your exact logic to group everything into “sections”
-#     pass
-# ────────────────────────────────────────────────────────────────────────────────
-
-
 def process(event, context):
     """
     Unified handler for two invocation styles:
@@ -323,7 +283,7 @@ def process(event, context):
     bucket_name   = event.get("bucket_name")
     document_key  = event.get("document_key")
     workOrderId   = event.get("workOrderId", "")
-    output_bucket = os.environ.get("CHECKLIST_OUTPUT_BUCKET", bucket_name)
+    output_bucket = os.environ.get("CHECKLIST_OUTPUT_BUCKET", "textract-output-digival")
 
     if not bucket_name or not document_key:
         err = f"When directly invoked, 'bucket_name' and 'document_key' must be provided. Received: {json.dumps(event)}"

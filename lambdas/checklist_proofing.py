@@ -2,7 +2,7 @@ import json
 import boto3
 import logging
 import re
-
+import os
 # ——— Initialise logging ———
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -618,39 +618,56 @@ def validate_water_assets(sections):
 
 def process(event, context):
     """
-    Lambda entry point.
-    Expects: 
-      - event['json_bucket'], event['json_key']
-      - optional event['question_number'] (defaults to 13)
+    Handler for SNS event from Textract Callback.
+
+    Expects event with keys:
+      - 'textract_bucket'
+      - 'textract_key'
+      - 'workOrderId'
     """
-    logger.info(f"Event received: {event}")
-    bucket = event.get("json_bucket")
-    key    = event.get("json_key")
-    q_num  = event.get("question_number", 13)
+    logger.info("Received proofing event: %s", json.dumps(event))
 
-    # 1) fetch your pre-processed Textract JSON
-    raw_json = s3.get_object(Bucket=bucket, Key=key)["Body"]\
-                  .read().decode("utf-8")
+    # Extract values from the SNS payload
+    tex_bucket = event.get("textract_bucket")
+    tex_key    = event.get("textract_key")
+    work_order_id = event.get("workOrderId")
 
-    # 2) extract the section or items
-    data = extract_json_data(raw_json, q_num)
+    if not tex_bucket or not tex_key or not work_order_id:
+        logger.error("Missing required event fields: %s", event)
+        return
 
-    # 3) build the Bedrock prompt & invoke
-    user_msg = build_user_message(q_num, data)
+    # 1) Download the Textract JSON from S3
+    try:
+        resp = s3.get_object(Bucket=tex_bucket, Key=tex_key)
+        content = resp["Body"].read().decode("utf-8")
+        payload = json.loads(content)
+    except Exception as e:
+        logger.error("Failed to download or parse Textract JSON: %s", e, exc_info=True)
+        return
 
-    # 4) QUESTION 16 is purely local → no AI call
-    if q_num == 16:
-        print(f"Q16 local response: {user_msg}")
-        return {
-            "statusCode": 200,
-            "body":       json.dumps({ "local_response": user_msg })
-        }
+    # 2) Iterate through each question (1–15)
+    proofing_results = {}
+    for q_num in range(1, 16):
+        try:
+            proofing_results[f"Q{q_num}"] = extract_json_data(q_num, payload)
+        except Exception as ex:
+            logger.warning("Error extracting data for question %d: %s", q_num, ex)
 
-    # 5) All other questions go through Bedrock/Claude
-    result = send_to_bedrock(user_msg)
-    logger.info(f"Bedrock response payload: {result}")
+    # 3) Write all proofing results back to S3
+    output_bucket = os.environ.get("OUTPUT_BUCKET")
+    if not output_bucket:
+        logger.error("Missing OUTPUT_BUCKET environment variable")
+        return
 
-    return {
-        "statusCode": 200,
-        "body":       json.dumps({"bedrock_response": result})
-    }
+    output_key = f"proofing/{work_order_id}_proof.json"
+    try:
+        s3.put_object(
+            Bucket=output_bucket,
+            Key=output_key,
+            Body=json.dumps(proofing_results),
+            ContentType="application/json"
+        )
+        logger.info("Wrote proofing results to s3://%s/%s", output_bucket, output_key)
+    except Exception as e:
+        logger.error("Failed to write proofing results to S3: %s", e, exc_info=True)
+
