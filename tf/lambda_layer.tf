@@ -449,3 +449,20 @@ resource "aws_iam_role_policy" "salesforce_input_s3_marker" {
     ]
   })
 }
+
+# 2) Attach a new inline policy that grants lambda:InvokeFunction on the checklist Lambda
+resource "aws_iam_role_policy" "AllowSalesforceInput_Invoke_Checklist" {
+  name = "AllowSalesforceInput_Invoke_Checklist"
+  role = data.aws_iam_role.salesforce_input_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "lambda:InvokeFunction"
+        Resource = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-checklist"
+      }
+    ]
+  })
+}
