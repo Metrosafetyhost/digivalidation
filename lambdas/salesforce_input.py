@@ -13,7 +13,7 @@ import re
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-PROOFING_CHECKLIST_ARN = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-checklist_proofing"
+PROOFING_CHECKLIST_ARN = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-checklist"
 lambda_client = boto3.client("lambda")
 
 # AWS clients
