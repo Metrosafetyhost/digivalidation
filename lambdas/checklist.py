@@ -251,7 +251,7 @@ def process(event, context):
             logger.info("Grouped into %d sections for %s", len(secs), document_key)
 
             # ─── (3) Write combined JSON to S3: processed/<pdfName>.json ─────────
-            output_bucket = os.environ.get("CHECKLIST_OUTPUT_BUCKET", bucket_name)
+            output_bucket = os.environ.get("CHECKLIST_OUTPUT_BUCKET", "textract-output-digival")
             pdf_base      = document_key.split("/")[-1].replace(".pdf", ".json")
             processed_key = f"processed/{pdf_base}"
             combined_body = {"document": document_key, "sections": secs}
@@ -270,7 +270,7 @@ def process(event, context):
                 "workOrderId":     workOrderId
             }
             lambda_client.invoke(
-                FunctionName   = os.environ["PROOFING_LAMBDA_ARN"],
+                FunctionName   = PROOFING_LAMBDA_ARN,
                 InvocationType = "Event",
                 Payload        = json.dumps(proofing_payload).encode("utf-8")
             )
@@ -333,7 +333,7 @@ def process(event, context):
             "workOrderId":     workOrderId
         }
         lambda_client.invoke(
-            FunctionName   = os.environ["PROOFING_LAMBDA_ARN"],
+            FunctionName   = PROOFING_LAMBDA_ARN,
             InvocationType = "Event",
             Payload        = json.dumps(proofing_payload).encode("utf-8")
         )
