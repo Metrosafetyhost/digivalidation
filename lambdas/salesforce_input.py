@@ -13,6 +13,7 @@ import re
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+PROOFING_CHECKLIST_ARN = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-checklist_proofing"
 lambda_client = boto3.client("lambda")
 
 # AWS clients
@@ -448,7 +449,7 @@ def process(event, context):
     # 3) If this is a C-WRA job, run the extra “fetch latest PDF → Textract” via checklist.py
     # ────────────────────────────────────────────────────────────────────────────────
     if work_type == "C-WRA" and workorder_id:
-            bucket_name = os.environ["SOURCE_BUCKET"]
+            bucket_name = "metrosafetyprodfiles"
             prefix      = f"WorkOrders/{workorder_id}/"
 
             # Check for the zero-byte marker
@@ -483,7 +484,7 @@ def process(event, context):
                         "workOrderId":   workorder_id
                     }
                     lambda_client.invoke(
-                        FunctionName   = os.environ["CHECKLIST_LAMBDA_ARN"],
+                        FunctionName   = PROOFING_CHECKLIST_ARN,
                         InvocationType = "Event",  # async “fire & forget”
                         Payload        = json.dumps(checklist_payload).encode("utf-8")
                     )
