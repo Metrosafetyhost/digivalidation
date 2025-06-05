@@ -3,6 +3,7 @@ import os
 import time
 import boto3
 import logging
+import re
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -10,6 +11,8 @@ logger.setLevel(logging.INFO)
 textract       = boto3.client("textract", region_name="eu-west-2")
 s3             = boto3.client("s3")
 lambda_client  = boto3.client("lambda")
+
+PROOFING_LAMBDA_ARN = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-checklist_proofing"
 
 
 IMPORTANT_HEADINGS = [
