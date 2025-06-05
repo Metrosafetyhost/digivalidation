@@ -376,8 +376,13 @@ resource "aws_iam_role_policy_attachment" "checklist_textract_read_attach" {
 # -------------------------------------------------------------------
 # 1) IAM policy allowing this role to invoke the proofing Lambda
 # -------------------------------------------------------------------
-resource "aws_iam_policy" "checklist_invoke_proof_policy" {
-  name = "ChecklistInvokeProofPolicy"
+data "aws_iam_role" "checklist_role" {
+  name = "bedrock-lambda-checklist"
+}
+
+resource "aws_iam_role_policy" "allow_invoke_proofing" {
+  name = "AllowInvokeChecklistProofing"
+  role = data.aws_iam_role.checklist_role.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -389,9 +394,4 @@ resource "aws_iam_policy" "checklist_invoke_proof_policy" {
       }
     ]
   })
-}
-
-resource "aws_iam_role_policy_attachment" "attach_invoke_proof" {
-  role       = aws_iam_role.lambda_role.name
-  policy_arn = aws_iam_policy.checklist_invoke_proof_policy.arn
 }
