@@ -395,3 +395,57 @@ resource "aws_iam_role_policy" "allow_invoke_proofing" {
     ]
   })
 }
+
+#
+# 1) Look up the existing “bedrock-lambda-salesforce_input” role by name
+#
+data "aws_iam_role" "salesforce_input_role" {
+  name = "bedrock-lambda-salesforce_input"
+}
+
+#
+# 2) Attach a policy that allows ListBucket / HeadObject / PutObject
+#    on the exact prefix where you create “.textract_ran”
+#
+resource "aws_iam_role_policy" "salesforce_input_s3_marker" {
+  name = "AllowSalesforceInputToMarkTextractRan"
+  role = data.aws_iam_role.salesforce_input_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      # (a) allow listing “WorkOrders/<workOrderId>” so you can find the latest PDF
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket"
+        ]
+        Resource = "arn:aws:s3:::metrosafetyprodfiles"
+        Condition = {
+          StringLike = {
+            # only the WorkOrders/<workOrderId> prefix
+            "s3:prefix" = "WorkOrders/*"
+          }
+        }
+      },
+
+      # (b) allow HeadObject so you can check for the marker
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:HeadObject"
+        ]
+        Resource = "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*/.textract_ran"
+      },
+
+      # (c) allow putting the zero-byte marker “.textract_ran”
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject"
+        ]
+        Resource = "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*/.textract_ran"
+      }
+    ]
+  })
+}
