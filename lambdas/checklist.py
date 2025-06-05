@@ -176,22 +176,208 @@ def get_all_pages(job_id):
         if not token: break
     return blocks
 
-def process(event, context):
-    # kick off Textract
-    resp = textract.start_document_analysis(
-      DocumentLocation={'S3Object':{
-         'Bucket':event.get('bucket','metrosafetyprodfiles'),
-         'Name':  event['document_key']
-      }},
-      FeatureTypes=['TABLES','FORMS']
-    )
-    blocks  = poll_for_job_completion(resp['JobId'])
-    tables  = extract_tables_grouped(blocks)
-    fields  = extract_key_value_pairs(blocks)
-    secs    = group_sections(blocks, tables, fields)
+# checklist.py
 
-    out = {'document': event['document_key'], 'sections': secs}
-    key = f"processed/{event['document_key'].split('/')[-1].replace('.pdf','.json')}"
-    s3.put_object(Bucket=event.get('output_bucket','textract-output-digival'),
-                  Key=key, Body=json.dumps(out))
-    return {'statusCode':200, 'body':json.dumps({'json_s3_key':key})}
+import json
+import os
+import time
+import boto3
+import logging
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+textract       = boto3.client("textract", region_name="eu-west-2")
+s3             = boto3.client("s3")
+lambda_client  = boto3.client("lambda")
+
+# ────────────────────────────────────────────────────────────────────────────────
+# (A) Your existing helper functions go here, unmodified from your old file:
+#
+# def poll_for_job_completion(job_id):
+#     """
+#     Polls textract.get_document_analysis until JobStatus == "SUCCEEDED",
+#     then pages through NextToken to gather all blocks. Returns a list of blocks.
+#     """
+#     all_blocks = []
+#     next_token = None
+#     while True:
+#         kwargs = {"JobId": job_id}
+#         if next_token:
+#             kwargs["NextToken"] = next_token
+#         resp = textract.get_document_analysis(**kwargs)
+#
+#         status = resp.get("JobStatus")
+#         if status == "SUCCEEDED":
+#             all_blocks.extend(resp.get("Blocks", []))
+#             next_token = resp.get("NextToken")
+#             # If there’s more data, page through it:
+#             while next_token:
+#                 resp = textract.get_document_analysis(JobId=job_id, NextToken=next_token)
+#                 all_blocks.extend(resp.get("Blocks", []))
+#                 next_token = resp.get("NextToken")
+#             return all_blocks
+#         elif status == "FAILED":
+#             raise RuntimeError(f"Textract job {job_id} failed")
+#         else:
+#             time.sleep(5)
+#
+# def extract_tables_grouped(blocks):
+#     # Your exact logic to merge TABLE blocks into Python structures
+#     pass
+#
+# def extract_key_value_pairs(blocks):
+#     # Your exact logic to merge FORM / KeyValue blocks
+#     pass
+#
+# def group_sections(blocks, tables, fields):
+#     # Your exact logic to group everything into “sections”
+#     pass
+# ────────────────────────────────────────────────────────────────────────────────
+
+
+def process(event, context):
+    """
+    Unified handler for two invocation styles:
+      A) Direct invocation with {"bucket_name", "document_key", "workOrderId", ...}
+      B) SNS invocation from Textract completion with {"Records":[{"Sns":{"Message":...}}]}
+    In either case, we ultimately want to:
+      1) Start Textract on the PDF (if Direct‐invoke) or skip that if SNS‐invoke.
+      2) Poll for completion via poll_for_job_completion(job_id).
+      3) Run your extract_tables_grouped, extract_key_value_pairs, group_sections.
+      4) Write processed JSON to S3 under processed/<pdfName>.json.
+      5) Invoke checklist_proofing.py with {"textract_bucket","textract_key","workOrderId"}.
+    """
+
+    # ─── Case B: SNS invocation from Textract finish ──────────────────────────────
+    if event.get("Records"):
+        try:
+            sns_message = event["Records"][0]["Sns"]["Message"]
+            msg         = json.loads(sns_message)
+            job_id      = msg.get("JobId")
+            status      = msg.get("Status")
+
+            if status != "SUCCEEDED":
+                logger.warning("Textract job %s did not succeed (%s); skipping.", job_id, status)
+                return {"statusCode": 200, "body": "Skipped non‐SUCCEEDED job."}
+
+            # Get the original PDF’s S3 location that we started Textract on:
+            s3_loc       = msg.get("DocumentLocation", {}).get("S3Object", {})
+            bucket_name  = s3_loc.get("Bucket")
+            document_key = s3_loc.get("Name")  # e.g. "WorkOrders/ABC123/report.pdf"
+
+            if not bucket_name or not document_key:
+                err = f"Malformed DocumentLocation in SNS message: {json.dumps(msg)}"
+                logger.error(err)
+                return {"statusCode": 400, "body": err}
+
+            # Derive workOrderId (assumes path "WorkOrders/<workOrderId>/…"):
+            try:
+                workOrderId = document_key.split("/")[1]
+            except IndexError:
+                workOrderId = ""
+
+            # ─── (1) Poll for blocks using your exact old snippet ───────────────────
+            blocks = poll_for_job_completion(job_id)
+            logger.info("Textract job %s SUCCEEDED; collected %d blocks", job_id, len(blocks))
+
+            # ─── (2) Run your extraction logic (tables/forms → sections) ────────────
+            tables = extract_tables_grouped(blocks)
+            fields = extract_key_value_pairs(blocks)
+            secs   = group_sections(blocks, tables, fields)
+            logger.info("Grouped into %d sections for %s", len(secs), document_key)
+
+            # ─── (3) Write combined JSON to S3: processed/<pdfName>.json ─────────
+            output_bucket = os.environ.get("CHECKLIST_OUTPUT_BUCKET", bucket_name)
+            pdf_base      = document_key.split("/")[-1].replace(".pdf", ".json")
+            processed_key = f"processed/{pdf_base}"
+            combined_body = {"document": document_key, "sections": secs}
+
+            s3.put_object(
+                Bucket=output_bucket,
+                Key=processed_key,
+                Body=json.dumps(combined_body).encode("utf-8")
+            )
+            logger.info("Wrote processed JSON to s3://%s/%s", output_bucket, processed_key)
+
+            # ─── (4) Invoke proofing Lambda (checklist_proofing.py) ──────────────
+            proofing_payload = {
+                "textract_bucket": output_bucket,
+                "textract_key":    processed_key,
+                "workOrderId":     workOrderId
+            }
+            lambda_client.invoke(
+                FunctionName   = os.environ["PROOFING_LAMBDA_ARN"],
+                InvocationType = "Event",
+                Payload        = json.dumps(proofing_payload).encode("utf-8")
+            )
+            logger.info("Invoked checklist_proofing for %s", processed_key)
+
+            return {"statusCode": 200, "body": f"Completed SNS job {job_id}"}
+
+        except Exception as e:
+            logger.error("Error in SNS branch of checklist.process: %s", e, exc_info=True)
+            raise
+
+    # ─── Case A: Direct invocation (salesforce_input) ─────────────────────────────
+    bucket_name   = event.get("bucket_name")
+    document_key  = event.get("document_key")
+    workOrderId   = event.get("workOrderId", "")
+    output_bucket = os.environ.get("CHECKLIST_OUTPUT_BUCKET", bucket_name)
+
+    if not bucket_name or not document_key:
+        err = f"When directly invoked, 'bucket_name' and 'document_key' must be provided. Received: {json.dumps(event)}"
+        logger.error(err)
+        return {"statusCode": 400, "body": err}
+
+    try:
+        # ─── (1) Start Textract job ─────────────────────────────────────────────
+        tex_resp = textract.start_document_analysis(
+            DocumentLocation={
+                "S3Object": {"Bucket": bucket_name, "Name": document_key}
+            },
+            FeatureTypes=["TABLES", "FORMS"]
+        )
+        job_id = tex_resp["JobId"]
+        logger.info("Started Textract job %s for s3://%s/%s", job_id, bucket_name, document_key)
+
+        # ─── (2) Poll until Textract finishes ───────────────────────────────────
+        blocks = poll_for_job_completion(job_id)
+        logger.info("Textract job %s SUCCEEDED; collected %d blocks", job_id, len(blocks))
+
+        # ─── (3) Run extraction logic (tables/forms → sections) ─────────────────
+        tables = extract_tables_grouped(blocks)
+        fields = extract_key_value_pairs(blocks)
+        secs   = group_sections(blocks, tables, fields)
+        logger.info("Grouped into %d sections for %s", len(secs), document_key)
+
+        # ─── (4) Write combined JSON to S3: processed/<pdfName>.json ───────────
+        pdf_base      = document_key.split("/")[-1].replace(".pdf", ".json")
+        processed_key = f"processed/{pdf_base}"
+        combined_body = {"document": document_key, "sections": secs}
+
+        s3.put_object(
+            Bucket=output_bucket,
+            Key=processed_key,
+            Body=json.dumps(combined_body).encode("utf-8")
+        )
+        logger.info("Wrote processed JSON to s3://%s/%s", output_bucket, processed_key)
+
+        # ─── (5) Invoke proofing Lambda ───────────────────────────────────────
+        proofing_payload = {
+            "textract_bucket": output_bucket,
+            "textract_key":    processed_key,
+            "workOrderId":     workOrderId
+        }
+        lambda_client.invoke(
+            FunctionName   = os.environ["PROOFING_LAMBDA_ARN"],
+            InvocationType = "Event",
+            Payload        = json.dumps(proofing_payload).encode("utf-8")
+        )
+        logger.info("Invoked checklist_proofing for %s", processed_key)
+
+        return {"statusCode": 200, "body": json.dumps({"json_s3_key": processed_key})}
+
+    except Exception as e:
+        logger.error("Error in direct‐invoke branch of checklist.process: %s", e, exc_info=True)
+        raise
