@@ -3,7 +3,6 @@ import boto3
 import logging
 import re
 import os
-import ses
 # ——— Initialise logging ———
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -11,7 +10,7 @@ logger.setLevel(logging.INFO)
 # ——— AWS clients ———
 bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
 s3       = boto3.client('s3')
-
+ses = boto3.client('ses', region_name='eu-west-2')
 
 def extract_json_data(json_content, question_number):
     payload = json.loads(json_content)
@@ -628,10 +627,7 @@ def process(event, context):
     """
     logger.info("Received proofing event: %s", json.dumps(event))
 
-    # ——— OVERRIDE assessor_email for testing purposes ———
-    # Replace the string below with your own address before you invoke.
-    test_address = "luke.gasson@metrosafety.co.uk"
-    assessor_email = test_address
+    
 
     # (We still check SES_SOURCE_EMAIL below, etc. if needed.)
 
@@ -639,6 +635,10 @@ def process(event, context):
     tex_bucket     = event.get("textract_bucket")
     tex_key        = event.get("textract_key")
     work_order_id  = event.get("workOrderId")
+    emailAddress   = event.get("emailAddress")
+    buildingName   = event.get("buildingName")
+    test_address   = "luke.gasson@metrosafety.co.uk"
+    emailAddress   = test_address
 
     if not tex_bucket or not tex_key or not work_order_id:
         logger.error("Missing one of textract_bucket/textract_key/workOrderId in event: %s", event)
@@ -708,7 +708,7 @@ def process(event, context):
     email_params = {
         "Source": source_email,
         "Destination": {
-            "ToAddresses": [assessor_email],
+            "ToAddresses": [emailAddress],
             "BccAddresses": bcc_list
         },
         "Message": {
@@ -721,7 +721,7 @@ def process(event, context):
 
     try:
         ses.send_email(**email_params)
-        logger.info("Sent proofing email to %s (bcc: %s)", assessor_email, bcc_list)
+        logger.info("Sent proofing email to %s (bcc: %s)", test_address, bcc_list)
     except Exception as e:
         logger.error("Failed to send SES email: %s", e, exc_info=True)
         return {"statusCode": 500, "body": "Error sending email"}
