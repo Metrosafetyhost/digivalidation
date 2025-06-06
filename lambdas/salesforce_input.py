@@ -362,12 +362,12 @@ def process(event, context):
     emailAddress = event.get("emailAddress")
     bucket_name = "metrosafetyprodfiles"
 
-    # if not workorder_id or not buildingName:
-    #     logger.error("Missing workOrderId or buildingName in payload.")
-    #     return {
-    #         "statusCode": 400,
-    #         "body": json.dumps({"error": "workOrderId and buildingName are required"})
-    #     }
+    if not workorder_id or not buildingName:
+        logger.error("Missing workOrderId or buildingName in payload.")
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"error": "workOrderId and buildingName are required"})
+        }
 
     logger.info("Parsed workTypeRef=%s, buildingName=%s, workOrderId=%s",
                 work_type, buildingName, workorder_id)
