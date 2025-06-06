@@ -351,9 +351,15 @@ def process(event, context):
             "statusCode": 400,
             "body": json.dumps({"error": "Invalid JSON format"})
         }
+    
+    
+    # if not assessor_email:
+    #     logger.error("Missing required field 'assessor_email' in event: %s", event)
+    #     return {"statusCode": 400, "body": "Missing assessor_email"}
     work_type    = body.get("workTypeRef")      # e.g. "C-WRA" or something else
     buildingName = body.get("buildingName")     # e.g. "Main Office"
     workorder_id = body.get("workOrderId")      # e.g. "00X123456789"
+    emailAddress = event.get("emailAddress")
     bucket_name = "metrosafetyprodfiles"
 
     if not workorder_id or not buildingName:
@@ -481,7 +487,9 @@ def process(event, context):
                     checklist_payload = {
                         "bucket_name":   bucket_name,
                         "document_key":  document_key,
-                        "workOrderId":   workorder_id
+                        "workOrderId":   workorder_id,
+                        "emailAddress": emailAddress,
+                        "buildingName": buildingName
                     }
                     lambda_client.invoke(
                         FunctionName   = PROOFING_CHECKLIST_ARN,

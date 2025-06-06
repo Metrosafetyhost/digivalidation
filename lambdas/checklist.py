@@ -184,8 +184,6 @@ def get_all_pages(job_id):
         if not token: break
     return blocks
 
-# checklist.py
-
 import json
 import os
 import time
@@ -240,6 +238,9 @@ def process(event, context):
             except IndexError:
                 workOrderId = ""
 
+            emailAddress = event.get("emailAddress")
+            buildingName = event.get("buildingName")
+
             # ─── (1) Poll for blocks using your exact old snippet ───────────────────
             blocks = poll_for_job_completion(job_id)
             logger.info("Textract job %s SUCCEEDED; collected %d blocks", job_id, len(blocks))
@@ -267,7 +268,9 @@ def process(event, context):
             proofing_payload = {
                 "textract_bucket": output_bucket,
                 "textract_key":    processed_key,
-                "workOrderId":     workOrderId
+                "workOrderId":     workOrderId,
+                "emailAddress": emailAddress,
+                "buildingName" : buildingName
             }
             lambda_client.invoke(
                 FunctionName   = PROOFING_LAMBDA_ARN,
@@ -286,6 +289,7 @@ def process(event, context):
     bucket_name   = event.get("bucket_name")
     document_key  = event.get("document_key")
     workOrderId   = event.get("workOrderId", "")
+    ema
     output_bucket = os.environ.get("CHECKLIST_OUTPUT_BUCKET", "textract-output-digival")
 
     if not bucket_name or not document_key:

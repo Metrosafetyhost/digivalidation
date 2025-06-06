@@ -3,6 +3,7 @@ import boto3
 import logging
 import re
 import os
+import ses
 # ——— Initialise logging ———
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -615,7 +616,6 @@ def validate_water_assets(sections):
 #             "but no related action in Significant Findings and Action Plan!"
 #         )
 
-
 def process(event, context):
     """
     Handler for SNS event from Textract Callback.
@@ -624,61 +624,106 @@ def process(event, context):
       - 'textract_bucket'
       - 'textract_key'
       - 'workOrderId'
+      - 'assessor_email'       ← ignored here, we override below for testing
     """
     logger.info("Received proofing event: %s", json.dumps(event))
 
-    # Extract values from the SNS payload
-    tex_bucket = event.get("textract_bucket")
-    tex_key    = event.get("textract_key")
-    work_order_id = event.get("workOrderId")
+    # ——— OVERRIDE assessor_email for testing purposes ———
+    # Replace the string below with your own address before you invoke.
+    test_address = "luke.gasson@metrosafety.co.uk"
+    assessor_email = test_address
+
+    # (We still check SES_SOURCE_EMAIL below, etc. if needed.)
+
+    # ——— 1) Extract required fields from event ———
+    tex_bucket     = event.get("textract_bucket")
+    tex_key        = event.get("textract_key")
+    work_order_id  = event.get("workOrderId")
 
     if not tex_bucket or not tex_key or not work_order_id:
-        logger.error("Missing required event fields: %s", event)
-        return
+        logger.error("Missing one of textract_bucket/textract_key/workOrderId in event: %s", event)
+        return {"statusCode": 400, "body": "Missing required fields"}
 
-    # 1) Download the Textract JSON from S3
+    # ——— 2) Download the Textract JSON from S3 ———
     try:
-        resp = s3.get_object(Bucket=tex_bucket, Key=tex_key)
-        content = resp["Body"].read().decode("utf-8")   # ‘content’ is the raw JSON string
+        s3_obj  = s3.get_object(Bucket=tex_bucket, Key=tex_key)
+        content = s3_obj["Body"].read().decode("utf-8")
     except Exception as e:
-        logger.error("Failed to download Textract JSON from s3://%s/%s: %s", tex_bucket, tex_key, e, exc_info=True)
-        return
+        logger.error(
+            "Failed to download Textract JSON from s3://%s/%s: %s",
+            tex_bucket, tex_key, e, exc_info=True
+        )
+        return {"statusCode": 500, "body": "Cannot fetch Textract JSON"}
 
-    # ────────────────────────────────────────────────────────────────────────────────
-    # 2) Loop through questions 1–15, calling extract_json_data(json_string, question_number)
-    # ────────────────────────────────────────────────────────────────────────────────
+    # ——— 3) Loop through Q1–Q15, always sending to Bedrock ———
     proofing_results = {}
     for q_num in range(1, 16):
         try:
-            # Pass ‘content’ (raw JSON string) first, then the question number
-            proofing_results[f"Q{q_num}"] = extract_json_data(content, q_num)
+            parsed_content = extract_json_data(content, q_num)
+            prompt         = build_user_message(q_num, parsed_content)
+
+            if not prompt:
+                proofing_results[f"Q{q_num}"] = "(no prompt built)"
+            else:
+                ai_reply = send_to_bedrock(prompt)
+                proofing_results[f"Q{q_num}"] = ai_reply or "(empty response)"
+
         except Exception as ex:
-            logger.warning("Error extracting data for question %d: %s", q_num, ex)
+            logger.warning(
+                "Error while processing Q%d for WorkOrder %s: %s",
+                q_num, work_order_id, ex, exc_info=True
+            )
+            proofing_results[f"Q{q_num}"] = f"ERROR: {ex}"
 
-    # ────────────────────────────────────────────────────────────────────────────────
-    # 3) Write the proofing_results dict back to S3
-    #    — use exactly the same env‐var name that you set in Lambda configuration
-    # ────────────────────────────────────────────────────────────────────────────────
+    # ——— 4) Log all results ———
+    logger.info(
+        "Proofing results for workOrderId %s:\n%s",
+        work_order_id,
+        json.dumps(proofing_results, indent=2)
+    )
 
-    logger.info("Proofing results for workOrderId %s:\n%s",
-            work_order_id,
-            json.dumps(proofing_results, indent=2))
-    
+    # ——— 5) Build a structured plaintext email body ———
+    subject = f"Proofing Results for WorkOrder {work_order_id}"
+    body_lines = []
+    body_lines.append("Hello,\n")
+    body_lines.append(f"Below are the proofing outputs for Work Order {work_order_id}:\n")
 
-    # output_bucket = os.environ.get("CHECKLIST_OUTPUT_BUCKET")
-    # if not output_bucket:
-    #     logger.error("Missing CHECKLIST_OUTPUT_BUCKET environment variable")
-    #     return
+    for q_key in sorted(proofing_results.keys()):
+        answer = proofing_results[q_key]
+        indented_answer = "\n".join("  " + line for line in str(answer).splitlines())
+        body_lines.append(f"{q_key}:\n{indented_answer}\n")
 
-    # output_key = f"proofing/{work_order_id}_proof.json"
-    # try:
-    #     s3.put_object(
-    #         Bucket=output_bucket,
-    #         Key=output_key,
-    #         Body=json.dumps(proofing_results),
-    #         ContentType="application/json"
-    #     )
-    #     logger.info("Wrote proofing results to s3://%s/%s", output_bucket, output_key)
-    # except Exception as e:
-    #     logger.error("Failed to write proofing results to S3: %s", e, exc_info=True)
+    body_lines.append("Regards,\nQuality Team\n")
+    body_text = "\n".join(body_lines)
 
+    # ——— 6) Send the email via SES ———
+    source_email = "luke.gasson@metrosafety.co.uk"
+    if not source_email:
+        logger.error("SES_SOURCE_EMAIL not set in environment.")
+        return {"statusCode": 500, "body": "Missing SES_SOURCE_EMAIL"}
+
+    bcc_env  = os.environ.get("BCC_ADDRESSES", "")
+    bcc_list = [addr.strip() for addr in bcc_env.split(",") if addr.strip()]
+
+    email_params = {
+        "Source": source_email,
+        "Destination": {
+            "ToAddresses": [assessor_email],
+            "BccAddresses": bcc_list
+        },
+        "Message": {
+            "Subject": {"Data": subject},
+            "Body": {
+                "Text": {"Data": body_text}
+            }
+        }
+    }
+
+    try:
+        ses.send_email(**email_params)
+        logger.info("Sent proofing email to %s (bcc: %s)", assessor_email, bcc_list)
+    except Exception as e:
+        logger.error("Failed to send SES email: %s", e, exc_info=True)
+        return {"statusCode": 500, "body": "Error sending email"}
+
+    return {"statusCode": 200, "body": "Checklist processing complete"}
