@@ -289,7 +289,6 @@ def process(event, context):
     bucket_name   = event.get("bucket_name")
     document_key  = event.get("document_key")
     workOrderId   = event.get("workOrderId", "")
-    ema
     output_bucket = os.environ.get("CHECKLIST_OUTPUT_BUCKET", "textract-output-digival")
 
     if not bucket_name or not document_key:
