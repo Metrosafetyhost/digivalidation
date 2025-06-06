@@ -640,9 +640,9 @@ def process(event, context):
     test_address   = "luke.gasson@metrosafety.co.uk"
     emailAddress   = test_address
 
-    if not tex_bucket or not tex_key or not work_order_id:
-        logger.error("Missing one of textract_bucket/textract_key/workOrderId in event: %s", event)
-        return {"statusCode": 400, "body": "Missing required fields"}
+    # if not tex_bucket or not tex_key or not work_order_id:
+    #     logger.error("Missing one of textract_bucket/textract_key/workOrderId in event: %s", event)
+    #     return {"statusCode": 400, "body": "Missing required fields"}
 
     # ——— 2) Download the Textract JSON from S3 ———
     try:
