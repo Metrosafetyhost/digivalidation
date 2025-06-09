@@ -3,8 +3,16 @@ resource "aws_ses_email_identity" "sender" {
   email = "luke.gasson@metrosafety.co.uk"
 }
 
-resource "aws_ses_email_identity" "recipient" {
+resource "aws_ses_email_identity" "recipient_luke" {
   email = "luke.gasson@metrosafety.co.uk"
+}
+
+resource "aws_ses_email_identity" "recipient_peter" {
+  email = "peter.taylor@metrosafety.co.uk"
+}
+
+resource "aws_ses_email_identity" "recipient_cristian" {
+  email = "cristian.carabus@metrosafety.co.uk"
 }
 
 # 2. Look up the Salesforce‐input Lambda role (you already have this)
