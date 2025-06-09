@@ -30,6 +30,7 @@ RECIPIENT = "luke.gasson@metrosafety.co.uk"
 BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 BUCKET_NAME = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
 TABLE_NAME = "ProofingMetadata"
+PDF_BUCKET = "metrosafetyprodfiles"
 
 def strip_html(html):
     """Strip HTML tags from a string and return only text."""
@@ -516,4 +517,92 @@ def process(event, context):
         "statusCode": 200,
         "headers": { "Content-Type": "application/json" },
         "body": json.dumps(final_response)
+    }
+
+
+def process(event, context):
+    # 1) parse common fields
+    body = json.loads(event.get("body",""))
+    work_type    = body.get("workTypeRef")
+    workorder_id = body.get("workOrderId")
+    email_addr   = body.get("emailAddress")
+    buildingName = body.get("buildingName")
+
+    # 2) ALWAYS run your AI-proofing
+    wo, ct, proof_reqs, table_data = load_payload(event)
+    if not proof_reqs:
+        return {"statusCode":400,"body":json.dumps({"error":"No proofing items found"})}
+
+    logs, flag, proofed = [], False, []
+    for rid, cont in proof_reqs.items():
+        if ct == "FormQuestion":
+            html, le = proof_table_content(cont, rid)
+            for e in le:
+                logs.append(e)
+                if e["original"]!=e["proofed"]:
+                    flag = True
+            proofed.append({"recordId":rid,"content":html})
+        else:
+            txt = proof_plain_text(cont, rid)
+            orig = strip_html(cont); corr=strip_html(txt)
+            if corr!=orig:
+                flag = True
+                logs.append({"recordId":rid,"header":"","original":orig,"proofed":corr})
+            else:
+                logs.append({"recordId":rid,"header":"",
+                             "original":"No changes needed: "+orig,
+                             "proofed":"No changes made."})
+            proofed.append({"recordId":rid,"content":txt})
+
+    status = "Proofed" if flag else "Original"
+    csv_key = update_logs_csv(logs, f"{workorder_id}_logs", "logs")
+    store_metadata(workorder_id, csv_key, status)
+
+    final_response = {
+        "workOrderId":     workorder_id,
+        "contentType":     ct,
+        "sectionContents": proofed
+    }
+
+    # 3) THEN trigger Textract/checklist for C-WRA only
+    if work_type == "C-WRA" and workorder_id:
+        prefix = f"WorkOrders/{workorder_id}/"
+        marker = prefix + ".textract_ran"
+        s3 = boto3.client("s3")
+        try:
+            s3.head_object(Bucket=PDF_BUCKET, Key=marker)
+            logger.info("Marker exists, skipping Textract.")
+        except s3.exceptions.ClientError as ce:
+            if ce.response["Error"]["Code"] == "404":
+                # find newest PDF
+                resp = s3.list_objects_v2(Bucket=PDF_BUCKET, Prefix=prefix)
+                pdfs = [o for o in resp.get("Contents",[]) if o["Key"].lower().endswith(".pdf")]
+                if pdfs:
+                    newest = max(pdfs, key=lambda x: x["LastModified"])
+                    doc_key = newest["Key"]
+                    # write marker
+                    s3.put_object(Bucket=PDF_BUCKET, Key=marker, Body=b"")
+                    # invoke checklist
+                    payload = {
+                      "bucket_name":  PDF_BUCKET,
+                      "document_key": doc_key,
+                      "workOrderId":  workorder_id,
+                      "emailAddress": email_addr,
+                      "buildingName": buildingName
+                    }
+                    lambda_client.invoke(
+                        FunctionName=PROOFING_CHECKLIST_ARN,
+                        InvocationType="Event",
+                        Payload=json.dumps(payload).encode("utf-8")
+                    )
+                else:
+                    logger.error("No PDF found under %s", prefix)
+            else:
+                raise
+
+    # 4) return proofed JSON every time
+    return {
+        "statusCode": 200,
+        "headers":    {"Content-Type":"application/json"},
+        "body":       json.dumps(final_response)
     }
