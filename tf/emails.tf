@@ -45,5 +45,3 @@ resource "aws_iam_role_policy_attachment" "checklist_proofing_ses" {
   policy_arn = aws_iam_policy.ses_send_email.arn
 }
 
-# (Optional) to avoid hard-coding the account ID, you can add:
-data "aws_caller_identity" "current" {}
