@@ -1,10 +1,10 @@
-
 import json
 import boto3
 import logging
 import uuid
 import time
 import io
+import os
 import csv
 from bs4 import BeautifulSoup
 import re
@@ -12,6 +12,9 @@ import re
 # Initialise logger
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+PROOFING_CHECKLIST_ARN = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-checklist"
+lambda_client = boto3.client("lambda")
 
 # AWS clients
 bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
@@ -27,6 +30,7 @@ RECIPIENT = "luke.gasson@metrosafety.co.uk"
 BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 BUCKET_NAME = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
 TABLE_NAME = "ProofingMetadata"
+PDF_BUCKET = "metrosafetyprodfiles"
 
 def strip_html(html):
     """Strip HTML tags from a string and return only text."""
@@ -191,7 +195,7 @@ def proof_plain_text(text, record_id):
 
 def update_logs_csv(log_entries, filename, folder):
     """
-    Merge new log_entries into the existing CSV in S3, dedupe, and overwrite.
+    Merge new log_entries into the existing CSV in S3, dedupe, flatten newlines, and overwrite.
     log_entries: list of dicts with keys recordId, header, original, proofed
     """
     s3_key = f"{folder}/{filename}.csv"
@@ -200,49 +204,64 @@ def update_logs_csv(log_entries, filename, folder):
     existing_rows = []
     try:
         obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
-        text = obj["Body"].read().decode("utf-8")
+        text = obj['Body'].read().decode('utf-8')
         reader = csv.reader(io.StringIO(text))
         existing_rows = list(reader)
     except s3_client.exceptions.NoSuchKey:
+        # No existing file, we'll start fresh
         pass
 
-    # 2. Build up merged, deduped rows
+    # 2. Initialize merged list and seen set
     merged = []
     seen = set()
 
-    # If no existing file, write header
+    # 3. Add header row
+    header = ['Record ID', 'Header', 'Original Text', 'Proofed Text']
     if not existing_rows:
-        header = ["Record ID","Header","Original Text","Proofed Text"]
         merged.append(header)
     else:
-        # Keep whatever header/existing data is there
         for row in existing_rows:
             tup = tuple(row)
             if tup not in seen:
                 merged.append(row)
                 seen.add(tup)
 
-    # 3. Add each new entry only if it doesn’t already exist
+    # 4. Add each new entry, flatten any embedded newlines
     for e in log_entries:
+        orig = e.get('original', '')
+        proof = e.get('proofed', '')
+
+        # Replace real line-breaks with a space
+        orig_clean = re.sub(r'[\r\n]+', ' ', orig).strip()
+        proof_clean = re.sub(r'[\r\n]+', ' ', proof).strip()
+
         row = [
-            e.get("recordId",""),
-            e.get("header",""),
-            e.get("original",""),
-            e.get("proofed","")
+            e.get('recordId', ''),
+            e.get('header', ''),
+            orig_clean,
+            proof_clean
         ]
         tup = tuple(row)
         if tup not in seen:
             merged.append(row)
             seen.add(tup)
 
-    # 4. Write the merged list back out, overwriting the S3 object
+    # 5. Write merged list back out as a well-formed CSV
     out = io.StringIO()
-    writer = csv.writer(out)
+    writer = csv.writer(
+        out,
+        delimiter=',',
+        quotechar='"',
+        quoting=csv.QUOTE_MINIMAL,
+        escapechar='\\',
+        lineterminator='\n'
+    )
     writer.writerows(merged)
+
     s3_client.put_object(
         Bucket=BUCKET_NAME,
         Key=s3_key,
-        Body=out.getvalue()
+        Body=out.getvalue().encode('utf-8')
     )
 
     return s3_key
@@ -312,90 +331,278 @@ def load_payload(event):
 #     )
 
 def process(event, context):
-    """Main processing function"""
+    """
+    1. Parse incoming JSON (via API Gateway).
+    2. Always run the “old JSON-proofing” code exactly as before.
+    3. If workTypeRef == "C-WRA", then find the latest PDF in S3 and call checklist.process(...)
+       to run Textract on it and write out the Textract JSON→S3.
+    4. Return the same shape of response your old Lambda returned (i.e. proofed sectionContents).
+    """
+
+    # ────────────────────────────────────────────────────────────────────────────────
+    # 1) Parse incoming JSON to pull out workTypeRef, buildingName, workOrderId
+    # ────────────────────────────────────────────────────────────────────────────────
     try:
-        workorder_id, content_type, proofing_requests, table_data = load_payload(event)
-        if not workorder_id:
-            raise ValueError("Missing workOrderId in payload.")
+        raw_body = event.get("body", "")
+        logger.info("Incoming payload: %s", raw_body)
+        body = json.loads(raw_body)
     except Exception as e:
-        logger.error("Error parsing request body: " + str(e))
-        return {"statusCode": 400, "body": json.dumps({"error": "Invalid JSON format"})}
+        logger.error("Error parsing request body: %s", e, exc_info=True)
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "Invalid JSON format"})
+        }
+    
+    
+    # if not assessor_email:
+    #     logger.error("Missing required field 'assessor_email' in event: %s", event)
+    #     return {"statusCode": 400, "body": "Missing assessor_email"}
+    work_type    = body.get("workTypeRef")      # e.g. "C-WRA" or something else
+    buildingName = body.get("buildingName")     # e.g. "Main Office"
+    workorder_id = body.get("workOrderId")      # e.g. "00X123456789"
+    emailAddress = event.get("emailAddress")
+    bucket_name = "metrosafetyprodfiles"
+
+    # if not workorder_id or not buildingName:
+    #     logger.error("Missing workOrderId or buildingName in payload.")
+    #     return {
+    #         "statusCode": 400,
+    #         "body": json.dumps({"error": "workOrderId and buildingName are required"})
+    #     }
+
+    logger.info("Parsed workTypeRef=%s, buildingName=%s, workOrderId=%s",
+                work_type, buildingName, workorder_id)
+
+    try:
+        wo_id_old, content_type, proofing_requests, table_data = load_payload(event)
+        if not wo_id_old:
+            raise ValueError("Missing workOrderId in payload (old path).")
+    except Exception as e:
+        logger.error("Error in load_payload(): %s", e, exc_info=True)
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"error": "Invalid JSON format"})
+        }
 
     if not proofing_requests:
         logger.error("No proofing items extracted from payload.")
-        return {"statusCode": 400, "body": json.dumps({"error": "No proofing items found"})}
+        return {
+            "statusCode": 400,
+            "body": json.dumps({"error": "No proofing items found"})
+        }
 
-    csv_log_entries = []
+    # Prepare to collect all JSON-proofed results
+    csv_log_entries      = []
     overall_proofed_flag = False
-    proofed_entries = []
+    proofed_entries      = []
 
-    # Process each record. Use different logic based on contentType.
     for record_id, content in proofing_requests.items():
         if content_type == "FormQuestion":
-            # Process HTML table content.
+            # exactly as your old code:
             updated_html, log_entries = proof_table_content(content, record_id)
             for entry in log_entries:
-                # Add record ID to each entry for logging.
                 entry["recordId"] = record_id
                 csv_log_entries.append(entry)
-                # Check if any changes were made.
                 if entry["original"] != entry["proofed"]:
                     overall_proofed_flag = True
+
             rec_data = table_data.get(record_id)
             if rec_data:
                 proofed_entries.append({"recordId": record_id, "content": updated_html})
             else:
-                logger.warning(f"No table data found for record {record_id}")
+                logger.warning("No table_data found for record %s", record_id)
+
         else:
-            # For Action_Observation or Action_Required, treat content as plain text.
+            # “Action_Observation” or “Action_Required” path:
             corrected_text = proof_plain_text(content, record_id)
-            orig_text = strip_html(content)
-            corr_text = strip_html(corrected_text)
+            orig_text      = strip_html(content)
+            corr_text      = strip_html(corrected_text)
+
             if corr_text != orig_text:
                 overall_proofed_flag = True
                 csv_log_entries.append({
                     "recordId": record_id,
-                    "header": "",
+                    "header":   "",
                     "original": orig_text,
-                    "proofed": corr_text
+                    "proofed":  corr_text
                 })
             else:
                 csv_log_entries.append({
                     "recordId": record_id,
-                    "header": "",
+                    "header":   "",
                     "original": "No changes needed: " + orig_text,
-                    "proofed": "No changes made."
+                    "proofed":  "No changes made."
                 })
+
             proofed_entries.append({"recordId": record_id, "content": corrected_text})
 
     status_flag = "Proofed" if overall_proofed_flag else "Original"
-    logger.info(f"Work order flagged as: {status_flag}")
-    logger.info("Updating logs CSV in S3...")
+    logger.info("Work order flagged as: %s", status_flag)
+    logger.info("Updating logs CSV in S3 for old JSON-proofing path…")
 
-    # Use a single file for all logs for this work order
-    csv_filename = f"{workorder_id}_logs"
-    # Store/append the new entries to the CSV
-    logger.info(f"[Action] about to write {len(csv_log_entries)} rows → {csv_log_entries}")
-    csv_s3_key = update_logs_csv(csv_log_entries, csv_filename, "logs")
-    logger.info(f"CSV logs stored in S3 at key: {csv_s3_key}")
+    # Write exactly where your old code wrote it:
+    csv_filename = f"{workorder_id}_logs"             # same as before
+    csv_s3_key   = update_logs_csv(csv_log_entries, csv_filename, "logs")
+    logger.info("Old JSON-proof CSV stored in S3 at key: %s", csv_s3_key)
 
+    # Update your metadata table exactly as before
     store_metadata(workorder_id, csv_s3_key, status_flag)
+    # notify_run(workorder_id, status_flag)  # if you still want that email
 
-    # try:
-    #     notify_run(workorder_id, status_flag)
-    #     logger.info(f"Notification email sent for {workorder_id}")
-    # except Exception as e:
-    #     logger.error(f"Failed to send notification email: {e}")
+    # Keep this list around so we can return it below
+    combined_proofed = proofed_entries.copy()
 
-
-    unique_proofed_entries = {entry["recordId"]: entry for entry in proofed_entries}
     final_response = {
-        "workOrderId": workorder_id,
-        "contentType": content_type,
-        "sectionContents": list(unique_proofed_entries.values())
-    }
-    logger.info("Final response: " + json.dumps(final_response, indent=2))
+    "workOrderId": wo_id_old,
+    "contentType": content_type,
+    "sectionContents": combined_proofed
+}
+
+    # ────────────────────────────────────────────────────────────────────────────────
+    # 3) If this is a C-WRA job, run the extra “fetch latest PDF → Textract” via checklist.py
+    # ────────────────────────────────────────────────────────────────────────────────
+    if work_type == "C-WRA" and workorder_id:
+            bucket_name = "metrosafetyprodfiles"
+            prefix      = f"WorkOrders/{workorder_id}/"
+
+            # Check for the zero-byte marker
+            marker_key = prefix + ".textract_ran"
+            try:
+                s3_client.head_object(Bucket=bucket_name, Key=marker_key)
+                logger.info("Marker exists (%s); skipping Textract for %s", marker_key, workorder_id)
+            except s3_client.exceptions.ClientError as ce:
+                if ce.response.get("Error", {}).get("Code") == "404":
+                    # Marker not found – find the newest PDF
+                    resp = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+                    contents = resp.get("Contents", [])
+                    pdf_objs = [obj for obj in contents if obj["Key"].lower().endswith(".pdf")]
+
+                    if not pdf_objs:
+                        logger.error("No PDF found under %s", prefix)
+                        return {"statusCode": 400, "body": "No PDF file to process."}
+
+                    # Select the most recently modified PDF
+                    newest = max(pdf_objs, key=lambda o: o["LastModified"])
+                    document_key = newest["Key"]
+                    logger.info("Picked newest PDF: s3://%s/%s", bucket_name, document_key)
+
+                    # Write the zero-byte marker so we don’t re-run next time
+                    s3_client.put_object(Bucket=bucket_name, Key=marker_key, Body=b"")
+                    logger.info("Created marker %s", marker_key)
+
+                    # Invoke checklist.py asynchronously
+                    checklist_payload = {
+                        "bucket_name":   bucket_name,
+                        "document_key":  document_key,
+                        "workOrderId":   workorder_id,
+                        "emailAddress": emailAddress,
+                        "buildingName": buildingName
+                    }
+                    lambda_client.invoke(
+                        FunctionName   = PROOFING_CHECKLIST_ARN,
+                        InvocationType = "Event",  # async “fire & forget”
+                        Payload        = json.dumps(checklist_payload).encode("utf-8")
+                    )
+                    logger.info("Invoked checklist.py for %s", document_key)
+
+                else:
+                    # Some other S3 error
+                    logger.error("Error checking marker %s: %s", marker_key, ce, exc_info=True)
+                    raise
+
+    else:
+            logger.info("Not C-WRA or missing workOrderId; skipping Textract trigger.")
+
     return {
         "statusCode": 200,
+        "headers": { "Content-Type": "application/json" },
         "body": json.dumps(final_response)
+    }
+
+
+def process(event, context):
+    # 1) parse common fields
+    body = json.loads(event.get("body",""))
+    work_type    = body.get("workTypeRef")
+    workorder_id = body.get("workOrderId")
+    email_addr   = body.get("emailAddress")
+    buildingName = body.get("buildingName")
+
+    # 2) ALWAYS run your AI-proofing
+    wo, ct, proof_reqs, table_data = load_payload(event)
+    if not proof_reqs:
+        return {"statusCode":400,"body":json.dumps({"error":"No proofing items found"})}
+
+    logs, flag, proofed = [], False, []
+    for rid, cont in proof_reqs.items():
+        if ct == "FormQuestion":
+            html, le = proof_table_content(cont, rid)
+            for e in le:
+                logs.append(e)
+                if e["original"]!=e["proofed"]:
+                    flag = True
+            proofed.append({"recordId":rid,"content":html})
+        else:
+            txt = proof_plain_text(cont, rid)
+            orig = strip_html(cont); corr=strip_html(txt)
+            if corr!=orig:
+                flag = True
+                logs.append({"recordId":rid,"header":"","original":orig,"proofed":corr})
+            else:
+                logs.append({"recordId":rid,"header":"",
+                             "original":"No changes needed: "+orig,
+                             "proofed":"No changes made."})
+            proofed.append({"recordId":rid,"content":txt})
+
+    status = "Proofed" if flag else "Original"
+    csv_key = update_logs_csv(logs, f"{workorder_id}_logs", "logs")
+    store_metadata(workorder_id, csv_key, status)
+
+    final_response = {
+        "workOrderId":     workorder_id,
+        "contentType":     ct,
+        "sectionContents": proofed
+    }
+
+    # 3) THEN trigger Textract/checklist for C-WRA only
+    if work_type == "C-WRA" and workorder_id:
+        prefix = f"WorkOrders/{workorder_id}/"
+        marker = prefix + ".textract_ran"
+        s3 = boto3.client("s3")
+        try:
+            s3.head_object(Bucket=PDF_BUCKET, Key=marker)
+            logger.info("Marker exists, skipping Textract.")
+        except s3.exceptions.ClientError as ce:
+            if ce.response["Error"]["Code"] == "404":
+                # find newest PDF
+                resp = s3.list_objects_v2(Bucket=PDF_BUCKET, Prefix=prefix)
+                pdfs = [o for o in resp.get("Contents",[]) if o["Key"].lower().endswith(".pdf")]
+                if pdfs:
+                    newest = max(pdfs, key=lambda x: x["LastModified"])
+                    doc_key = newest["Key"]
+                    # write marker
+                    s3.put_object(Bucket=PDF_BUCKET, Key=marker, Body=b"")
+                    # invoke checklist
+                    payload = {
+                      "bucket_name":  PDF_BUCKET,
+                      "document_key": doc_key,
+                      "workOrderId":  workorder_id,
+                      "emailAddress": email_addr,
+                      "buildingName": buildingName
+                    }
+                    lambda_client.invoke(
+                        FunctionName=PROOFING_CHECKLIST_ARN,
+                        InvocationType="Event",
+                        Payload=json.dumps(payload).encode("utf-8")
+                    )
+                else:
+                    logger.error("No PDF found under %s", prefix)
+            else:
+                raise
+
+    # 4) return proofed JSON every time
+    return {
+        "statusCode": 200,
+        "headers":    {"Content-Type":"application/json"},
+        "body":       json.dumps(final_response)
     }
