@@ -414,7 +414,7 @@ def process(event, context):
                 }
                 lambda_client.invoke(
                 FunctionName=PROOFING_CHECKLIST_ARN,
-                nvocationType="Event",
+                InvocationType="Event",
                 Payload=json.dumps(payload).encode("utf-8")
                 )
 
