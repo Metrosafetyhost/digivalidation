@@ -505,7 +505,15 @@ def send_to_bedrock(user_text):
     )
     response_text = resp["body"].read().decode("utf-8")
     logger.info("Received response from Bedrock")
-    return response_text
+        # ─── parse JSON and extract just the assistant text ───
+    try:
+        data = json.loads(response_text)
+        # your responses live in data["content"], a list of { "type": "...", "text": "..." }
+        plain = "".join(part.get("text", "") for part in data.get("content", []))
+    except (ValueError, KeyError):
+        # if parsing fails, fall back to raw
+        plain = response_text
+    return plain.strip()
 
 def validate_water_assets(sections):
     """
