@@ -385,7 +385,7 @@ def process(event, context):
         except s3_client.exceptions.ClientError as ce:
             # if the textract marker is missing…
             if ce.response.get("Error", {}).get("Code") == "404":
-                resp     = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+                resp     = s3_client.list_objects_v2(Bucket=PDF_BUCKET, Prefix=prefix)
                 contents = resp.get("Contents", [])
 
                 valid_objs = [
