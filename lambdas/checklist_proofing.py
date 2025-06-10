@@ -694,7 +694,7 @@ def process(event, context):
     subject = f"Proofing Results for WorkOrder {work_order_id}"
     body_lines = []
     body_lines.append("Hello,\n")
-    body_lines.append(f"Below are the proofing outputs for Work Order {work_order_id}:\n")
+    body_lines.append(f"Below are the proofing outputs for Work Order {work_order_id}:\n Find Attachment at https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view")
 
     for q_key in sorted(proofing_results.keys()):
         answer = proofing_results[q_key]
