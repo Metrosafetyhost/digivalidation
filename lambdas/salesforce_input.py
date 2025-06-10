@@ -475,13 +475,28 @@ def process(event, context):
                     # Marker not found – find the newest PDF
                     resp = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
                     contents = resp.get("Contents", [])
-                    pdf_objs = [obj for obj in contents if obj["Key"].lower().endswith(".pdf")]
+                    # Marker not found – find the newest PDF by ContentType
+                    resp = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+                    contents = resp.get("Contents", [])
+
+                    pdf_objs = []
+                    for obj in contents:
+                        # skip the Textract marker file
+                        if obj["Key"].endswith(".textract_ran"):
+                            continue
+                        try:
+                            meta = s3_client.head_object(Bucket=bucket_name, Key=obj["Key"])
+                            if meta.get("ContentType", "").lower() == "application/pdf":
+                                pdf_objs.append(obj)
+                        except Exception:
+                            # ignore any head_object failures
+                            continue
 
                     if not pdf_objs:
                         logger.error("No PDF found under %s", prefix)
                         return {"statusCode": 400, "body": "No PDF file to process."}
 
-                    # Select the most recently modified PDF
+                    # select the most recently modified PDF
                     newest = max(pdf_objs, key=lambda o: o["LastModified"])
                     document_key = newest["Key"]
                     logger.info("Picked newest PDF: s3://%s/%s", bucket_name, document_key)
