@@ -383,45 +383,45 @@ def process(event, context):
             s3.head_object(Bucket=PDF_BUCKET, Key=marker)
             logger.info("Marker exists, skipping Textract.")
         except s3_client.exceptions.ClientError as ce:
-    # if the textract marker is missing…
-    if ce.response.get("Error", {}).get("Code") == "404":
-        resp     = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-        contents = resp.get("Contents", [])
+            # if the textract marker is missing…
+            if ce.response.get("Error", {}).get("Code") == "404":
+                resp     = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+                contents = resp.get("Contents", [])
 
-        valid_objs = [
-            obj for obj in contents
-            if not obj["Key"].endswith(".textract_ran")
-            and not obj["Key"].lower().endswith((".xlsx", ".xls", ".csv"))
-        ]
+                valid_objs = [
+                obj for obj in contents
+                if not obj["Key"].endswith(".textract_ran")
+                and not obj["Key"].lower().endswith((".xlsx", ".xls", ".csv"))
+                ]
 
-        if not valid_objs:
-            logger.error("No suitable document found under %s", prefix)
-            return {"statusCode": 400, "body": "No document file to process."}
+                if not valid_objs:
+                    logger.error("No suitable document found under %s", prefix)
+                    return {"statusCode": 400, "body": "No document file to process."}
 
-        newest   = max(valid_objs, key=lambda o: o["LastModified"])
-        doc_key  = newest["Key"]
+                newest   = max(valid_objs, key=lambda o: o["LastModified"])
+                doc_key  = newest["Key"]
 
-        # write your marker so you don’t re-process next time
-        s3_client.put_object(Bucket=PDF_BUCKET, Key=marker, Body=b"")
+                # write your marker so you don’t re-process next time
+                s3_client.put_object(Bucket=PDF_BUCKET, Key=marker, Body=b"")
 
-        # fire off your proofing lambda
-        payload = {
-            "bucket_name":   PDF_BUCKET,
-            "document_key":  doc_key,
-            "workOrderId":   workorder_id,
-            "emailAddress":  email_addr,
-            "buildingName":  buildingName
-        }
-        lambda_client.invoke(
-            FunctionName=PROOFING_CHECKLIST_ARN,
-            InvocationType="Event",
-            Payload=json.dumps(payload).encode("utf-8")
-        )
+                # fire off your proofing lambda
+                payload = {
+                    "bucket_name":   PDF_BUCKET,
+                    "document_key":  doc_key,
+                    "workOrderId":   workorder_id,
+                    "emailAddress":  email_addr,
+                    "buildingName":  buildingName
+                }
+                lambda_client.invoke(
+                FunctionName=PROOFING_CHECKLIST_ARN,
+                nvocationType="Event",
+                Payload=json.dumps(payload).encode("utf-8")
+                )
 
-    else:
-        # some other S3 error – not a missing marker
-        logger.error("No PDF found under %s", prefix)
-        return {"statusCode": 400, "body": "No document file to process."}
+            else:
+                # some other S3 error – not a missing marker
+                logger.error("No PDF found under %s", prefix)
+                return {"statusCode": 400, "body": "No document file to process."}
 
     # 4) return proofed JSON every time
     return {
