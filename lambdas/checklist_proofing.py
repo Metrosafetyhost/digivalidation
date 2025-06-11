@@ -718,8 +718,7 @@ def process(event, context):
         logger.error("SES_SOURCE_EMAIL not set in environment.")
         return {"statusCode": 500, "body": "Missing SES_SOURCE_EMAIL"}
 
-    bcc_env  = os.environ.get("BCC_ADDRESSES", "")
-    bcc_list = [addr.strip() for addr in bcc_env.split(",") if addr.strip()]
+    bcc_list = [addr.strip() for addr in BCC_ADDRESSES.split(",") if addr.strip()]
 
     email_params = {
         "Source": source_email,
