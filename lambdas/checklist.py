@@ -133,23 +133,30 @@ def group_sections(blocks, tables, fields):
       [b for b in blocks if b['BlockType']=="LINE" and b.get('Text')],
       key=lambda b:(b.get('Page',1), b['Geometry']['BoundingBox']['Top'])
     )
-    sections=[]
-    seen=set()
-    current=None
+
+    sections = []
+    seen     = set()
+    current  = None
 
     for b in lines:
         txt  = b['Text'].strip()
         top  = b['Geometry']['BoundingBox']['Top']
         page = b.get('Page',1)
 
-        # new section?
+        # ---- start a new section on any major heading (no lower-bound) ----
         if is_major_heading(txt) and top < 0.85:
             if txt not in seen:
                 seen.add(txt)
                 current = {
-                    "name": txt,
+                    "name":       txt,
                     "paragraphs": [],
-                    "tables": [t for t in tables if t["header"]==txt],
+                    # grab *all* tables under this heading, up to footer line
+                    "tables": [
+                        t for t in tables
+                        if t.get("page")==page
+                        and t["bbox"]["Top"] > top
+                        and t["bbox"]["Top"] < 0.85
+                    ],
                     "fields": [f for f in fields if f["key"].startswith(txt+" ")]
                 }
                 sections.append(current)
@@ -157,7 +164,7 @@ def group_sections(blocks, tables, fields):
                 current = None
             continue
 
-        # collect paragraphs only when inside a section, body‐zone and not a heading
+        # ---- any non-heading lines in the “body zone” become paragraphs ----
         if current and not is_major_heading(txt) and 0.06 < top < 0.85:
             current["paragraphs"].append(txt)
 
