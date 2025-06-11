@@ -240,6 +240,9 @@ def process(event, context):
 
             emailAddress = event.get("emailAddress")
             buildingName = event.get("buildingName")
+            workTypeRef = event.get("workTypeRef")
+            workOrderNumber = event.get("workOrderNumber")
+
 
             # ─── (1) Poll for blocks using your exact old snippet ───────────────────
             blocks = poll_for_job_completion(job_id)
@@ -270,7 +273,10 @@ def process(event, context):
                 "textract_key":    processed_key,
                 "workOrderId":     workOrderId,
                 "emailAddress": emailAddress,
-                "buildingName" : buildingName
+                "buildingName" : buildingName,
+                "workTypeRef" : workTypeRef,
+                "workOrderNumber": workOrderNumber
+
             }
             lambda_client.invoke(
                 FunctionName   = PROOFING_LAMBDA_ARN,
@@ -289,7 +295,11 @@ def process(event, context):
     bucket_name   = event.get("bucket_name")
     document_key  = event.get("document_key")
     workOrderId   = event.get("workOrderId", "")
+    buildingName   = event.get("buildingName")
     output_bucket = os.environ.get("CHECKLIST_OUTPUT_BUCKET", "textract-output-digival")
+    workOrderNumber = event.get("workOrderNumber")
+    workTypeRef = event.get("workTypeRef")
+
 
     if not bucket_name or not document_key:
         err = f"When directly invoked, 'bucket_name' and 'document_key' must be provided. Received: {json.dumps(event)}"
@@ -333,7 +343,12 @@ def process(event, context):
         proofing_payload = {
             "textract_bucket": output_bucket,
             "textract_key":    processed_key,
-            "workOrderId":     workOrderId
+            "workOrderId":     workOrderId,
+            "workTypeRef" : workTypeRef,
+            "workOrderNumber": workOrderNumber,
+            "emailAddress": emailAddress,
+            "buildingName" : buildingName,
+
         }
         lambda_client.invoke(
             FunctionName   = PROOFING_LAMBDA_ARN,

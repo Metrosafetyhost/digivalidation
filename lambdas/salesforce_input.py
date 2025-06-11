@@ -333,10 +333,11 @@ def load_payload(event):
 def process(event, context):
     # 1) parse common fields
     body = json.loads(event.get("body",""))
-    work_type    = body.get("workTypeRef")
+    workTypeRef = event.get("workTypeRef")
     workorder_id = body.get("workOrderId")
     email_addr   = body.get("emailAddress")
     buildingName = body.get("buildingName")
+    workOrderNumber = event.get("workOrderNumber")
 
     # 2) ALWAYS run your AI-proofing
     wo, ct, proof_reqs, table_data = load_payload(event)
@@ -375,7 +376,7 @@ def process(event, context):
     }
 
     # 3) THEN trigger Textract/checklist for C-WRA only
-    if work_type == "C-WRA" and workorder_id:
+    if workTypeRef == "C-WRA" and workorder_id:
         prefix = f"WorkOrders/{workorder_id}/"
         marker = prefix + ".textract_ran"
         s3 = boto3.client("s3")
@@ -410,7 +411,9 @@ def process(event, context):
                     "document_key":  doc_key,
                     "workOrderId":   workorder_id,
                     "emailAddress":  email_addr,
-                    "buildingName":  buildingName
+                    "buildingName":  buildingName,
+                    "workOrderNumber": workOrderNumber,
+                    "workTypeRef": workTypeRef
                 }
                 lambda_client.invoke(
                 FunctionName=PROOFING_CHECKLIST_ARN,

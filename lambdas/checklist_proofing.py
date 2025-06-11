@@ -12,6 +12,12 @@ bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
 s3       = boto3.client('s3')
 ses = boto3.client('ses', region_name='eu-west-2')
 
+EMAIL_QUESTIONS = {
+    3: "Totals consistency check (Section 1.1 vs Findings)",
+    4: "Building Description completeness assessment",
+    9: "Risk Rating & Management Control review"
+}
+
 def extract_json_data(json_content, question_number):
     payload = json.loads(json_content)
 
@@ -637,8 +643,6 @@ def process(event, context):
 
     
 
-    # (We still check SES_SOURCE_EMAIL below, etc. if needed.)
-
     # ——— 1) Extract required fields from event ———
     tex_bucket     = event.get("textract_bucket")
     tex_key        = event.get("textract_key")
@@ -647,6 +651,8 @@ def process(event, context):
     buildingName   = event.get("buildingName")
     test_address   = "luke.gasson@metrosafety.co.uk"
     emailAddress   = test_address
+    workOrderNumber = event.get("workOrderNumber")
+    workTypeRef = event.get("workTypeRef")
 
     # if not tex_bucket or not tex_key or not work_order_id:
     #     logger.error("Missing one of textract_bucket/textract_key/workOrderId in event: %s", event)
@@ -691,15 +697,18 @@ def process(event, context):
     )
 
     # ——— 5) Build a structured plaintext email body ———
-    subject = f"Proofing Results for WorkOrder {work_order_id}"
+    subject = f"Proofing Results: {buildingName} (WO #{workOrderNumber})"
     body_lines = []
     body_lines.append("Hello,\n")
-    body_lines.append(f"Below are the proofing outputs for Work Order {work_order_id}:\n Find Attachment at https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view")
+    body_lines.append(f"Below are the proofing outputs for *{buildingName}* (Work Order #{workOrderNumber}):\n")
+    body_lines.append(f"Link: https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view")
 
-    for q_key in sorted(proofing_results.keys()):
-        answer = proofing_results[q_key]
-        indented_answer = "\n".join("  " + line for line in str(answer).splitlines())
-        body_lines.append(f"{q_key}:\n{indented_answer}\n")
+    for q_num, email_heading in EMAIL_QUESTIONS.items():
+        q_key = f"Q{q_num}"
+        answer = proofing_results.get(q_key, "(no result)")
+        # indent each line of the AI’s answer
+        indented = "\n".join("  " + ln for ln in str(answer).splitlines())
+        body_lines.append(f"{email_heading}:\n{indented}\n")
 
     body_lines.append("Regards,\nQuality Team\n")
     body_text = "\n".join(body_lines)
