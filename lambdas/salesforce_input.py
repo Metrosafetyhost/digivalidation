@@ -376,7 +376,7 @@ def process(event, context):
     }
 
     # 3) THEN trigger Textract/checklist for C-WRA only
-    if workTypeRef == "C-WRA" and workorder_id:
+    if workTypeRef in ("C-WRA", "C-HSA", "C-FRA") and workorder_id:
         prefix = f"WorkOrders/{workorder_id}/"
         marker = prefix + ".textract_ran"
         s3 = boto3.client("s3")
