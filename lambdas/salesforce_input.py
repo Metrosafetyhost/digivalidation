@@ -333,11 +333,11 @@ def load_payload(event):
 def process(event, context):
     # 1) parse common fields
     body = json.loads(event.get("body",""))
-    workTypeRef = event.get("workTypeRef")
+    workTypeRef = body.get("workTypeRef")
     workorder_id = body.get("workOrderId")
     email_addr   = body.get("emailAddress")
     buildingName = body.get("buildingName")
-    workOrderNumber = event.get("workOrderNumber")
+    workOrderNumber = body.get("workOrderNumber")
 
     # 2) ALWAYS run your AI-proofing
     wo, ct, proof_reqs, table_data = load_payload(event)

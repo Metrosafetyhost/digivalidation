@@ -641,18 +641,21 @@ def process(event, context):
     """
     logger.info("Received proofing event: %s", json.dumps(event))
 
-    
+        # 1) Unwrap the SNS wrapper
+    record = event["Records"][0]["Sns"]
+    raw    = record["Message"]
+    payload= json.loads(raw)
 
-    # ——— 1) Extract required fields from event ———
-    tex_bucket     = event.get("textract_bucket")
-    tex_key        = event.get("textract_key")
-    work_order_id  = event.get("workOrderId")
-    emailAddress   = event.get("emailAddress")
-    buildingName   = event.get("buildingName")
+    # 2) Now extract your custom fields from that payload:
+    tex_bucket      = payload.get("textract_bucket")
+    tex_key         = payload.get("textract_key")
+    work_order_id     = payload.get("workOrderId")
+    workOrderNumber = payload.get("workOrderNumber")
+    #emailAddress    = payload.get("emailAddress")
     test_address   = "luke.gasson@metrosafety.co.uk"
     emailAddress   = test_address
-    workOrderNumber = event.get("workOrderNumber")
-    workTypeRef = event.get("workTypeRef")
+    buildingName    = payload.get("buildingName")
+    workTypeRef     = payload.get("workTypeRef")
 
     # if not tex_bucket or not tex_key or not work_order_id:
     #     logger.error("Missing one of textract_bucket/textract_key/workOrderId in event: %s", event)
