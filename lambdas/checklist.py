@@ -297,6 +297,7 @@ def process(event, context):
     workOrderId   = event.get("workOrderId", "")
     buildingName   = event.get("buildingName")
     output_bucket = os.environ.get("CHECKLIST_OUTPUT_BUCKET", "textract-output-digival")
+    emailAddress    = event.get("emailAddress")  
     workOrderNumber = event.get("workOrderNumber")
     workTypeRef = event.get("workTypeRef")
 
