@@ -143,7 +143,7 @@ def group_sections(blocks, tables, fields):
         page = b.get('Page',1)
 
         # new section?
-        if is_major_heading(txt) and 0.06 < top < 0.85:
+        if is_major_heading(txt) and top < 0.85:
             if txt not in seen:
                 seen.add(txt)
                 current = {

@@ -13,7 +13,7 @@ s3       = boto3.client('s3')
 ses = boto3.client('ses', region_name='eu-west-2')
 
 EMAIL_QUESTIONS = {
-    3: "Totals consistency check (Section 1.1 vs Findings)",
+    3: "Totals consistency check (Section 1.1 vs Significant Findings and Action Plan)",
     4: "Building Description completeness assessment",
     9: "Risk Rating & Management Control review"
 }
