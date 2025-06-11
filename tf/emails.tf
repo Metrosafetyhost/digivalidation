@@ -36,7 +36,7 @@ resource "aws_iam_policy" "ses_send_email" {
       Sid      = "AllowSendEmailFromMyAddress",
       Effect   = "Allow",
       Action   = ["ses:SendEmail","ses:SendRawEmail"],
-      Resource = "arn:aws:ses:eu-west-2:${data.aws_caller_identity.current.account_id}:identity/luke.gasson@metrosafety.co.uk"
+      Resource = "arn:aws:ses:eu-west-2:${data.aws_caller_identity.current.account_id}:identity/*"
     }]
   })
 }
