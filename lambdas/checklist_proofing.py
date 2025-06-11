@@ -651,7 +651,7 @@ def process(event, context):
     tex_key         = payload.get("textract_key")
     work_order_id     = payload.get("workOrderId")
     workOrderNumber = payload.get("workOrderNumber")
-    #emailAddress    = payload.get("emailAddress")
+    emailAddress    = payload.get("emailAddress")
     test_address   = "luke.gasson@metrosafety.co.uk"
     emailAddress   = test_address
     buildingName    = payload.get("buildingName")
