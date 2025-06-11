@@ -133,30 +133,23 @@ def group_sections(blocks, tables, fields):
       [b for b in blocks if b['BlockType']=="LINE" and b.get('Text')],
       key=lambda b:(b.get('Page',1), b['Geometry']['BoundingBox']['Top'])
     )
-
-    sections = []
-    seen     = set()
-    current  = None
+    sections=[]
+    seen=set()
+    current=None
 
     for b in lines:
         txt  = b['Text'].strip()
         top  = b['Geometry']['BoundingBox']['Top']
         page = b.get('Page',1)
 
-        # ---- start a new section on any major heading (no lower-bound) ----
+        # new section?
         if is_major_heading(txt) and top < 0.85:
             if txt not in seen:
                 seen.add(txt)
                 current = {
-                    "name":       txt,
+                    "name": txt,
                     "paragraphs": [],
-                    # grab *all* tables under this heading, up to footer line
-                    "tables": [
-                        t for t in tables
-                        if t.get("page")==page
-                        and t["bbox"]["Top"] > top
-                        and t["bbox"]["Top"] < 0.85
-                    ],
+                    "tables": [t for t in tables if t["header"]==txt],
                     "fields": [f for f in fields if f["key"].startswith(txt+" ")]
                 }
                 sections.append(current)
@@ -164,7 +157,7 @@ def group_sections(blocks, tables, fields):
                 current = None
             continue
 
-        # ---- any non-heading lines in the “body zone” become paragraphs ----
+        # collect paragraphs only when inside a section, body‐zone and not a heading
         if current and not is_major_heading(txt) and 0.06 < top < 0.85:
             current["paragraphs"].append(txt)
 
@@ -191,17 +184,6 @@ def get_all_pages(job_id):
         if not token: break
     return blocks
 
-import json
-import os
-import time
-import boto3
-import logging
-
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-textract       = boto3.client("textract", region_name="eu-west-2")
-s3             = boto3.client("s3")
 lambda_client  = boto3.client("lambda")
 
 def process(event, context):
