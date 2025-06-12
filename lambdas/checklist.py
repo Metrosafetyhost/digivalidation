@@ -41,12 +41,11 @@ def normalize(text):
     return re.sub(r'[^a-z0-9 ]+', ' ', text.lower()).strip()
 
 def is_major_heading(txt):
-    """True if this line is one of your named sections or matches e.g. '1.2', '3.4', etc."""
     norm = normalize(txt)
     for phrase in IMPORTANT_HEADINGS:
         if all(w in norm for w in phrase.lower().split()):
             return True
-    return bool(re.match(r'^\d+(\.\d+)*\s+', txt))
+    return False
 
 def extract_tables_grouped(blocks):
     tables = []
