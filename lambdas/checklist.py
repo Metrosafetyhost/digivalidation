@@ -43,11 +43,8 @@ def normalize(text):
 def is_major_heading(txt):
     norm = normalize(txt)
     for phrase in IMPORTANT_HEADINGS:
-        ph_norm = normalize(phrase)
-        # only match if the line *begins* with the phrase
-        if norm.startswith(ph_norm):
+        if all(w in norm for w in phrase.lower().split()):
             return True
-    return False
 
 def extract_tables_grouped(blocks):
     tables = []
