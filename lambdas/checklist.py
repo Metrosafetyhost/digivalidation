@@ -30,7 +30,7 @@ IMPORTANT_HEADINGS = [
     "Audit Detail",
     "Water Control Scheme",
     "System Asset Register",
-    "Outlet Temperature Profile",
+    #"Outlet Temperature Profile",
     "Water Assets",
     "Appendices",
     "Risk Assessment Checklist",
@@ -44,15 +44,9 @@ def is_major_heading(txt):
     norm = normalize(txt)
     for phrase in IMPORTANT_HEADINGS:
         ph_norm = normalize(phrase)
-
-        # 1) exact-prefix match (e.g. “Significant Findings…”)
+        # only match if the line *begins* with the phrase
         if norm.startswith(ph_norm):
             return True
-
-        # 2) same but allowing a numeric prefix (e.g. “1.1 Areas Identified…”)
-        if re.match(rf'^\d+(\.\d+)*\s*{re.escape(ph_norm)}', norm):
-            return True
-
     return False
 
 def extract_tables_grouped(blocks):
