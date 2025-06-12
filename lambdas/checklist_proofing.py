@@ -57,7 +57,7 @@ def extract_json_data(json_content, question_number):
         total_issues = 0
 
         for sec in payload.get("sections", []):
-            if sec.get("name", "").startswith("1.1"):
+            if sec.get("name", "").startswith("1.1 Areas"):
                 for tbl in sec.get("tables", []):
                 # skip header row
                     for row in tbl.get("rows", [])[1:]:
@@ -714,9 +714,9 @@ def process(event, context):
         f"{digital_outcome}"
     )
     body_lines = []
-    body_lines.append(f"Hello {first_name},\n\n")
-    body_lines.append(f"Below are the proofing outputs for *{buildingName}* (Work Order #{workOrderNumber}):\n")
-    body_lines.append(f"Link to  https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view\n")
+    body_lines.append(f"Hello {first_name},\n")
+    body_lines.append(f"Below are the proofing outputs for '{buildingName}' (Work Order #{workOrderNumber}):\n")
+    body_lines.append(f"Link to Work Order in Salesforce: \n https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view\n")
 
     for q_num, email_heading in EMAIL_QUESTIONS.items():
         q_key = f"Q{q_num}"
