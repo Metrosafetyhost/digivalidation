@@ -43,8 +43,16 @@ def normalize(text):
 def is_major_heading(txt):
     norm = normalize(txt)
     for phrase in IMPORTANT_HEADINGS:
-        if all(w in norm for w in phrase.lower().split()):
+        ph_norm = normalize(phrase)
+
+        # 1) exact-prefix match (e.g. “Significant Findings…”)
+        if norm.startswith(ph_norm):
             return True
+
+        # 2) same but allowing a numeric prefix (e.g. “1.1 Areas Identified…”)
+        if re.match(rf'^\d+(\.\d+)*\s*{re.escape(ph_norm)}', norm):
+            return True
+
     return False
 
 def extract_tables_grouped(blocks):
