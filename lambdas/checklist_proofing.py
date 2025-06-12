@@ -12,7 +12,7 @@ bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
 s3       = boto3.client('s3')
 ses = boto3.client('ses', region_name='eu-west-2')
 
-BCC_ADDRESSES = "peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
+BCC_ADDRESSES = ""#"peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
 
 EMAIL_QUESTIONS = {
     3: "Totals consistency check (Section 1.1 vs Significant Findings and Action Plan)",
@@ -648,8 +648,6 @@ def process(event, context):
     work_order_id     = event.get("workOrderId")
     workOrderNumber = event.get("workOrderNumber")
     emailAddress    = event.get("emailAddress")
-    test_address   = "luke.gasson@metrosafety.co.uk"
-    emailAddress   = test_address
     buildingName    = event.get("buildingName")
     workTypeRef     = event.get("workTypeRef")
 
@@ -695,6 +693,9 @@ def process(event, context):
         json.dumps(proofing_results, indent=2)
     )
 
+    local_part = emailAddress.split("@")[0]                 # "firstname.lastname"
+    first_name = local_part.split(".")[0].capitalize()    # "Firstname"
+
     question_keys = ["Q3", "Q4", "Q9"]
     results = [
         proofing_results.get(key, "").strip().upper().splitlines()[0]
@@ -713,9 +714,9 @@ def process(event, context):
         f"{digital_outcome}"
     )
     body_lines = []
-    body_lines.append("Hello,\n")
+    body_lines.append(f"Hello {first_name},\n\n")
     body_lines.append(f"Below are the proofing outputs for *{buildingName}* (Work Order #{workOrderNumber}):\n")
-    body_lines.append(f"Link: https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view")
+    body_lines.append(f"Link to  https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view\n")
 
     for q_num, email_heading in EMAIL_QUESTIONS.items():
         q_key = f"Q{q_num}"
@@ -738,7 +739,7 @@ def process(event, context):
     email_params = {
         "Source": source_email,
         "Destination": {
-            "ToAddresses": [emailAddress],
+            "ToAddresses": [source_email],
             "BccAddresses": bcc_list
         },
         "Message": {
@@ -751,7 +752,7 @@ def process(event, context):
 
     try:
         ses.send_email(**email_params)
-        logger.info("Sent proofing email to %s (bcc: %s)", test_address, bcc_list)
+        logger.info("Sent proofing email to %s (bcc: %s)", source_email, bcc_list)
     except Exception as e:
         logger.error("Failed to send SES email: %s", e, exc_info=True)
         return {"statusCode": 500, "body": "Error sending email"}
