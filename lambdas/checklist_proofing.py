@@ -695,8 +695,23 @@ def process(event, context):
         json.dumps(proofing_results, indent=2)
     )
 
+    question_keys = ["Q3", "Q4", "Q9"]
+    results = [
+        proofing_results.get(key, "").strip().upper().splitlines()[0]
+        for key in question_keys
+    ]
+    # Check if each one exactly equals "PASS"
+    digital_outcome = "PASS" if all(r == "PASS" for r in results) else "FAIL"
+
     # ——— 5) Build a structured plaintext email body ———
-    subject = f"Proofing Results: {buildingName} (WO #{workOrderNumber})"
+    subject = (
+        f"AI | "
+        f"{workOrderNumber}/"
+        f"{work_order_id} | "
+        f"{buildingName} | "
+        f"{workTypeRef} | "
+        f"{digital_outcome}"
+    )
     body_lines = []
     body_lines.append("Hello,\n")
     body_lines.append(f"Below are the proofing outputs for *{buildingName}* (Work Order #{workOrderNumber}):\n")
