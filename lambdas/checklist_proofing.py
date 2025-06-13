@@ -12,7 +12,7 @@ bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
 s3       = boto3.client('s3')
 ses = boto3.client('ses', region_name='eu-west-2')
 
-BCC_ADDRESSES = "peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
+BCC_ADDRESSES = "" #"peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
 
 EMAIL_QUESTIONS = {
     2: "Verify Contents listing for Water Assets & Appendices A–D",
@@ -477,7 +477,7 @@ def build_user_message(question_number, content):
             ids = ", ".join(entry['record'] for entry in issues)
             return (
                 "Question 16: Section 7.0 Water Assets – data fields and comments are present. "
-                f"Please manually verify photographs for records: {ids}."
+                f" manually verify photographs for records: {ids}."
             )
         # Otherwise detail all missing
         lines = []
