@@ -696,7 +696,7 @@ def process(event, context):
     local_part = emailAddress.split("@")[0]                 # "firstname.lastname"
     first_name = local_part.split(".")[0].capitalize()    # "Firstname"
 
-    question_keys = ["Q3", "Q4", "Q9"]
+    question_keys = ["Q2", "Q3", "Q4", "Q5", "Q9", "Q10", "Q12", "Q15", "Q16"]
     results = [
         proofing_results.get(key, "").strip().upper().splitlines()[0]
         for key in question_keys
