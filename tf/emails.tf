@@ -53,3 +53,15 @@ resource "aws_iam_role_policy_attachment" "checklist_proofing_ses" {
   policy_arn = aws_iam_policy.ses_send_email.arn
 }
 
+# look up the FRA-proofing Lambda role
+data "aws_iam_role" "fra_proofing" {
+  name = "bedrock-lambda-fra_checklist_proofing"
+}
+
+# attach SES send policy to it
+resource "aws_iam_role_policy_attachment" "fra_proofing_ses" {
+  role       = data.aws_iam_role.fra_proofing.name
+  policy_arn = aws_iam_policy.ses_send_email.arn
+}
+
+
