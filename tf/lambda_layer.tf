@@ -467,48 +467,46 @@ resource "aws_iam_role_policy" "AllowSalesforceInput_Invoke_Checklist" {
   })
 }
 
-# New role for C-FRA proofing
-resource "aws_iam_role" "fra_proofing_role" {
+data "aws_iam_role" "fra_proofing_role" {
   name = "bedrock-lambda-fra_checklist_proofing"
-  assume_role_policy = aws_iam_role.bedrock_lambda_checklist_proofing.assume_role_policy
 }
 
 # Attach basic CloudWatch logging
 resource "aws_iam_role_policy_attachment" "fra_basic_exec" {
-  role       = aws_iam_role.fra_proofing_role.name
+  role = data.aws_iam_role.fra_proofing_role.name  
+
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
 # Bedrock invoke
 resource "aws_iam_role_policy_attachment" "fra_bedrock_invoke" {
-  role       = aws_iam_role.fra_proofing_role.name
+  role = data.aws_iam_role.fra_proofing_role.name
   policy_arn = aws_iam_policy.proofing_bedrock_invoke.arn
 }
 
 # S3 read of Textract output
 resource "aws_iam_role_policy_attachment" "fra_s3_read" {
-  role       = aws_iam_role.fra_proofing_role.name
+  role = data.aws_iam_role.fra_proofing_role.name
   policy_arn = aws_iam_policy.lambda_textract_output_read.arn
 }
 
 # --- HSA proofing role ---
-resource "aws_iam_role" "hsa_proofing_role" {
-  name               = "bedrock-lambda-hsa_checklist_proofing"
-  assume_role_policy = aws_iam_role.bedrock_lambda_checklist_proofing.assume_role_policy
+data "aws_iam_role" "hsa_proofing_role" {
+  name = "bedrock-lambda-hsa_checklist_proofing"
 }
 
 resource "aws_iam_role_policy_attachment" "hsa_basic_exec" {
-  role       = aws_iam_role.hsa_proofing_role.name
+  role = data.aws_iam_role.hsa_proofing_role.name  
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
 resource "aws_iam_role_policy_attachment" "hsa_bedrock_invoke" {
-  role       = aws_iam_role.hsa_proofing_role.name
+  role = data.aws_iam_role.hsa_proofing_role.name  
   policy_arn = aws_iam_policy.proofing_bedrock_invoke.arn
 }
 
 resource "aws_iam_role_policy_attachment" "hsa_s3_read" {
-  role       = aws_iam_role.hsa_proofing_role.name
+  role = data.aws_iam_role.hsa_proofing_role.name  
   policy_arn = aws_iam_policy.lambda_textract_output_read.arn
 }
 
