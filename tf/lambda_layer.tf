@@ -493,3 +493,9 @@ resource "aws_iam_role_policy_attachment" "fra_textract_output_read" {
   role       = data.aws_iam_role.fra_proofing_role.id
   policy_arn = aws_iam_policy.lambda_textract_output_read.arn
 }
+
+# for your FRA proofing Lambda
+resource "aws_iam_role_policy_attachment" "fra_bedrock_invoke" {
+  role       = "bedrock-lambda-fra_checklist_proofing"
+  policy_arn = aws_iam_policy.proofing_bedrock_invoke.arn
+}
