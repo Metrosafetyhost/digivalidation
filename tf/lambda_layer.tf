@@ -467,44 +467,75 @@ resource "aws_iam_role_policy" "AllowSalesforceInput_Invoke_Checklist" {
   })
 }
 
-# --- C-FRA proofing role (existing) ---
-data "aws_iam_role" "fra_proofing_role" {
+################################################
+# C-FRA checklist proofing role + attachments #
+################################################
+
+# 1) Create the FRA proofing role
+resource "aws_iam_role" "fra_proofing_role" {
   name = "bedrock-lambda-fra_checklist_proofing"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
 }
 
+# 2) CloudWatch Logs
 resource "aws_iam_role_policy_attachment" "fra_basic_exec" {
-  role       = data.aws_iam_role.fra_proofing_role.name
+  role       = aws_iam_role.fra_proofing_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+# 3) Bedrock invoke
 resource "aws_iam_role_policy_attachment" "fra_bedrock_invoke" {
-  role       = data.aws_iam_role.fra_proofing_role.name
+  role       = aws_iam_role.fra_proofing_role.name
   policy_arn = aws_iam_policy.proofing_bedrock_invoke.arn
 }
 
+# 4) Read Textract output from S3
 resource "aws_iam_role_policy_attachment" "fra_s3_read" {
-  role       = data.aws_iam_role.fra_proofing_role.name
+  role       = aws_iam_role.fra_proofing_role.name
   policy_arn = aws_iam_policy.lambda_textract_output_read.arn
 }
 
 
-# --- HSA proofing role (existing) ---
-data "aws_iam_role" "hsa_proofing_role" {
+################################################
+# HSA checklist proofing role + attachments #
+################################################
+
+# 1) Create the HSA proofing role
+resource "aws_iam_role" "hsa_proofing_role" {
   name = "bedrock-lambda-hsa_checklist_proofing"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
 }
 
+# 2) CloudWatch Logs
 resource "aws_iam_role_policy_attachment" "hsa_basic_exec" {
-  role       = data.aws_iam_role.hsa_proofing_role.name
+  role       = aws_iam_role.hsa_proofing_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+# 3) Bedrock invoke
 resource "aws_iam_role_policy_attachment" "hsa_bedrock_invoke" {
-  role       = data.aws_iam_role.hsa_proofing_role.name
+  role       = aws_iam_role.hsa_proofing_role.name
   policy_arn = aws_iam_policy.proofing_bedrock_invoke.arn
 }
 
+# 4) Read Textract output from S3
 resource "aws_iam_role_policy_attachment" "hsa_s3_read" {
-  role       = data.aws_iam_role.hsa_proofing_role.name
+  role       = aws_iam_role.hsa_proofing_role.name
   policy_arn = aws_iam_policy.lambda_textract_output_read.arn
 }
-
