@@ -483,3 +483,13 @@ resource "aws_iam_role_policy" "allow_invoke_fra_checklist_proofing" {
   })
 }
 
+# look up the FRA‐proofing role by name
+data "aws_iam_role" "fra_proofing_role" {
+  name = "bedrock-lambda-fra_checklist_proofing"
+}
+
+# attach the same policy that allows GetObject on processed/*
+resource "aws_iam_role_policy_attachment" "fra_textract_output_read" {
+  role       = data.aws_iam_role.fra_proofing_role.id
+  policy_arn = aws_iam_policy.lambda_textract_output_read.arn
+}
