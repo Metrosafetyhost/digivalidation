@@ -467,3 +467,19 @@ resource "aws_iam_role_policy" "AllowSalesforceInput_Invoke_Checklist" {
   })
 }
 
+resource "aws_iam_role_policy" "allow_invoke_fra_checklist_proofing" {
+  name = "AllowInvokeFRAProofing"
+  role = aws_iam_role.bedrock_lambda_checklist.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "lambda:InvokeFunction"
+        Resource = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-fra_checklist_proofing"
+      }
+    ]
+  })
+}
+

@@ -13,7 +13,7 @@ s3             = boto3.client("s3")
 lambda_client  = boto3.client("lambda")
 
 PROOFING_LAMBDA_ARN_WRA = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-checklist_proofing"
-PROOFING_LAMBDA_ARN_FRA = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-fra_checklist_proofing"
+PROOFING_LAMBDA_ARN_FRA = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-fra_checklist_proofingg "
 PROOFING_LAMBDA_ARN_HSA = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-hsa_checklist_proofing"
 
 IMPORTANT_HEADINGS = [
