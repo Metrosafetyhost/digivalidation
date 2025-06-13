@@ -15,9 +15,15 @@ ses = boto3.client('ses', region_name='eu-west-2')
 BCC_ADDRESSES = "peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
 
 EMAIL_QUESTIONS = {
+    2: "Verify Contents listing for Water Assets & Appendices A–D",
     3: "Totals consistency check (Section 1.1 vs Significant Findings and Action Plan)",
     4: "Building Description completeness assessment",
-    9: "Risk Rating & Management Control review"
+    5: "Water Systems vs Water Assets",
+    9: "Risk Rating & Management Control review",
+    # 10:"",
+    # 12:"",
+    # 15:"",
+    16:"Section 7.0 Water Assets – data fields and comments are present",
 }
 
 def extract_json_data(json_content, question_number):
@@ -696,7 +702,7 @@ def process(event, context):
     local_part = emailAddress.split("@")[0]                 # "firstname.lastname"
     first_name = local_part.split(".")[0].capitalize()    # "Firstname"
 
-    question_keys = ["Q2", "Q3", "Q4", "Q5", "Q9", "Q10", "Q12", "Q15", "Q16"]
+    question_keys = ["Q2", "Q3", "Q4", "Q5", "Q9", "Q16"]
     results = [
         proofing_results.get(key, "").strip().upper().splitlines()[0]
         for key in question_keys
