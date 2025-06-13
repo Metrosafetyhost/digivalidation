@@ -12,8 +12,9 @@ textract       = boto3.client("textract", region_name="eu-west-2")
 s3             = boto3.client("s3")
 lambda_client  = boto3.client("lambda")
 
-PROOFING_LAMBDA_ARN = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-checklist_proofing"
-
+PROOFING_LAMBDA_ARN_WRA = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-checklist_proofing"
+PROOFING_LAMBDA_ARN_FRA = ""
+PROOFING_LAMBDA_ARN_HSA = ""
 
 IMPORTANT_HEADINGS = [
     "Significant Findings and Action Plan",
@@ -267,12 +268,19 @@ def process(event, context):
                 "workOrderNumber": workOrderNumber
 
             }
+            if workTypeRef == "C-WRA":
+                target_arn = PROOFING_LAMBDA_ARN_WRA
+            elif workTypeRef == "C-FRA":
+                target_arn = PROOFING_LAMBDA_ARN_FRA
+            else:
+                target_arn = PROOFING_LAMBDA_ARN_HSA
+
             lambda_client.invoke(
-                FunctionName   = PROOFING_LAMBDA_ARN,
+                FunctionName   = target_arn,
                 InvocationType = "Event",
                 Payload        = json.dumps(proofing_payload).encode("utf-8")
             )
-            logger.info("Invoked checklist_proofing for %s", processed_key)
+            logger.info("Invoked %s for %s", target_arn, processed_key)
 
             return {"statusCode": 200, "body": f"Completed SNS job {job_id}"}
 
@@ -340,12 +348,19 @@ def process(event, context):
             "buildingName" : buildingName,
 
         }
+        if workTypeRef == "C-WRA":
+            target_arn = PROOFING_LAMBDA_ARN_WRA
+        elif workTypeRef == "C-FRA":
+            target_arn = PROOFING_LAMBDA_ARN_FRA
+        else:
+            target_arn = PROOFING_LAMBDA_ARN_HSA
+
         lambda_client.invoke(
-            FunctionName   = PROOFING_LAMBDA_ARN,
+            FunctionName   = target_arn,
             InvocationType = "Event",
             Payload        = json.dumps(proofing_payload).encode("utf-8")
         )
-        logger.info("Invoked checklist_proofing for %s", processed_key)
+        logger.info("Invoked %s for %s", target_arn, processed_key)
 
         return {"statusCode": 200, "body": json.dumps({"json_s3_key": processed_key})}
 
