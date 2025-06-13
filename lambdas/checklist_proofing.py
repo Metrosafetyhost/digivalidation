@@ -668,7 +668,7 @@ def process(event, context):
 
     # ——— 3) Loop through Q1–Q15, always sending to Bedrock ———
     proofing_results = {}
-    for q_num in range(1, 16):
+    for q_num in range(1, 17):
         try:
             parsed_content = extract_json_data(content, q_num)
             prompt         = build_user_message(q_num, parsed_content)
