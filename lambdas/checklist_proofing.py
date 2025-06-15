@@ -12,6 +12,8 @@ bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
 s3       = boto3.client('s3')
 ses = boto3.client('ses', region_name='eu-west-2')
 
+
+
 BCC_ADDRESSES = "" #"peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
 
 EMAIL_QUESTIONS = {
@@ -657,6 +659,14 @@ def process(event, context):
     buildingName    = event.get("buildingName")
     workTypeRef     = event.get("workTypeRef")
 
+    presigned_url = s3.generate_presigned_url(
+    ClientMethod="get_object",
+    Params={
+        "Bucket": event["bucket_name"],
+        "Key":   event["document_key"]
+    },
+    ExpiresIn=86400   # link valid for 24 hours; adjust as needed
+)
     # if not tex_bucket or not tex_key or not work_order_id:
     #     logger.error("Missing one of textract_bucket/textract_key/workOrderId in event: %s", event)
     #     return {"statusCode": 400, "body": "Missing required fields"}
@@ -723,6 +733,9 @@ def process(event, context):
     body_lines.append(f"Hello {first_name},\n")
     body_lines.append(f"Below are the proofing outputs for '{buildingName}' (Work Order #{workOrderNumber}):\n")
     body_lines.append(f"Link to Work Order in Salesforce: \n https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view\n")
+    body_lines.append("\n\n"
+                      "You can download the original PDF here:\n"
+    f"{presigned_url}")
 
     for q_num, email_heading in EMAIL_QUESTIONS.items():
         q_key = f"Q{q_num}"
