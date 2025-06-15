@@ -662,8 +662,8 @@ def process(event, context):
     presigned_url = s3.generate_presigned_url(
     ClientMethod="get_object",
     Params={
-        "Bucket": event["bucket_name"],
-        "Key":   event["document_key"]
+        "Bucket": tex_bucket,
+        "Key":   tex_key
     },
     ExpiresIn=86400   # link valid for 24 hours; adjust as needed
 )
