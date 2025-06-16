@@ -81,10 +81,10 @@ def extract_json_data(json_content, question_number):
     # Q4: Building Description
     if question_number == 4:
         for sec in payload.get("sections", []):
-            if sec.get("name", "").lower().endswith("building description"):
+            if sec.get("name", "").lower().endswith("property description"):
                 for tbl in sec.get("tables", []):
                     for key, val in tbl.get("rows", []):
-                        if key.lower().startswith("description of the property"):
+                        if key.lower().startswith("Property Site/Description"):
                             return val.strip()
         return ""
 
