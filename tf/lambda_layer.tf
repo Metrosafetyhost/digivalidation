@@ -499,3 +499,18 @@ resource "aws_iam_role_policy_attachment" "fra_bedrock_invoke" {
   role       = "bedrock-lambda-fra_checklist_proofing"
   policy_arn = aws_iam_policy.proofing_bedrock_invoke.arn
 }
+
+resource "aws_iam_role_policy_attachment" "water_proofing_s3_read_metrosafetyprod" {
+  role       = aws_iam_role.bedrock_lambda_checklist_proofing.name
+  policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprodfiles.arn
+}
+
+resource "aws_iam_role_policy_attachment" "fire_proofing_s3_read_metrosafetyprod" {
+  role       = aws_iam_role.bedrock_lambda_fra_checklist_proofing.name
+  policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprodfiles.arn
+}
+
+resource "aws_iam_role_policy_attachment" "health_proofing_s3_read_metrosafetyprod" {
+  role       = aws_iam_role.bedrock_lambda_hsa_hecklist_proofing.name
+  policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprodfiles.arn
+}
