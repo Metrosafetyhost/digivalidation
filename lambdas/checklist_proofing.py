@@ -358,7 +358,7 @@ def build_user_message(question_number, content):
     # Q4 prompt
     if question_number == 4:
         return (
-            "Question 4: Read the Building Description, ensuring it’s complete, concise and relevant. Building Content is as follows: \n\n"
+            "Question 4: Read the Building Description, ensuring it’s complete, concise and relevant. Building Content is as follows:\n\n"
             f"{content}\n\n"
             "If it’s good, reply “PASS”. Otherwise list any missing or unclear details."
         )
@@ -714,7 +714,7 @@ def process(event, context):
     local_part = emailAddress.split("@")[0]                 # "firstname.lastname"
     first_name = local_part.split(".")[0].capitalize()    # "Firstname"
 
-    question_keys = ["Q2", "Q3", "Q4", "Q5", "Q9", "Q16"]
+    question_keys = ["Q2", "Q3", "Q4", "Q5", "Q9"]
     results = [
         proofing_results.get(key, "").strip().upper().splitlines()[0]
         for key in question_keys
