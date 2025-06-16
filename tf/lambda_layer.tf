@@ -500,17 +500,50 @@ resource "aws_iam_role_policy_attachment" "fra_bedrock_invoke" {
   policy_arn = aws_iam_policy.proofing_bedrock_invoke.arn
 }
 
+resource "aws_iam_role_policy" "allow_invoke_hsa_checklist_proofing" {
+  name = "AllowInvokeFRAProofing"
+  role = aws_iam_role.bedrock_lambda_checklist.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "lambda:InvokeFunction"
+        Resource = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-hsa_checklist_proofing"
+      }
+    ]
+  })
+}
+
+# look up the HSA‐proofing role by name
+data "aws_iam_role" "hsa_proofing_role" {
+  name = "bedrock-lambda-hsa_checklist_proofing"
+}
+
+# attach the same policy that allows GetObject on processed/*
+resource "aws_iam_role_policy_attachment" "hsaa_textract_output_read" {
+  role       = data.aws_iam_role.hsa_proofing_role
+  policy_arn = aws_iam_policy.lambda_textract_output_read.arn
+}
+
+# for your FRA proofing Lambda
+resource "aws_iam_role_policy_attachment" "hsa_bedrock_invoke" {
+  role       = "bedrock-lambda-hsa_checklist_proofing"
+  policy_arn = aws_iam_policy.proofing_bedrock_invoke.arn
+}
+
 resource "aws_iam_role_policy_attachment" "water_proofing_s3_read_metrosafetyprod" {
   role       = aws_iam_role.bedrock_lambda_checklist_proofing.name
   policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprodfiles.arn
 }
 
 resource "aws_iam_role_policy_attachment" "fra_s3_read_metrosafetyprod" {
-  role       = aws_iam_role.bedrock_lambda_fra_checklist_proofing.name
+  role       = "bedrock-lambda-fra_checklist_proofing"
   policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprodfiles.arn
 }
 
 resource "aws_iam_role_policy_attachment" "hsa_s3_read_metrosafetyprod" {
-  role       = aws_iam_role.bedrock_lambda_hsa_checklist_proofing.name
+  role       = "bedrock-lambda-hsa_checklist_proofing"
   policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprodfiles.arn
 }
