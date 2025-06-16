@@ -78,14 +78,28 @@ def extract_json_data(json_content, question_number):
             "sig_item_count":      sig_item_count
         }
 
-    # Q4: Building Description
     if question_number == 4:
+        desc = ""
+
         for sec in payload.get("sections", []):
-            if sec.get("name", "").lower().endswith("property description"):
+            name = sec.get("name", "").strip().lower()
+
+            # match either "3.1 Property Description" or the standalone "Property Site/Description"
+            if name.endswith("property description") or "property site/description" in name:
+                # 1) try tables first
                 for tbl in sec.get("tables", []):
-                    for key, val in tbl.get("rows", []):
-                        if key.startswith("Property Site/Description"):
-                            return val.strip()
+                    for row in tbl.get("rows", []):
+                        if len(row) >= 2 and \
+                           row[0].strip().lower().replace(" ", "") \
+                               .startswith("propertysite/description"):
+                            return row[1].strip()
+
+                # 2) fallback to paragraphs
+                if sec.get("paragraphs"):
+                    # join all lines into one block
+                    return " ".join(p.strip() for p in sec["paragraphs"] if p.strip())
+
+        # if we never hit either, it's really not there
         return ""
 
     # ——— Q5: Water Systems vs Water Assets ———
@@ -350,7 +364,7 @@ def build_user_message(question_number, content):
     # Q4 prompt
     if question_number == 4:
         return (
-            "Question 4: Read the Building Description, ensuring it’s complete, concise and relevant.\n\n"
+            "Question 4: Read the Property Description, ensuring it’s complete, concise and relevant.\n\n"
             f"{content}\n\n"
             "If it’s good, reply “PASS”. Otherwise list any missing or unclear details."
         )
