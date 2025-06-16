@@ -259,6 +259,8 @@ def process(event, context):
 
             # ─── (4) Invoke proofing Lambda (checklist_proofing.py) ──────────────
             proofing_payload = {
+                "bucket_name": bucket_name,
+                "document_key": document_key,
                 "textract_bucket": output_bucket,
                 "textract_key":    processed_key,
                 "workOrderId":     workOrderId,
@@ -339,6 +341,8 @@ def process(event, context):
 
         # ─── (5) Invoke proofing Lambda ───────────────────────────────────────
         proofing_payload = {
+            "bucket_name": bucket_name,
+            "document_key": document_key,
             "textract_bucket": output_bucket,
             "textract_key":    processed_key,
             "workOrderId":     workOrderId,

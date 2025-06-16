@@ -658,12 +658,14 @@ def process(event, context):
     emailAddress    = event.get("emailAddress")
     buildingName    = event.get("buildingName")
     workTypeRef     = event.get("workTypeRef")
+    pdf_bucket = event.get("bucket_name")
+    pdf_key    = event.get("document_key")
 
     presigned_url = s3.generate_presigned_url(
     ClientMethod="get_object",
     Params={
-        "Bucket": tex_bucket,
-        "Key":   tex_key
+        "Bucket": pdf_bucket,
+        "Key":   pdf_key
     },
     ExpiresIn=86400   # link valid for 24 hours; adjust as needed
 )
