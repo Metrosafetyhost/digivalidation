@@ -501,7 +501,7 @@ resource "aws_iam_role_policy_attachment" "fra_bedrock_invoke" {
 }
 
 resource "aws_iam_role_policy" "allow_invoke_hsa_checklist_proofing" {
-  name = "AllowInvokeFRAProofing"
+  name = "AllowInvokeHSAProofing"
   role = aws_iam_role.bedrock_lambda_checklist.name
 
   policy = jsonencode({
