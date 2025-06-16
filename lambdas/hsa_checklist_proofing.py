@@ -84,7 +84,7 @@ def extract_json_data(json_content, question_number):
             if sec.get("name", "").lower().endswith("property description"):
                 for tbl in sec.get("tables", []):
                     for key, val in tbl.get("rows", []):
-                        if key.lower().startswith("Property Site/Description"):
+                        if key.startswith("Property Site/Description"):
                             return val.strip()
         return ""
 
