@@ -64,4 +64,15 @@ resource "aws_iam_role_policy_attachment" "fra_proofing_ses" {
   policy_arn = aws_iam_policy.ses_send_email.arn
 }
 
+# look up the HSA-proofing Lambda role
+data "aws_iam_role" "hsa_proofing" {
+  name = "bedrock-lambda-hsa_checklist_proofing"
+}
+
+# attach SES send policy to it
+resource "aws_iam_role_policy_attachment" "hsa_proofing_ses" {
+  role       = data.aws_iam_role.hsa_proofing.name
+  policy_arn = aws_iam_policy.ses_send_email.arn
+}
+
 
