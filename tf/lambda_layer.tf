@@ -522,12 +522,12 @@ data "aws_iam_role" "hsa_proofing_role" {
 }
 
 # attach the same policy that allows GetObject on processed/*
-resource "aws_iam_role_policy_attachment" "hsaa_textract_output_read" {
-  role       = data.aws_iam_role.hsa_proofing_role
+resource "aws_iam_role_policy_attachment" "hsa_textract_output_read" {
+  role       = data.aws_iam_role.hsa_proofing_role.id
   policy_arn = aws_iam_policy.lambda_textract_output_read.arn
 }
 
-# for your FRA proofing Lambda
+# for your HSA proofing Lambda
 resource "aws_iam_role_policy_attachment" "hsa_bedrock_invoke" {
   role       = "bedrock-lambda-hsa_checklist_proofing"
   policy_arn = aws_iam_policy.proofing_bedrock_invoke.arn
