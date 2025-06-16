@@ -505,12 +505,12 @@ resource "aws_iam_role_policy_attachment" "water_proofing_s3_read_metrosafetypro
   policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprodfiles.arn
 }
 
-resource "aws_iam_role_policy_attachment" "fire_proofing_s3_read_metrosafetyprod" {
+resource "aws_iam_role_policy_attachment" "fra_s3_read_metrosafetyprod" {
   role       = aws_iam_role.bedrock_lambda_fra_checklist_proofing.name
   policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprodfiles.arn
 }
 
-resource "aws_iam_role_policy_attachment" "health_proofing_s3_read_metrosafetyprod" {
-  role       = aws_iam_role.bedrock_lambda_hsa_hecklist_proofing.name
+resource "aws_iam_role_policy_attachment" "hsa_s3_read_metrosafetyprod" {
+  role       = aws_iam_role.bedrock_lambda_hsa_checklist_proofing.name
   policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprodfiles.arn
 }
