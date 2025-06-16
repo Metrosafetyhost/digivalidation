@@ -143,7 +143,6 @@ def group_sections(blocks, tables, fields):
     for b in lines:
         txt  = b['Text'].strip()
         top  = b['Geometry']['BoundingBox']['Top']
-        page = b.get('Page',1)
 
         # new section?
         if is_major_heading(txt) and top < 0.85:

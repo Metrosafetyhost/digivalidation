@@ -25,7 +25,7 @@ EMAIL_QUESTIONS = {
     # 10:"",
     # 12:"",
     # 15:"",
-    16:"Section 7.0 Water Assets – data fields and comments are present",
+    # 16:"Section 7.0 Water Assets – data fields and comments are present",
 }
 
 def extract_json_data(json_content, question_number):
@@ -686,7 +686,7 @@ def process(event, context):
 
     # ——— 3) Loop through Q1–Q15, always sending to Bedrock ———
     proofing_results = {}
-    for q_num in range(1, 17):
+    for q_num in range(1, 15):
         try:
             parsed_content = extract_json_data(content, q_num)
             prompt         = build_user_message(q_num, parsed_content)
