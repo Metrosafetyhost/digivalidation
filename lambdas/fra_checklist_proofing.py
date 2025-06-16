@@ -650,6 +650,17 @@ def process(event, context):
     emailAddress    = event.get("emailAddress")
     buildingName    = event.get("buildingName")
     workTypeRef     = event.get("workTypeRef")
+    pdf_bucket = event.get("bucket_name")
+    pdf_key    = event.get("document_key")
+
+    presigned_url = s3.generate_presigned_url(
+    ClientMethod="get_object",
+    Params={
+        "Bucket": pdf_bucket,
+        "Key":   pdf_key
+    },
+    ExpiresIn=86400   # link valid for 24 hours; adjust as needed
+)
 
     # if not tex_bucket or not tex_key or not work_order_id:
     #     logger.error("Missing one of textract_bucket/textract_key/workOrderId in event: %s", event)
@@ -717,6 +728,9 @@ def process(event, context):
     body_lines.append(f"Hello {first_name},\n")
     body_lines.append(f"Below are the proofing outputs for '{buildingName}' (Work Order #{workOrderNumber}):\n")
     body_lines.append(f"Link to Work Order in Salesforce: \n https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view\n")
+    body_lines.append("\n\n"
+                      "You can download the original PDF here:\n"
+    f"{presigned_url}")
 
     for q_num, email_heading in EMAIL_QUESTIONS.items():
         q_key = f"Q{q_num}"
