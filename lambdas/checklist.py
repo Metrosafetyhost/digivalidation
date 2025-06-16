@@ -23,6 +23,7 @@ IMPORTANT_HEADINGS = [
     "Areas Identified Requiring Remedial Actions",
     "Building Description",
     "Property Description",
+    "Property Site/Description"
     "Accompanying the Risk Assessor",
     "Risk Review and Reassessment",
     "Water Scope",
