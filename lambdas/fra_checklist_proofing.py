@@ -313,9 +313,9 @@ def build_user_message(question_number, content):
     # Q4 prompt
     if question_number == 4:
         return (
-            "Question 4: Read the Building Description, ensuring it’s complete, concise and relevant.\n\n"
+            "Question 4: Read the Building Descriptionz, ensure that there is content within\n\n"
             f"{content}\n\n"
-            "If it’s good, reply “PASS”. Otherwise list any missing or unclear details."
+            "If it’s good and there is content, reply 'PASS'. Otherwise reply 'FAIL'"
         )
     
     
