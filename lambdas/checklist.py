@@ -233,7 +233,7 @@ def process(event, context):
             buildingName = event.get("buildingName")
             workTypeRef = event.get("workTypeRef")
             workOrderNumber = event.get("workOrderNumber")
-            resourceName  =event.get("resourceName")
+            resourceName  = event.get("resourceName")
 
 
             # ─── (1) Poll for blocks using your exact old snippet ───────────────────
@@ -268,9 +268,9 @@ def process(event, context):
                 "workOrderId":     workOrderId,
                 "resourceName": resourceName,
                 "emailAddress": emailAddress,
-                "buildingName" : buildingName,
-                "workTypeRef" : workTypeRef,
-                "workOrderNumber": workOrderNumber
+                "buildingName": buildingName,
+                "workTypeRef": workTypeRef,
+                "workOrderNumber": workOrderNumber,
 
             }
             if workTypeRef == "C-WRA":

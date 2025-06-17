@@ -414,8 +414,8 @@ def process(event, context):
                     "emailAddress":  email_addr,
                     "buildingName":  buildingName,
                     "workOrderNumber": workOrderNumber,
-                    "resourceName" : resourceName,
-                    "workTypeRef": workTypeRef
+                    "resourceName": resourceName,
+                    "workTypeRef": workTypeRef,
                 }
                 lambda_client.invoke(
                 FunctionName=PROOFING_CHECKLIST_ARN,
