@@ -232,40 +232,58 @@ def validate_water_assets(sections):
 def check_building_description(sections):
     """
     Returns (all_populated: bool, bd_sections: list)
-    - sections: payload['sections']
-    - all_populated is True iff every Building-Description sub-section
-      has at least one table row.
-    - bd_sections is the list of matched sections (so you can log any fails).
+    
+    A section is considered “populated” if it has at least one table **with rows**
+    OR if it has at least one non-blank paragraph.
     """
     # 1. find all “major” numbers (eg "3", "5") where there's a “.0 Building Description” heading
     bd_root = re.compile(r'^(\d+)\.0\s+Building Description', re.IGNORECASE)
     building_majors = {
         m.group(1)
         for sec in sections
-        for m in [bd_root.match(sec['name'])]
+        for m in [bd_root.match(sec.get('name', ''))]
         if m
     }
 
     if not building_majors:
-        # no building-description at all → treat as PASS or however you prefer
         return True, []
 
     # 2. collect every section whose “major” digit is in that set
     major_pat = re.compile(r'^(\d+)\.\d+')
     bd_sections = [
         sec for sec in sections
-        if major_pat.match(sec['name'])
-        and major_pat.match(sec['name']).group(1) in building_majors
+        if (m := major_pat.match(sec.get('name', ''))) 
+           and m.group(1) in building_majors
     ]
 
-    # 3. check that each of those has at least one table with at least one row
-    for sec in bd_sections:
-        tables = sec.get('tables', [])
-        # fail if no tables or every table is empty
-        if not tables or all(not t.get('rows') for t in tables):
-            return False, bd_sections
+    # helper: does this section actually contain data?
+    def has_content(sec):
+        # a) any table with at least one row?
+        for tbl in sec.get('tables', []):
+            if tbl.get('rows'):
+                return True
+        # b) any non-blank paragraph?
+        for p in sec.get('paragraphs', []):
+            if p.strip():
+                return True
+        return False
 
-    return True, bd_sections
+    # only keep the sections that actually have content
+    data_secs = [sec for sec in bd_sections if has_content(sec)]
+
+    # if there were no real data-sections at all, we treat as PASS
+    if not data_secs:
+        return True, []
+
+    # 3. ensure each data-section is populated
+    for sec in data_secs:
+        # if it had tables, make sure none are empty
+        for tbl in sec.get('tables', []):
+            if not tbl.get('rows'):
+                return False, data_secs
+        # if it had no tables, but had paragraphs, that's okay
+    return True, data_secs
+
 
 # def validate_outlet_temperature_table(sections):
 #     """
@@ -376,14 +394,14 @@ def process(event, context):
             sections = parsed.get("sections", [])
             all_ok, bd_secs = check_building_description(sections)
 
-            # log any empty/missing bits for debugging
             if not all_ok:
+            # only report the ones that really had empty tables
                 empty = [
                     s["name"]
                     for s in bd_secs
-                    if not s.get("tables") or all(not t.get("rows") for t in s["tables"])
+                    if s.get("tables") and any(not t.get("rows") for t in s["tables"])
                 ]
-                logger.warning("Q4 missing content in sections: %s", empty)
+                logger.warning("Q4 missing table-content in: %s", empty)
 
             proofing_results["Q4"] = "PASS" if all_ok else "FAIL"
             continue
