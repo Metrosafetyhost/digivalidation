@@ -78,6 +78,9 @@ def extract_json_data(json_content, question_number):
             "sig_item_count":      sig_item_count
         }
     
+    if question_number == 4:
+        return payload
+    
     # ——— Q5: Water Systems vs Water Assets ———
     if question_number == 5:
         water_desc = ""
