@@ -12,7 +12,7 @@ bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
 s3       = boto3.client('s3')
 ses = boto3.client('ses', region_name='eu-west-2')
 
-BCC_ADDRESSES = ""#"peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
+BCC_ADDRESSES = "peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
 
 EMAIL_QUESTIONS = {
     3: "Totals consistency check (Section 1.1 vs Significant Findings and Action Plan)",
@@ -133,61 +133,6 @@ def send_to_bedrock(user_text):
         plain = response_text
     return plain.strip()
 
-def validate_water_assets(sections):
-    """
-    Locally validate Water Assets tables - Question 16: check each asset record for blank data fields (excluding photo rows),
-    ensure comments row is non-empty, and note that photos are never extractable by Textract so flag them.
-
-    Returns a list of dicts: {record: <ID>, missing: [<issues>]}
-    """
-    issues = []
-    id_pattern = re.compile(r'^[A-Z]{2,}-\d+')
-
-    for sec in sections:
-        name = sec.get("name", "").lower()
-        if "water asset" not in name:
-            continue
-
-        for table in sec.get("tables", []):
-            rows = table.get("rows", [])
-            if len(rows) < 2:
-                continue
-
-            # record ID from first row, second cell
-            first = rows[0]
-            record_id = str(first[1]).strip() if len(first) > 1 else "<unknown>"
-            if not id_pattern.match(record_id):
-                continue
-
-            missing = []
-            # 1) Check all data fields except photo row
-            for r in rows[1:]:
-                field_name = str(r[0]).strip()
-                if field_name.lower().startswith("photo"):
-                    continue
-                # if any cell in row is blank
-                for cell in r[1:]:
-                    if not str(cell).strip():
-                        missing.append(f"blank value in '{field_name}'")
-                        break
-
-            # 2) Comments row must have text
-            comment_row = next((r for r in rows if str(r[0]).strip().lower() == "comments"), None)
-            if comment_row:
-                comment_text = " ".join(str(c) for c in comment_row[1:]).strip()
-                if not comment_text:
-                    missing.append("comments missing")
-            else:
-                missing.append("comments row missing")
-
-            # 3) Photos always flagged for manual check
-            missing.append("photos manual check")
-
-            if missing:
-                issues.append({"record": record_id, "missing": missing})
-
-    return issues
-
 def check_building_description(sections):
     """
     Returns (all_populated: bool, bd_sections: list)
@@ -271,7 +216,7 @@ def process(event, context):
         "Bucket": pdf_bucket,
         "Key":   pdf_key
     },
-    ExpiresIn=86400   # link valid for 24 hours; adjust as needed
+    ExpiresIn=604800   # link valid for 24 hours; adjust as needed
 )
 
     # if not tex_bucket or not tex_key or not work_order_id:

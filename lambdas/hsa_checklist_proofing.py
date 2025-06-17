@@ -12,7 +12,7 @@ bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
 s3       = boto3.client('s3')
 ses = boto3.client('ses', region_name='eu-west-2')
 
-BCC_ADDRESSES = ""#"peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
+BCC_ADDRESSES = "peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
 
 EMAIL_QUESTIONS = {
     3: "Totals consistency check (Section 1.1 vs Significant Findings and Action Plan)",
@@ -673,7 +673,7 @@ def process(event, context):
         "Bucket": pdf_bucket,
         "Key":   pdf_key
     },
-    ExpiresIn=86400   # link valid for 24 hours; adjust as needed
+    ExpiresIn=604800   # link valid for 24 hours; adjust as needed
 )
 
     # if not tex_bucket or not tex_key or not work_order_id:

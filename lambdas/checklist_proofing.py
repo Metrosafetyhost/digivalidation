@@ -14,7 +14,7 @@ ses = boto3.client('ses', region_name='eu-west-2')
 
 
 
-BCC_ADDRESSES = ""#"peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
+BCC_ADDRESSES = "peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
 
 EMAIL_QUESTIONS = {
     2: "Verify Contents listing for Water Assets & Appendices A–D",
@@ -668,7 +668,7 @@ def process(event, context):
         "Bucket": pdf_bucket,
         "Key":   pdf_key
     },
-    ExpiresIn=86400   # link valid for 24 hours; adjust as needed
+    ExpiresIn=604800   # link valid for 24 hours; adjust as needed
 )
     # if not tex_bucket or not tex_key or not work_order_id:
     #     logger.error("Missing one of textract_bucket/textract_key/workOrderId in event: %s", event)
@@ -743,12 +743,13 @@ def process(event, context):
         indented = "\n".join("  " + ln for ln in str(answer).splitlines())
         body_lines.append(f"{email_heading}:\n{indented}\n")
 
+    body_lines.append("Regards,\nDigital Validation\n")
+
     body_lines.append(f"Link to Work Order in Salesforce: \n https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view\n")
-    body_lines.append("\n\n"
+    body_lines.append("\n"
                       "You can download the original PDF here:\n"
     f"{presigned_url}")
 
-    body_lines.append("Regards,\nQuality Team\n")
     body_text = "\n".join(body_lines)
 
     # ——— 6) Send the email via SES ———
