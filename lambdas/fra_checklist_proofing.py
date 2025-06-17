@@ -299,6 +299,21 @@ def extract_json_data(json_content, question_number):
 
 
 def build_user_message(question_number, content):
+
+         # Q3 prompt
+    if question_number == 3:
+        by_sec = content.get("remedial_by_section", {})
+        total  = content.get("remedial_total", 0)
+        sig_ct = content.get("sig_item_count", 0)
+        breakdown = ", ".join(f"{k}: {v}" for k, v in by_sec.items())
+
+        return (
+            "Question 3: Compare the number of remedial‐actions raised in Section 1.1 with the\n"
+            "number of items in “Significant Findings and Action Plan.”\n\n"
+            f"— Section 1.1 counts: {breakdown}  (Total = {total})\n"
+            f"— Significant Findings items found: {sig_ct}\n\n"
+            "If the totals match, reply “PASS”. Otherwise list each discrepancy."
+        )
     
     # Q9 prompt -> Inherent doesn't print as table, so if each one is the same this can be done, however would be slightly inconsistent.
     if question_number == 9:
