@@ -362,6 +362,7 @@ def process(event, context):
                 "result":   "PASS" if ok else "FAIL",
                 "notes":    f"Building Description content {'found' if ok else 'missing'}"
             }
+            proofing_results["Q4"] = "PASS" if ok else "FAIL"
             continue
 
         # for Q3 and Q9 go to Bedrock
