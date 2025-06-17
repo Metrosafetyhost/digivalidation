@@ -654,7 +654,7 @@ def process(event, context):
     tex_bucket      = event.get("textract_bucket")
     tex_key         = event.get("textract_key")
     work_order_id     = event.get("workOrderId")
-    auditorName = event.get("auditorName")
+    resourceName = event.get("resourceName")
     workOrderNumber = event.get("workOrderNumber")
     emailAddress    = event.get("emailAddress")
     buildingName    = event.get("buildingName")

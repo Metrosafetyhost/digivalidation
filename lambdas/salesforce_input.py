@@ -337,7 +337,7 @@ def process(event, context):
     workorder_id = body.get("workOrderId")
     email_addr   = body.get("emailAddress")
     buildingName = body.get("buildingName")
-    auditorName = body.get("auditorName")
+    resourceName = body.get("resourceName")
     workOrderNumber = body.get("workOrderNumber")
 
     # 2) ALWAYS run your AI-proofing
@@ -414,7 +414,7 @@ def process(event, context):
                     "emailAddress":  email_addr,
                     "buildingName":  buildingName,
                     "workOrderNumber": workOrderNumber,
-                    "auditorName" : auditorName,
+                    "resourceName" : resourceName,
                     "workTypeRef": workTypeRef
                 }
                 lambda_client.invoke(

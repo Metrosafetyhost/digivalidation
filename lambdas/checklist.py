@@ -233,7 +233,7 @@ def process(event, context):
             buildingName = event.get("buildingName")
             workTypeRef = event.get("workTypeRef")
             workOrderNumber = event.get("workOrderNumber")
-            auditorName  =event.get("auditorName")
+            resourceName  =event.get("resourceName")
 
 
             # ─── (1) Poll for blocks using your exact old snippet ───────────────────
@@ -266,7 +266,7 @@ def process(event, context):
                 "textract_bucket": output_bucket,
                 "textract_key":    processed_key,
                 "workOrderId":     workOrderId,
-                "auditorName": auditorName,
+                "resourceName": resourceName,
                 "emailAddress": emailAddress,
                 "buildingName" : buildingName,
                 "workTypeRef" : workTypeRef,
@@ -298,7 +298,7 @@ def process(event, context):
     document_key  = event.get("document_key")
     workOrderId   = event.get("workOrderId", "")
     buildingName   = event.get("buildingName")
-    auditorName = event.get("auditorName")
+    resourceName = event.get("resourceName")
     output_bucket = os.environ.get("CHECKLIST_OUTPUT_BUCKET", "textract-output-digival")
     emailAddress    = event.get("emailAddress")  
     workOrderNumber = event.get("workOrderNumber")
@@ -350,7 +350,7 @@ def process(event, context):
             "textract_bucket": output_bucket,
             "textract_key":    processed_key,
             "workOrderId":     workOrderId,
-            "auditorName": auditorName,
+            "resourceName": resourceName,
             "workTypeRef" : workTypeRef,
             "workOrderNumber": workOrderNumber,
             "emailAddress": emailAddress,
