@@ -77,17 +77,7 @@ def extract_json_data(json_content, question_number):
             "remedial_total":      total_issues,
             "sig_item_count":      sig_item_count
         }
-
-    # Q4: Building Description
-    if question_number == 4:
-        for sec in payload.get("sections", []):
-            if sec.get("name", "").lower().endswith("building description"):
-                for tbl in sec.get("tables", []):
-                    for key, val in tbl.get("rows", []):
-                        if key.lower().startswith("description of the property"):
-                            return val.strip()
-        return ""
-
+    
     # ——— Q5: Water Systems vs Water Assets ———
     if question_number == 5:
         water_desc = ""
@@ -309,15 +299,6 @@ def extract_json_data(json_content, question_number):
 
 
 def build_user_message(question_number, content):
-
-    # Q4 prompt
-    if question_number == 4:
-        return (
-            "Question 4: Read the Building Descriptionz, ensure that there is content within\n\n"
-            f"{content}\n\n"
-            "If it’s good and there is content, reply 'PASS'. Otherwise reply 'FAIL'"
-        )
-    
     
     # Q9 prompt -> Inherent doesn't print as table, so if each one is the same this can be done, however would be slightly inconsistent.
     if question_number == 9:
@@ -523,6 +504,27 @@ def validate_water_assets(sections):
 
     return issues
 
+def check_building_description(payload):
+    """
+    Returns True if any non-empty text exists in a section whose name starts with
+    "Building Description" (covers both "Building Description - The Building"
+    and "Building Description - Fire Safety"), including both paragraphs and table cells.
+    """
+    for sec in payload.get("sections", []):
+        name = sec.get("name", "")
+        if name.startswith("Building Description"):
+            # collect all text fragments
+            texts = []
+            texts.extend(sec.get("paragraphs", []))
+            for tbl in sec.get("tables", []):
+                for row in tbl.get("rows", []):
+                    # join all non-empty cells into one string
+                    texts.append(" ".join(cell.strip() for cell in row if cell and cell.strip()))
+            # if any fragment is non-blank, we’ve got content
+            return any(t.strip() for t in texts)
+    # no such section found → fail
+    return False
+
 # def validate_outlet_temperature_table(sections):
 #     """
 #     Handle Q17: check Outlet Temperature Profile for out-of-range temps
@@ -625,8 +627,19 @@ def process(event, context):
     # ——— 3) Loop through Q1–Q15, always sending to Bedrock ———
     proofing_results = {}
     for q_num in range(1, 16):
+
+        parsed_content = extract_json_data(content, q_num)
+
+        if q_num == 4:
+            ok = check_building_description(parsed_content)
+            proofing_results["Q4"] = {
+                "question": 4,
+                "result": "PASS" if ok else "FAIL",
+                "notes":   "Building Description content " + ("found" if ok else "missing")
+            }
+            continue
+
         try:
-            parsed_content = extract_json_data(content, q_num)
             prompt         = build_user_message(q_num, parsed_content)
 
             if not prompt:
