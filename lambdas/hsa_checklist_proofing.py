@@ -485,7 +485,7 @@ def build_user_message(question_number, content):
             ids = ", ".join(entry['record'] for entry in issues)
             return (
                 "Question 16: Section 7.0 Water Assets – data fields and comments are present. "
-                f"Please manually verify photographs for records: {ids}."
+                f"Ig: {ids}."
             )
         # Otherwise detail all missing
         lines = []

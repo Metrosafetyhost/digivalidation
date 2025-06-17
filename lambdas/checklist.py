@@ -38,6 +38,8 @@ IMPORTANT_HEADINGS = [
     "Appendices",
     "Risk Assessment Checklist",
     "Legionella Control Programme of Preventative Works",
+    "Building Description - The Building",
+    "Building Description - Fire Safety",
 ]
 
 def normalize(text):
