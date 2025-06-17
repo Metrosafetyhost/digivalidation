@@ -458,12 +458,13 @@ def process(event, context):
         indented = "\n".join("  " + ln for ln in str(answer).splitlines())
         body_lines.append(f"{email_heading}:\n{indented}\n")
 
+    body_lines.append("Regards,\nDigital Validation\n")
+
     body_lines.append(f"Link to Work Order in Salesforce: \n https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view\n")
-    body_lines.append("\n\n"
+    body_lines.append("\n"
                       "You can download the original PDF here:\n"
     f"{presigned_url}")
 
-    body_lines.append("Regards,\nQuality Team\n")
     body_text = "\n".join(body_lines)
 
     # ——— 6) Send the email via SES ———
