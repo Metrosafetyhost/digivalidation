@@ -22,34 +22,6 @@ EMAIL_QUESTIONS = {
 
 def extract_json_data(json_content, question_number):
     payload = json.loads(json_content)
-
-    # ————— Q2: Verify Contents listing for Water Assets & Appendices A–D —————
-    if question_number == 2:
-        # 1) find the “Contents” section
-        toc_rows = []
-        for sec in payload.get("sections", []):
-            if sec.get("name", "").strip() == "Contents":
-                toc_rows = sec.get("tables", [])[0].get("rows", [])
-                break
-
-        # 2) pull out each TOC entry (skip header row)
-        headings = [r[0].strip() for r in toc_rows[1:]]
-
-        # 3) detect any row containing “Water Assets”
-        water_assets_entries = [h for h in headings if "Water Assets" in h]
-
-        # 4) detect all Appendix A–D entries
-        appendices = []
-        for h in headings:
-            m = re.match(r"^(APPENDIX [A-D])", h.upper())
-            if m:
-                appendices.append(m.group(1))
-
-        return {
-            "toc_headings":          headings,
-            "water_assets_entries":  water_assets_entries,
-            "appendices_found":      appendices
-        }
     
     # Q3: Remedial-actions vs Significant Findings count
     if question_number == 3:
@@ -80,34 +52,6 @@ def extract_json_data(json_content, question_number):
     
     if question_number == 4:
         return payload
-    
-    # ——— Q5: Water Systems vs Water Assets ———
-    if question_number == 5:
-        water_desc = ""
-        assets     = set()
-
-        for sec in payload.get("sections", []):
-            sec_name = sec.get("name", "").lower()
-
-            # 1) Pull the narrative under “Description of the Water Systems”
-            if sec_name.endswith("building description"):
-                for tbl in sec.get("tables", []):
-                    for key, val in tbl.get("rows", []):
-                        if key.lower().startswith("description of the water systems"):
-                            water_desc = val.strip()
-
-            # 2) Scan every table in the doc for asset IDs of the form “XXXXX-NN”
-            for tbl in sec.get("tables", []):
-                for row in tbl.get("rows", []):
-                    candidate = row[1].strip()
-                    # e.g. matches MCW-01, POU-01, MPOU-01, CWS-02, etc.
-                    if re.match(r"^[A-Za-z0-9]+-\d+$", candidate):
-                        assets.add(candidate)
-
-        return {
-            "description": water_desc,
-            "assets":      sorted(assets)
-        }
     
         # ————— Q9: Risk Dashboard – Management Control & Inherent Risk —————
     if question_number == 9:
@@ -153,151 +97,6 @@ def extract_json_data(json_content, question_number):
             "inherent_risk_description": inherent_txt
         }
 
-    # Q10
-    if question_number == 10:
-        # 1) Section 3.1 Responsible Persons (table)
-        sec31 = next(
-            (s for s in payload["sections"]
-             if s.get("name", "").startswith("3.1 Responsible Persons")),
-            None
-        )
-        if not sec31 or not sec31.get("tables"):
-            raise ValueError("Could not find section '3.1 Responsible Persons' or its table for Q10.")
-        rp_tbl = sec31["tables"][0]
-        responsible_persons = [
-            {"Role": row[0].strip(),
-             "Name": row[1].strip(),
-             "Company": row[2].strip()}
-            for row in rp_tbl["rows"][1:]
-            if len(row) >= 3
-        ]
-
-        # 2) Section 3.3 Accompanying the Risk Assessor (paragraphs)
-        sec_3_3 = next(
-            (s for s in payload["sections"]
-             if s.get("name", "").startswith("3.3 Accompanying the Risk Assessor")),
-            None
-        )
-        accompanying_assessor = (
-            [p.strip() for p in sec_3_3.get("paragraphs", [])
-             if p.strip() and not p.startswith("Printed from")]
-            if sec_3_3 else []
-        )
-
-        # 3) Section 3.5 Risk Review and Reassessment (paragraphs)
-        sec_3_5 = next(
-            (s for s in payload["sections"]
-             if s.get("name", "").startswith("3.5 Risk Review and Reassessment")),
-            None
-        )
-        risk_review_reassessment = (
-            [p.strip() for p in sec_3_5.get("paragraphs", [])
-             if p.strip() and not p.startswith("Printed from")]
-            if sec_3_5 else []
-        )
-
-        return {
-            "responsible_persons":        responsible_persons,
-            "accompanying_assessor":      accompanying_assessor,
-            "risk_review_reassessment":   risk_review_reassessment
-        }
-
-     # ——— Q12: Written Scheme of Control ———
-    if question_number == 12:
-        issues = []
-        # Locate the "4.1 Water Control Scheme" section
-        for sec in payload.get("sections", []):
-            if sec.get("name", "").startswith("4.1"):
-                tables = sec.get("tables", [])
-                if tables:
-                    rows = tables[0].get("rows", [])
-                    # Skip header row
-                    for row in rows[1:]:
-                        task = row[0].strip()
-                        comment = row[2].strip() if len(row) > 2 else ""
-                        missing = []
-                        if not comment:
-                            missing.append("comment")
-                        # Look for a date in dd/mm/yyyy format
-                        if not re.search(r"\b\d{2}/\d{2}/\d{4}\b", comment):
-                            missing.append("date")
-                        if missing:
-                            issues.append({"task": task, "missing": missing})
-                break
-        return {"scheme_issues": issues}
-
-    #Q15:
-    if question_number == 15:
-        # 1) Read counts from the “System Asset Register” section
-        sys_counts = {}
-        sys_sec = next(
-            (s for s in payload.get("sections", [])
-             if re.search(r"System Asset Register", s.get("name", ""), re.IGNORECASE)),
-            None
-        )
-        if sys_sec and sys_sec.get("tables"):
-            tbl = sys_sec["tables"][0]
-            for asset_name, cnt_str in tbl["rows"][1:]:
-                try:
-                    cnt = int(cnt_str)
-                except ValueError:
-                    cnt = 0
-                sys_counts[asset_name.strip()] = cnt
-
-        total_sys_assets = sum(sys_counts.values())
-
-        # 2) Find all asset-form IDs under “Water Assets”
-        # IDs like CAL-01, CALP-02, MCWS-01, MULTI-01, SHOWER-04, etc.
-        id_pattern = re.compile(r"^[A-Z]{2,6}-\d{2}$")
-        asset_ids = []
-
-        sections = payload.get("sections", [])
-        start_idx = next(
-            (i for i, s in enumerate(sections)
-             if re.search(r"Water Assets\s*$", s.get("name", ""), re.IGNORECASE)),
-            None
-        )
-
-        if start_idx is not None:
-            for s in sections[start_idx + 1:]:
-                name = s.get("name", "")
-                # stop at next top-level section (e.g. “9.0 …”)
-                if re.match(r"^\d+\.0\s+", name) and not re.search(r"Water Assets", name, re.IGNORECASE):
-                    break
-
-                # 2a) paragraphs: full-match ID only
-                for line in s.get("paragraphs", []):
-                    txt = line.strip()
-                    if id_pattern.fullmatch(txt):
-                        asset_ids.append(txt)
-
-                # 2b) tables: extract all IDs anywhere in cells
-                for tbl in s.get("tables", []):
-                    for row in tbl.get("rows", []):
-                        for cell in row:
-                            for m in id_pattern.findall(cell or ""):
-                                asset_ids.append(m)
-
-                # 2c) fields: some extra extracted values
-                for field in s.get("fields", []):
-                    if isinstance(field, dict):
-                        val = field.get("value", "").strip()
-                        if id_pattern.fullmatch(val):
-                            asset_ids.append(val)
-
-        unique_ids = sorted(set(asset_ids))
-        return {
-            "system_counts":    sys_counts,
-            "total_sys_assets": total_sys_assets,
-            "asset_form_ids":   unique_ids,
-            "num_asset_forms":  len(unique_ids)
-        }
-    
-    if question_number == 16:
-        # Local Water Assets validation
-        issues = validate_water_assets(payload.get("sections", []))
-        return {"assets_issues": issues}
-
     return None
 
 
@@ -335,98 +134,6 @@ def build_user_message(question_number, content):
             "If both lists contain at least one entry, reply:\n"
             "PASS: Both Risk Rating Levels and Management Control Text are complete. Check Legionella Inherent Risk manually and ensure no content is missing.\n"
             "Otherwise, name which section is missing or empty."
-        )
-    #Q10
-    if question_number == 10:
-        rp = content["responsible_persons"]
-        ac = content["accompanying_assessor"]
-        rv = content["risk_review_reassessment"]
-
-        rp_lines = "\n".join(
-            f"- {p['Role']}: {p['Name']} ({p['Company']})"
-            for p in rp
-        ) or "None found"
-
-        return (
-            "Question 10: ensure that:\n"
-            "  Section 3.1 Responsible Persons is fully completed\n"
-            "  Section 3.3 Accompanying the Risk Assessor is populated\n"
-            "  Section 3.5 Risk Review and Reassessment is populated\n\n"
-            "--- 3.1 Responsible Persons ---\n"
-            f"{rp_lines}\n\n"
-            "--- 3.3 Accompanying the Risk Assessor ---\n"
-            f"{ac or 'None found'}\n\n"
-            "--- 3.5 Risk Review and Reassessment ---\n"
-            f"{rv or 'None found'}\n\n"
-            "If all three parts are present and complete, reply “PASS”. "
-            "Otherwise list which part is missing or incomplete."
-        )
-    
-    # ——— Q12 Prompt ———
-    if question_number == 12:
-        issues = content.get("scheme_issues", [])
-        # If no missing fields, it's a PASS
-        if not issues:
-            return (
-                "Question 12: Section 4.0 Legionella Control Programme of Preventative Works and the Written Scheme of Control – "
-                "All tasks have both a date and a comment. PASS."
-            )
-        # Build a list of missing items
-        detail_lines = "\n".join(
-            f"- {i['task']}: missing {', '.join(i['missing'])}"
-            for i in issues
-        )
-        return (
-            "Question 12: Section 4.0 Legionella Control Programme of Preventative Works and the Written Scheme of Control –ensure each task has a date (dd/mm/yyyy) and a meaningful comment.\n\n"
-            f"{detail_lines}\n\n" 
-            "If all entries have dates and comments, reply “PASS”. Otherwise list which tasks are missing which fields."
-        )
-    
-    #Q15
-    if question_number == 15:
-        total = content["total_sys_assets"]
-        forms = content["num_asset_forms"]
-        ids   = content["asset_form_ids"]
-        sys_ct = "\n".join(f"- {name}: {cnt}" for name, cnt in content["system_counts"].items())
-
-        msg = (
-            f"--- System Asset Register counts (present) ---\n{sys_ct}\n\n"
-            f"Total assets present: {total}\n\n"
-            f"--- Unique Asset Form IDs found in Water Assets ---\n- " + "\n- ".join(ids) +
-            f"\n\nCount of asset forms: {forms}\n\n"
-        )
-        if total == forms:
-            msg += "Totals match, reply “PASS”."
-        else:
-            diff = total - forms
-            msg += (
-                f"Discrepancy detected: {total} assets registered but {forms} asset forms found "
-                f"(difference of {diff:+d})."
-            )
-        return msg
-    
-    # ——— Q16 Prompt ———
-    if question_number == 16:
-        issues = content.get("assets_issues", [])
-
-        # Separate cases: only photos vs other issues
-        photo_only = all(all(item == "photos manual check" for item in entry["missing"]) for entry in issues)
-        if photo_only:
-            ids = ", ".join(entry['record'] for entry in issues)
-            return (
-                "Question 16: Section 7.0 Water Assets – data fields and comments are present. "
-                f"Please manually verify photographs for records: {ids}."
-            )
-        # Otherwise detail all missing
-        lines = []
-        for entry in issues:
-            items = ", ".join(entry['missing'])
-            lines.append(f"- {entry['record']}: {items}")
-        detail = "\n".join(lines)
-        return (
-            "Question 16: Section Water Assets – please check the following asset entries for missing data/comments/photos:\n\n"
-            f"{detail}\n\n"
-            "Once corrected or verified, reply “PASS”."
         )
     # fallback
     logger.error(f"No handler for question_number={question_number}; returning empty message")
@@ -644,35 +351,33 @@ def process(event, context):
 
     # ——— 3) Loop through Q1–Q15, always sending to Bedrock ———
     proofing_results = {}
-    for q_num in range(1, 16):
+    for q_num in (3, 4, 9):
+        parsed = extract_json_data(content, q_num)
 
-        parsed_content = extract_json_data(content, q_num)
-
+        # handle Q4 locally
         if q_num == 4:
-            ok = check_building_description(parsed_content)
+            ok = check_building_description(parsed)
             proofing_results["Q4"] = {
                 "question": 4,
-                "result": "PASS" if ok else "FAIL",
-                "notes":   "Building Description content " + ("found" if ok else "missing")
+                "result":   "PASS" if ok else "FAIL",
+                "notes":    f"Building Description content {'found' if ok else 'missing'}"
             }
             continue
 
+        # for Q3 and Q9 go to Bedrock
         try:
-            prompt         = build_user_message(q_num, parsed_content)
-
+            prompt = build_user_message(q_num, parsed)
             if not prompt:
                 proofing_results[f"Q{q_num}"] = "(no prompt built)"
             else:
                 ai_reply = send_to_bedrock(prompt)
                 proofing_results[f"Q{q_num}"] = ai_reply or "(empty response)"
-
         except Exception as ex:
             logger.warning(
                 "Error while processing Q%d for WorkOrder %s: %s",
                 q_num, work_order_id, ex, exc_info=True
             )
             proofing_results[f"Q{q_num}"] = f"ERROR: {ex}"
-
     # ——— 4) Log all results ———
     logger.info(
         "Proofing results for workOrderId %s:\n%s",
