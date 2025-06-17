@@ -17,7 +17,7 @@ BCC_ADDRESSES = ""#"peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety
 EMAIL_QUESTIONS = {
     3: "Totals consistency check (Section 1.1 vs Significant Findings and Action Plan)",
     4: "Building Description completeness assessment",
-    9: "Risk Rating & Management Control review"
+    9: "Life Safety Risk Rating at this Premises review"
 }
 
 def extract_json_data(json_content, question_number):
@@ -53,49 +53,26 @@ def extract_json_data(json_content, question_number):
     if question_number == 4:
         return payload
     
-        # ————— Q9: Risk Dashboard – Management Control & Inherent Risk —————
     if question_number == 9:
-        rr_levels    = []
-        mcr_texts    = []
-        inherent_txt = ""
+        rating = None
 
-        # 1) Find the “2.0 Risk Dashboard” section
+        # 1) find the section by name
         for sec in payload.get("sections", []):
-            if sec.get("name", "").startswith("2.0 Risk Dashboard"):
-
-                # 2) Pull the Risk Rating ⇆ Management Control table
-                for tbl in sec.get("tables", []):
-                    # safely unpack only the first two cells
-                    hdr0, hdr1, *_ = tbl["rows"][0]
-                    if hdr0.strip() == "Risk Rating" and "Management Control" in hdr1:
-                        for row in tbl["rows"][1:]:
-                            # grab at most two columns
-                            rating = row[0].strip() if len(row) > 0 else ""
-                            control = row[1].strip() if len(row) > 1 else ""
-                            rr_levels.append(rating)
-                            mcr_texts.append(control)
-
-                # 3) Fallback: extract the “Inherent Risk” line from paragraphs
-                paras = sec.get("paragraphs", [])
-                for idx, line in enumerate(paras):
-                    if re.match(r"^\s*2\.1\s+Current Risk Ratings", line):
-                        # take the very next non‐footer, non‐heading line
-                        for nxt in paras[idx+1:]:
-                            txt = nxt.strip()
-                            if not txt or txt.startswith("Overall Risk Rating") or txt.startswith("Printed from"):
-                                break
-                            inherent_txt = txt
-                            break
+            name = sec.get("name", "").lower()
+            if name.startswith("life safety risk rating at this premises"):
+                # 2) scan its paragraphs for “is: <value>”
+                for para in sec.get("paragraphs", []):
+                    m = re.search(r"is[:\s]+(.+)", para, flags=re.IGNORECASE)
+                    if m:
+                        rating = m.group(1).strip()
                         break
+                break
 
-                break  # no need to scan further sections
-
-        # 4) Return exactly what build_user_message(q=6) needs
-        return {
-            "risk_rating_levels":        rr_levels,
-            "management_control_text":   mcr_texts,
-            "inherent_risk_description": inherent_txt
-        }
+        # 3) null-check and return PASS/FAIL
+        if rating:
+            return {"Q9": "PASS", "value": rating}
+        else:
+            return {"Q9": "FAIL", "value": None}
 
     return None
 
@@ -117,24 +94,6 @@ def build_user_message(question_number, content):
             "If the totals match, reply “PASS”. Otherwise list each discrepancy."
         )
     
-    # Q9 prompt -> Inherent doesn't print as table, so if each one is the same this can be done, however would be slightly inconsistent.
-    if question_number == 9:
-        levels   = content["risk_rating_levels"]
-        controls = content["management_control_text"]
-
-        return (
-            "Question 9: On the Risk Dashboard (Section 2.0), confirm that both of the following sections are present and populated:\n"
-            "  1. Risk Rating Levels\n"
-            "  2. Management Control of Legionella Risk\n\n"
-            "Below are the values we found under each heading:\n\n"
-            "--- Risk Rating Levels (extracted entries) ---\n"
-            f"{', '.join(levels) or 'None found'}\n\n"
-            "--- Management Control Text (extracted entries) ---\n"
-            f"{'; '.join(controls) or 'None found'}\n\n"
-            "If both lists contain at least one entry, reply:\n"
-            "PASS: Both Risk Rating Levels and Management Control Text are complete. Check Legionella Inherent Risk manually and ensure no content is missing.\n"
-            "Otherwise, name which section is missing or empty."
-        )
     # fallback
     logger.error(f"No handler for question_number={question_number}; returning empty message")
     return ""
@@ -284,60 +243,6 @@ def check_building_description(sections):
         # if it had no tables, but had paragraphs, that's okay
     return True, data_secs
 
-
-# def validate_outlet_temperature_table(sections):
-#     """
-#     Handle Q17: check Outlet Temperature Profile for out-of-range temps
-#     and match against Significant Findings and Action Plan.
-#     Returns a string local_response.
-#     """
-#     # find the Outlet Temperature Profile section (7.3)
-#     ot_section = next(
-#         (s for s in sections
-#          if s.get("name", "").startswith("7.3 Outlet Temperature Profile")),
-#         None
-#     )
-#     if not ot_section or not ot_section.get("tables"):
-#         return "Could not find the Outlet Temperature Profile table."
-
-#     rows = ot_section["tables"][0]["rows"]
-#     anomalies = []
-#     # column 13 holds the hot-water temperature
-#     for row in rows:
-#         try:
-#             hot = float(row[13])
-#         except Exception:
-#             continue
-#         if hot < 50 or hot > 60:
-#             anomalies.append({"location": row[2], "temp": hot})
-
-#     if not anomalies:
-#         return "All hot-water temperatures are between 50 °C and 60 °C; no action needed."
-
-#     # look for matching actions in Significant Findings and Action Plan
-#     sig_section = next(
-#         (s for s in sections
-#          if s.get("name", "").startswith("Significant Findings and Action Plan")),
-#         {}
-#     )
-#     actions = []
-#     for tbl in sig_section.get("tables", []):
-#         for row in tbl.get("rows", []):
-#             text = " ".join(row).lower()
-#             if "temperature" in text or "scald" in text:
-#                 actions.append(text)
-
-#     if actions:
-#         return (
-#             f"Out-of-range temperatures at {anomalies}; "
-#             f"matching actions found: {actions}"
-#         )
-#     else:
-#         return (
-#             f"Out-of-range temperatures at {anomalies}, "
-#             "but no related action in Significant Findings and Action Plan!"
-#         )
-
 def process(event, context):
     """
     Handler for SNS event from Textract Callback.
@@ -389,37 +294,44 @@ def process(event, context):
     for q_num in (3, 4, 9):
         parsed = extract_json_data(content, q_num)
 
-        # ——— Q4 handled in‐line, locally ———
+        # Q4 inline (as before)
         if q_num == 4:
             sections = parsed.get("sections", [])
             all_ok, bd_secs = check_building_description(sections)
-
             if not all_ok:
-            # only report the ones that really had empty tables
                 empty = [
                     s["name"]
                     for s in bd_secs
                     if s.get("tables") and any(not t.get("rows") for t in s["tables"])
                 ]
                 logger.warning("Q4 missing table-content in: %s", empty)
-
             proofing_results["Q4"] = "PASS" if all_ok else "FAIL"
             continue
 
-        # for Q3 and Q9 go to Bedrock
-        try:
-            prompt = build_user_message(q_num, parsed)
-            if not prompt:
-                proofing_results[f"Q{q_num}"] = "(no prompt built)"
-            else:
-                ai_reply = send_to_bedrock(prompt)
-                proofing_results[f"Q{q_num}"] = ai_reply or "(empty response)"
-        except Exception as ex:
-            logger.warning(
-                "Error while processing Q%d for WorkOrder %s: %s",
-                q_num, work_order_id, ex, exc_info=True
-            )
-            proofing_results[f"Q{q_num}"] = f"ERROR: {ex}"
+        # Q9 inline (same style as Q4)
+        if q_num == 9:
+            # parsed is {"Q9": "PASS"|"FAIL", "value": "<Moderate>"|None}
+            proofing_results["Q9"] = parsed.get("Q9")
+            # if you want to keep the actual rating for later:
+            proofing_results["Q9_value"] = parsed.get("value", "")
+            continue
+
+        # Q3 still via Bedrock
+        if q_num == 3:
+            try:
+                prompt = build_user_message(q_num, parsed)
+                if not prompt:
+                    proofing_results["Q3"] = "(no prompt built)"
+                else:
+                    ai_reply = send_to_bedrock(prompt)
+                    proofing_results["Q3"] = ai_reply or "(empty response)"
+            except Exception as ex:
+                logger.warning(
+                    "Error while processing Q3 for WorkOrder %s: %s",
+                    work_order_id, ex, exc_info=True
+                )
+                proofing_results["Q3"] = f"ERROR: {ex}"
+            continue
     # ——— 4) Log all results ———
     logger.info(
         "Proofing results for workOrderId %s:\n%s",
