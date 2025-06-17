@@ -235,19 +235,31 @@ def check_building_description(payload):
     "Building Description" (covers both "Building Description - The Building"
     and "Building Description - Fire Safety"), including both paragraphs and table cells.
     """
-    for sec in payload.get("sections", []):
+ # Log all section names
+    sections = payload.get("sections", [])
+    logger.info("Q4: checking Building Description, payload.sections names = %s",
+                [sec.get("name", "") for sec in sections])
+
+    for sec in sections:
         name = sec.get("name", "")
+        logger.info("Q4: inspecting section '%s'", name)
         if name.startswith("Building Description"):
             # collect all text fragments
             texts = []
             texts.extend(sec.get("paragraphs", []))
+            logger.info("Q4: found paragraphs: %s", sec.get("paragraphs", []))
+
             for tbl in sec.get("tables", []):
                 for row in tbl.get("rows", []):
-                    # join all non-empty cells into one string
-                    texts.append(" ".join(cell.strip() for cell in row if cell and cell.strip()))
-            # if any fragment is non-blank, we’ve got content
-            return any(t.strip() for t in texts)
-    # no such section found → fail
+                    joined = " ".join(cell.strip() for cell in row if cell and cell.strip())
+                    texts.append(joined)
+            logger.info("Q4: after tables, collected text fragments = %s", texts)
+
+            result = any(t.strip() for t in texts)
+            logger.info("Q4: result for this section = %s", result)
+            return result
+
+    logger.info("Q4: no 'Building Description' section found at all")
     return False
 
 # def validate_outlet_temperature_table(sections):
@@ -356,6 +368,7 @@ def process(event, context):
 
         # handle Q4 locally
         if q_num == 4:
+            logger.info("Q4: raw payload for Q4 = %s", json.dumps(parsed))
             ok = check_building_description(parsed)
             proofing_results["Q4"] = {
                 "question": 4,
