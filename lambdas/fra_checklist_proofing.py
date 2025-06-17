@@ -310,43 +310,6 @@ def extract_json_data(json_content, question_number):
 
 def build_user_message(question_number, content):
 
-     # ————— Q2 prompt —————
-    if question_number == 2:
-        headings = content.get("toc_headings", [])
-        wa = content.get("water_assets_entries", [])
-        ap = content.get("appendices_found", [])
-
-        # compute which appendices A–D are missing
-        expected = ["APPENDIX A", "APPENDIX B", "APPENDIX C", "APPENDIX D"]
-        missing = [x for x in expected if x not in ap]
-
-        return (
-            "On the Contents page, ensure that “Water Assets” is listed and that "
-            "Appendices A–D are all present.\n\n"
-            "--- Table of Contents ---\n"
-            f"{chr(10).join(headings)}\n\n"
-            f"Water Assets entries found: {', '.join(wa) or 'None'}\n"
-            f"Appendices found: {', '.join(ap) or 'None'}\n"
-            f"Missing appendices: {', '.join(missing) or 'None'}\n\n"
-            "If both Water Assets and all Appendices A–D appear, reply “PASS”. "
-            "Otherwise list what’s missing."
-        )
-    
-     # Q3 prompt
-    if question_number == 3:
-        by_sec = content.get("remedial_by_section", {})
-        total  = content.get("remedial_total", 0)
-        sig_ct = content.get("sig_item_count", 0)
-        breakdown = ", ".join(f"{k}: {v}" for k, v in by_sec.items())
-
-        return (
-            "Question 3: Compare the number of remedial‐actions raised in Section 1.1 with the\n"
-            "number of items in “Significant Findings and Action Plan.”\n\n"
-            f"— Section 1.1 counts: {breakdown}  (Total = {total})\n"
-            f"— Significant Findings items found: {sig_ct}\n\n"
-            "If the totals match, reply “PASS”. Otherwise list each discrepancy."
-        )
-
     # Q4 prompt
     if question_number == 4:
         return (
@@ -355,26 +318,8 @@ def build_user_message(question_number, content):
             "If it’s good, reply “PASS”. Otherwise list any missing or unclear details."
         )
     
-
-    # Q5 prompt
-    if question_number == 5:
-        desc   = content.get("description", "")
-        assets = content.get("assets", [])
-
-        return (
-            "Question 5: Read the Water Systems description and cross-check with the Water Assets forms.\n\n"
-            "--- Water Systems Description ---\n"
-            f"{desc}\n\n"
-            "--- Water Asset IDs Found in Report ---\n"
-            f"{', '.join(assets) or 'None found'}\n\n"
-            "In the description you should see each asset type named (e.g. “Mains Cold Water Services (MCWS)”, "
-            "“Point of Use (POU-01)”, “Multipoint of Use (MPOU-01)”). In the Asset Forms you should see a matching "
-            "asset ID for each (e.g. MCW-01, POU-01, MPOU-01).\n\n"
-            "If every asset mentioned in the description has exactly one corresponding form entry and no extras, "
-            "reply “PASS”. Otherwise list what’s missing or extra."
-        )
     
-    # Q9 prompt -> Inherent doesn;t print as table, so if each one is the same this can be done, however would be slightly inconsistent.
+    # Q9 prompt -> Inherent doesn't print as table, so if each one is the same this can be done, however would be slightly inconsistent.
     if question_number == 9:
         levels   = content["risk_rating_levels"]
         controls = content["management_control_text"]
@@ -727,10 +672,6 @@ def process(event, context):
     body_lines = []
     body_lines.append(f"Hello {first_name},\n")
     body_lines.append(f"Below are the proofing outputs for '{buildingName}' (Work Order #{workOrderNumber}):\n")
-    body_lines.append(f"Link to Work Order in Salesforce: \n https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view\n")
-    body_lines.append("\n\n"
-                      "You can download the original PDF here:\n"
-    f"{presigned_url}")
 
     for q_num, email_heading in EMAIL_QUESTIONS.items():
         q_key = f"Q{q_num}"
@@ -738,6 +679,11 @@ def process(event, context):
         # indent each line of the AI’s answer
         indented = "\n".join("  " + ln for ln in str(answer).splitlines())
         body_lines.append(f"{email_heading}:\n{indented}\n")
+
+    body_lines.append(f"Link to Work Order in Salesforce: \n https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view\n")
+    body_lines.append("\n\n"
+                      "You can download the original PDF here:\n"
+    f"{presigned_url}")
 
     body_lines.append("Regards,\nQuality Team\n")
     body_text = "\n".join(body_lines)

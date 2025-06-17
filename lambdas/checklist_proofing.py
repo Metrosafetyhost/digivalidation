@@ -14,7 +14,7 @@ ses = boto3.client('ses', region_name='eu-west-2')
 
 
 
-BCC_ADDRESSES = "peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
+BCC_ADDRESSES = ""#"peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
 
 EMAIL_QUESTIONS = {
     2: "Verify Contents listing for Water Assets & Appendices A–D",
@@ -735,10 +735,6 @@ def process(event, context):
     body_lines = []
     body_lines.append(f"Hello {first_name},\n")
     body_lines.append(f"Below are the proofing outputs for '{buildingName}' (Work Order #{workOrderNumber}):\n")
-    body_lines.append(f"Link to Work Order in Salesforce: \n https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view\n")
-    body_lines.append("\n\n"
-                      "You can download the original PDF here:\n"
-    f"{presigned_url}")
 
     for q_num, email_heading in EMAIL_QUESTIONS.items():
         q_key = f"Q{q_num}"
@@ -746,6 +742,11 @@ def process(event, context):
         # indent each line of the AI’s answer
         indented = "\n".join("  " + ln for ln in str(answer).splitlines())
         body_lines.append(f"{email_heading}:\n{indented}\n")
+
+    body_lines.append(f"Link to Work Order in Salesforce: \n https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view\n")
+    body_lines.append("\n\n"
+                      "You can download the original PDF here:\n"
+    f"{presigned_url}")
 
     body_lines.append("Regards,\nQuality Team\n")
     body_text = "\n".join(body_lines)
