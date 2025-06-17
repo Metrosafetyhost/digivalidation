@@ -229,38 +229,43 @@ def validate_water_assets(sections):
 
     return issues
 
-def check_building_description(payload):
+def check_building_description(sections):
     """
-    Returns True if any non-empty text exists in a section whose name starts with
-    "Building Description" (covers both "Building Description - The Building"
-    and "Building Description - Fire Safety"), including both paragraphs and table cells.
+    Returns (all_populated: bool, bd_sections: list)
+    - sections: payload['sections']
+    - all_populated is True iff every Building-Description sub-section
+      has at least one table row.
+    - bd_sections is the list of matched sections (so you can log any fails).
     """
- # Log all section names
-    sections = payload.get("sections", [])
-    logger.info("Q4: checking Building Description, payload.sections names = %s",
-                [sec.get("name", "") for sec in sections])
+    # 1. find all “major” numbers (eg "3", "5") where there's a “.0 Building Description” heading
+    bd_root = re.compile(r'^(\d+)\.0\s+Building Description', re.IGNORECASE)
+    building_majors = {
+        m.group(1)
+        for sec in sections
+        for m in [bd_root.match(sec['name'])]
+        if m
+    }
 
-    for sec in sections:
-        name = sec.get("name", "")
-        logger.info("Q4: inspecting section '%s'", name)
-        if name.startswith("Building Description"):
-            # collect all text fragments
-            texts = []
-            texts.extend(sec.get("paragraphs", []))
-            logger.info("Q4: found paragraphs: %s", sec.get("paragraphs", []))
+    if not building_majors:
+        # no building-description at all → treat as PASS or however you prefer
+        return True, []
 
-            for tbl in sec.get("tables", []):
-                for row in tbl.get("rows", []):
-                    joined = " ".join(cell.strip() for cell in row if cell and cell.strip())
-                    texts.append(joined)
-            logger.info("Q4: after tables, collected text fragments = %s", texts)
+    # 2. collect every section whose “major” digit is in that set
+    major_pat = re.compile(r'^(\d+)\.\d+')
+    bd_sections = [
+        sec for sec in sections
+        if major_pat.match(sec['name'])
+        and major_pat.match(sec['name']).group(1) in building_majors
+    ]
 
-            result = any(t.strip() for t in texts)
-            logger.info("Q4: result for this section = %s", result)
-            return result
+    # 3. check that each of those has at least one table with at least one row
+    for sec in bd_sections:
+        tables = sec.get('tables', [])
+        # fail if no tables or every table is empty
+        if not tables or all(not t.get('rows') for t in tables):
+            return False, bd_sections
 
-    logger.info("Q4: no 'Building Description' section found at all")
-    return False
+    return True, bd_sections
 
 # def validate_outlet_temperature_table(sections):
 #     """
@@ -366,16 +371,21 @@ def process(event, context):
     for q_num in (3, 4, 9):
         parsed = extract_json_data(content, q_num)
 
-        # handle Q4 locally
+        # ——— Q4 handled in‐line, locally ———
         if q_num == 4:
-            logger.info("Q4: raw payload for Q4 = %s", json.dumps(parsed))
-            ok = check_building_description(parsed)
-            proofing_results["Q4"] = {
-                "question": 4,
-                "result":   "PASS" if ok else "FAIL",
-                "notes":    f"Building Description content {'found' if ok else 'missing'}"
-            }
-            proofing_results["Q4"] = "PASS" if ok else "FAIL"
+            sections = parsed.get("sections", [])
+            all_ok, bd_secs = check_building_description(sections)
+
+            # log any empty/missing bits for debugging
+            if not all_ok:
+                empty = [
+                    s["name"]
+                    for s in bd_secs
+                    if not s.get("tables") or all(not t.get("rows") for t in s["tables"])
+                ]
+                logger.warning("Q4 missing content in sections: %s", empty)
+
+            proofing_results["Q4"] = "PASS" if all_ok else "FAIL"
             continue
 
         # for Q3 and Q9 go to Bedrock
