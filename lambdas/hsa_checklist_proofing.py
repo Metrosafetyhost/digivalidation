@@ -299,25 +299,28 @@ def process(event, context):
         f"{workTypeRef} || "
         f"{digital_outcome}"
     )
-    body_lines = []
-    body_lines.append(f"Hello {first_name},\n")
-    body_lines.append(f"Below are the proofing outputs for '{buildingName}' (Work Order #{workOrderNumber}):\n")
+    html_body_lines = []
+
+    html_body_lines.append(f"<p>Hello {first_name},</p>")
+    html_body_lines.append(f"<p>Below are the proofing outputs for '<strong>{buildingName}</strong>' (Work Order #{workOrderNumber}):</p>")
 
     for q_num, email_heading in EMAIL_QUESTIONS.items():
         q_key = f"Q{q_num}"
         answer = proofing_results.get(q_key, "(no result)")
-        # indent each line of the AI’s answer
-        indented = "\n".join("  " + ln for ln in str(answer).splitlines())
-        body_lines.append(f"{email_heading}:\n{indented}\n")
+        indented = "<br>".join(str(answer).splitlines())
+        html_body_lines.append(f"<p><strong>{email_heading}:</strong><br>{indented}</p>")
 
-    body_lines.append("Regards,\nDigital Validation\n")
+        html_body_lines.append("<p>Regards,<br>Digital Validation</p>")
 
-    body_lines.append(f"Link to Work Order in Salesforce: \n https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view\n")
-    body_lines.append("\n"
-                      "You can download the original PDF here:\n"
-    f"{presigned_url}")
+    html_body_lines.append(
+        f'<p>Link to Work Order in Salesforce: <a href="https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view">here</a></p>'
+    )
 
-    body_text = "\n".join(body_lines)
+    html_body_lines.append(
+        f'<p>You can download the original PDF <a href="{presigned_url}">here</a>.</p>'
+    )
+
+    html_body_text = "\n".join(html_body_lines)
 
     # ——— 6) Send the email via SES ———
     source_email = "luke.gasson@metrosafety.co.uk"
@@ -336,8 +339,11 @@ def process(event, context):
         "Message": {
             "Subject": {"Data": subject},
             "Body": {
-                "Text": {"Data": body_text}
-            }
+                "Html": {
+                    "Data": html_body_text,
+                    "Charset": "UTF-8"
+                    }
+                }
         }
     }
 
