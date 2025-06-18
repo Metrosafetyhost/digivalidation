@@ -76,46 +76,45 @@ def extract_json_data(json_content, question_number):
 
         # ————— Q9: Risk Dashboard – Management Control & Inherent Risk —————
     if question_number == 9:
-        rr_levels    = []
-        mcr_texts    = []
-        inherent_txt = ""
+        # 1. Find the section named exactly "Overall Risk Rating"
+        overall_sec = next(
+            (sec for sec in payload.get("sections", [])
+             if sec.get("name") == "Overall Risk Rating"),
+            None
+        )
+        if not overall_sec:
+            return {"status": "error", "message": "Section 'Overall Risk Rating' not found"}
 
-        # 1) Find the “2.0 Risk Dashboard” section
-        for sec in payload.get("sections", []):
-            if sec.get("name", "").startswith("2.0 Risk Dashboard"):
+        # 2. From that section, pick the table whose header is exactly "Overall Risk Rating"
+        candidate_tables = [
+            tbl for tbl in overall_sec.get("tables", [])
+            if tbl.get("header") == "Overall Risk Rating"
+        ]
+        if not candidate_tables:
+            return {"status": "error", "message": "No 'Overall Risk Rating' table present"}
 
-                # 2) Pull the Risk Rating ⇆ Management Control table
-                for tbl in sec.get("tables", []):
-                    # safely unpack only the first two cells
-                    hdr0, hdr1, *_ = tbl["rows"][0]
-                    if hdr0.strip() == "Risk Rating" and "Management Control" in hdr1:
-                        for row in tbl["rows"][1:]:
-                            # grab at most two columns
-                            rating = row[0].strip() if len(row) > 0 else ""
-                            control = row[1].strip() if len(row) > 1 else ""
-                            rr_levels.append(rating)
-                            mcr_texts.append(control)
+        table = candidate_tables[0]
+        rows = table.get("rows", [])
 
-                # 3) Fallback: extract the “Inherent Risk” line from paragraphs
-                paras = sec.get("paragraphs", [])
-                for idx, line in enumerate(paras):
-                    if re.match(r"^\s*2\.1\s+Current Risk Ratings", line):
-                        # take the very next non‐footer, non‐heading line
-                        for nxt in paras[idx+1:]:
-                            txt = nxt.strip()
-                            if not txt or txt.startswith("Overall Risk Rating") or txt.startswith("Printed from"):
-                                break
-                            inherent_txt = txt
-                            break
-                        break
+        # 3. Ensure no cell is blank
+        blank_cells = []
+        for i, row in enumerate(rows):
+            for j, cell in enumerate(row):
+                if cell is None or cell == "":
+                    blank_cells.append({"row": i+1, "col": j+1})
 
-                break  # no need to scan further sections
+        if blank_cells:
+            return {
+                "status": "incomplete",
+                "message": "Found blank cells in Overall Risk Rating table",
+                "blank_cells": blank_cells
+            }
 
-        # 4) Return exactly what build_user_message(q=6) needs
+        # 4. All good
         return {
-            "risk_rating_levels":        rr_levels,
-            "management_control_text":   mcr_texts,
-            "inherent_risk_description": inherent_txt
+            "status": "ok",
+            "header": table["header"],
+            "rows": rows
         }
 
 def build_user_message(question_number, content):
@@ -250,14 +249,21 @@ def process(event, context):
     proofing_results = {}
     for q_num in (3, 4, 9):
         try:
-            parsed_content = extract_json_data(content, q_num)
-            prompt         = build_user_message(q_num, parsed_content)
+            parsed = extract_json_data(content, q_num)
 
-            if not prompt:
-                proofing_results[f"Q{q_num}"] = "(no prompt built)"
+            if q_num == 9:
+                # Local check only—no Bedrock call
+                status = "PASS" if parsed.get("status") == "ok" else "FAIL"
+                proofing_results["Q9"] = status
+
             else:
-                ai_reply = send_to_bedrock(prompt)
-                proofing_results[f"Q{q_num}"] = ai_reply or "(empty response)"
+                # Q3 & Q4 still go to AI
+                prompt = build_user_message(q_num, parsed)
+                if not prompt:
+                    proofing_results[f"Q{q_num}"] = "(no prompt built)"
+                else:
+                    ai_reply = send_to_bedrock(prompt)
+                    proofing_results[f"Q{q_num}"] = ai_reply or "(empty response)"
 
         except Exception as ex:
             logger.warning(

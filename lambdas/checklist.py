@@ -22,13 +22,13 @@ IMPORTANT_HEADINGS = [
     "Executive Summary",
     "Areas Identified Requiring Remedial Actions",
     "Building Description",
-    "Property Description",
+    "Property Description", #hsa
     "Property Site/Description"
     "Accompanying the Risk Assessor",
     "Risk Review and Reassessment",
     "Water Scope",
     "Risk Dashboard",
-    "Overall Risk Rating",
+    "Overall Risk Rating", #hsa
     "Management Responsibilities",
     "Legionella Control Programme",
     "Audit Detail",
