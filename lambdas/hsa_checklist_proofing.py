@@ -12,7 +12,7 @@ bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
 s3       = boto3.client('s3')
 ses = boto3.client('ses', region_name='eu-west-2')
 
-BCC_ADDRESSES = ""#"peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
+BCC_ADDRESSES = "peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
 
 EMAIL_QUESTIONS = {
     3: "Totals consistency check (Section 1.1 vs Significant Findings and Action Plan)",
@@ -213,7 +213,6 @@ def process(event, context):
     tex_bucket      = event.get("textract_bucket")
     tex_key         = event.get("textract_key")
     work_order_id     = event.get("workOrderId")
-    resourceName = event.get("resourceName")
     workOrderNumber = event.get("workOrderNumber")
     emailAddress    = event.get("emailAddress")
     buildingName    = event.get("buildingName")
@@ -238,6 +237,7 @@ def process(event, context):
     try:
         s3_obj  = s3.get_object(Bucket=tex_bucket, Key=tex_key)
         content = s3_obj["Body"].read().decode("utf-8")
+        resourceName = content.get("resourceName")
     except Exception as e:
         logger.error(
             "Failed to download Textract JSON from s3://%s/%s: %s",
