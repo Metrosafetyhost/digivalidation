@@ -28,6 +28,7 @@ IMPORTANT_HEADINGS = [
     "Risk Review and Reassessment",
     "Water Scope",
     "Risk Dashboard",
+    "Overall Risk Rating",
     "Management Responsibilities",
     "Legionella Control Programme",
     "Audit Detail",
@@ -38,9 +39,9 @@ IMPORTANT_HEADINGS = [
     "Appendices",
     "Risk Assessment Checklist",
     "Legionella Control Programme of Preventative Works",
-    "Building Description - The Building",
-    "Building Description - Fire Safety",
-    "Life Safety Risk Rating at this Premises",
+    "Building Description - The Building",  #fire
+    "Building Description - Fire Safety",  #fire
+    "Life Safety Risk Rating at this Premises", #fire
 ]
 
 def normalize(text):
