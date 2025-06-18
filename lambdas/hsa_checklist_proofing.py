@@ -215,6 +215,7 @@ def process(event, context):
     work_order_id     = event.get("workOrderId")
     workOrderNumber = event.get("workOrderNumber")
     emailAddress    = event.get("emailAddress")
+    resourceName = event.get("resourceName")
     buildingName    = event.get("buildingName")
     workTypeRef     = event.get("workTypeRef")
     pdf_bucket = event.get("bucket_name")
@@ -237,7 +238,6 @@ def process(event, context):
     try:
         s3_obj  = s3.get_object(Bucket=tex_bucket, Key=tex_key)
         content = s3_obj["Body"].read().decode("utf-8")
-        resourceName = content.get("resourceName")
     except Exception as e:
         logger.error(
             "Failed to download Textract JSON from s3://%s/%s: %s",
