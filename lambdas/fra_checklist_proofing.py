@@ -205,6 +205,7 @@ def process(event, context):
     work_order_id     = event.get("workOrderId")
     workOrderNumber = event.get("workOrderNumber")
     emailAddress    = event.get("emailAddress")
+    resourceName = event.get("resourceName")
     buildingName    = event.get("buildingName")
     workTypeRef     = event.get("workTypeRef")
     pdf_bucket = event.get("bucket_name")
@@ -284,8 +285,7 @@ def process(event, context):
         json.dumps(proofing_results, indent=2)
     )
 
-    local_part = emailAddress.split("@")[0]                 # "firstname.lastname"
-    first_name = local_part.split(".")[0].capitalize()    # "Firstname"
+    first_name = resourceName.split()[0] if resourceName else "there"
 
     question_keys = ["Q3", "Q4", "Q9"]
     results = [

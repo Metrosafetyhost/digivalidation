@@ -668,7 +668,7 @@ def process(event, context):
         "Bucket": pdf_bucket,
         "Key":   pdf_key
     },
-    ExpiresIn=604800   # link valid for 24 hours; adjust as needed
+    ExpiresIn=604800   # link valid for 7 days hours;
 )
     # if not tex_bucket or not tex_key or not work_order_id:
     #     logger.error("Missing one of textract_bucket/textract_key/workOrderId in event: %s", event)
@@ -712,8 +712,7 @@ def process(event, context):
         json.dumps(proofing_results, indent=2)
     )
 
-    local_part = emailAddress.split("@")[0]                 # "firstname.lastname"
-    first_name = local_part.split(".")[0].capitalize()    # "Firstname"
+    first_name = resourceName.split()[0] if resourceName else "there"
 
     question_keys = ["Q2", "Q3", "Q4", "Q5", "Q9"]
     results = [

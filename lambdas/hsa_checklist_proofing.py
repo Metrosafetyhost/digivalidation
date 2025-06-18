@@ -537,114 +537,6 @@ def send_to_bedrock(user_text):
         plain = response_text
     return plain.strip()
 
-def validate_water_assets(sections):
-    """
-    Locally validate Water Assets tables - Question 16: check each asset record for blank data fields (excluding photo rows),
-    ensure comments row is non-empty, and note that photos are never extractable by Textract so flag them.
-
-    Returns a list of dicts: {record: <ID>, missing: [<issues>]}
-    """
-    issues = []
-    id_pattern = re.compile(r'^[A-Z]{2,}-\d+')
-
-    for sec in sections:
-        name = sec.get("name", "").lower()
-        if "water asset" not in name:
-            continue
-
-        for table in sec.get("tables", []):
-            rows = table.get("rows", [])
-            if len(rows) < 2:
-                continue
-
-            # record ID from first row, second cell
-            first = rows[0]
-            record_id = str(first[1]).strip() if len(first) > 1 else "<unknown>"
-            if not id_pattern.match(record_id):
-                continue
-
-            missing = []
-            # 1) Check all data fields except photo row
-            for r in rows[1:]:
-                field_name = str(r[0]).strip()
-                if field_name.lower().startswith("photo"):
-                    continue
-                # if any cell in row is blank
-                for cell in r[1:]:
-                    if not str(cell).strip():
-                        missing.append(f"blank value in '{field_name}'")
-                        break
-
-            # 2) Comments row must have text
-            comment_row = next((r for r in rows if str(r[0]).strip().lower() == "comments"), None)
-            if comment_row:
-                comment_text = " ".join(str(c) for c in comment_row[1:]).strip()
-                if not comment_text:
-                    missing.append("comments missing")
-            else:
-                missing.append("comments row missing")
-
-            # 3) Photos always flagged for manual check
-            missing.append("photos manual check")
-
-            if missing:
-                issues.append({"record": record_id, "missing": missing})
-
-    return issues
-
-# def validate_outlet_temperature_table(sections):
-#     """
-#     Handle Q17: check Outlet Temperature Profile for out-of-range temps
-#     and match against Significant Findings and Action Plan.
-#     Returns a string local_response.
-#     """
-#     # find the Outlet Temperature Profile section (7.3)
-#     ot_section = next(
-#         (s for s in sections
-#          if s.get("name", "").startswith("7.3 Outlet Temperature Profile")),
-#         None
-#     )
-#     if not ot_section or not ot_section.get("tables"):
-#         return "Could not find the Outlet Temperature Profile table."
-
-#     rows = ot_section["tables"][0]["rows"]
-#     anomalies = []
-#     # column 13 holds the hot-water temperature
-#     for row in rows:
-#         try:
-#             hot = float(row[13])
-#         except Exception:
-#             continue
-#         if hot < 50 or hot > 60:
-#             anomalies.append({"location": row[2], "temp": hot})
-
-#     if not anomalies:
-#         return "All hot-water temperatures are between 50 °C and 60 °C; no action needed."
-
-#     # look for matching actions in Significant Findings and Action Plan
-#     sig_section = next(
-#         (s for s in sections
-#          if s.get("name", "").startswith("Significant Findings and Action Plan")),
-#         {}
-#     )
-#     actions = []
-#     for tbl in sig_section.get("tables", []):
-#         for row in tbl.get("rows", []):
-#             text = " ".join(row).lower()
-#             if "temperature" in text or "scald" in text:
-#                 actions.append(text)
-
-#     if actions:
-#         return (
-#             f"Out-of-range temperatures at {anomalies}; "
-#             f"matching actions found: {actions}"
-#         )
-#     else:
-#         return (
-#             f"Out-of-range temperatures at {anomalies}, "
-#             "but no related action in Significant Findings and Action Plan!"
-#         )
-
 def process(event, context):
     """
     Handler for SNS event from Textract Callback.
@@ -660,6 +552,7 @@ def process(event, context):
     tex_bucket      = event.get("textract_bucket")
     tex_key         = event.get("textract_key")
     work_order_id     = event.get("workOrderId")
+    resourceName = event.get("resourceName")
     workOrderNumber = event.get("workOrderNumber")
     emailAddress    = event.get("emailAddress")
     buildingName    = event.get("buildingName")
@@ -673,7 +566,7 @@ def process(event, context):
         "Bucket": pdf_bucket,
         "Key":   pdf_key
     },
-    ExpiresIn=604800   # link valid for 24 hours; adjust as needed
+    ExpiresIn=604800   # link valid for 7 days
 )
 
     # if not tex_bucket or not tex_key or not work_order_id:
@@ -718,8 +611,8 @@ def process(event, context):
         json.dumps(proofing_results, indent=2)
     )
 
-    local_part = emailAddress.split("@")[0]                 # "firstname.lastname"
-    first_name = local_part.split(".")[0].capitalize()    # "Firstname"
+    first_name = resourceName.split()[0] if resourceName else "there"
+
 
     question_keys = ["Q3", "Q4", "Q9"]
     results = [
