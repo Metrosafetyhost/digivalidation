@@ -310,14 +310,14 @@ def process(event, context):
         indented = "<br>".join(str(answer).splitlines())
         html_body_lines.append(f"<p><strong>{email_heading}:</strong><br>{indented}</p>")
 
-        html_body_lines.append("<p>Regards,<br>Digital Validation</p>")
+    html_body_lines.append("<p>Regards,<br>Digital Validation</p>")
 
     html_body_lines.append(
-        f'<p>Link to Work Order in Salesforce: <a href="https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view">here</a></p>'
+        f'<p>Link to Work Order in Salesforce can be accessed: <a href="https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view">here</a></p>'
     )
 
     html_body_lines.append(
-        f'<p>You can download the original PDF <a href="{presigned_url}">here</a>.</p>'
+        f'<p>Link to the PDF can be accessed: <a href="{presigned_url}">here</a></p>'
     )
 
     html_body_text = "\n".join(html_body_lines)

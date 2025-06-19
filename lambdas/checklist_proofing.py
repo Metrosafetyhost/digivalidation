@@ -586,59 +586,6 @@ def validate_water_assets(sections):
 
     return issues
 
-# def validate_outlet_temperature_table(sections):
-#     """
-#     Handle Q17: check Outlet Temperature Profile for out-of-range temps
-#     and match against Significant Findings and Action Plan.
-#     Returns a string local_response.
-#     """
-#     # find the Outlet Temperature Profile section (7.3)
-#     ot_section = next(
-#         (s for s in sections
-#          if s.get("name", "").startswith("7.3 Outlet Temperature Profile")),
-#         None
-#     )
-#     if not ot_section or not ot_section.get("tables"):
-#         return "Could not find the Outlet Temperature Profile table."
-
-#     rows = ot_section["tables"][0]["rows"]
-#     anomalies = []
-#     # column 13 holds the hot-water temperature
-#     for row in rows:
-#         try:
-#             hot = float(row[13])
-#         except Exception:
-#             continue
-#         if hot < 50 or hot > 60:
-#             anomalies.append({"location": row[2], "temp": hot})
-
-#     if not anomalies:
-#         return "All hot-water temperatures are between 50 °C and 60 °C; no action needed."
-
-#     # look for matching actions in Significant Findings and Action Plan
-#     sig_section = next(
-#         (s for s in sections
-#          if s.get("name", "").startswith("Significant Findings and Action Plan")),
-#         {}
-#     )
-#     actions = []
-#     for tbl in sig_section.get("tables", []):
-#         for row in tbl.get("rows", []):
-#             text = " ".join(row).lower()
-#             if "temperature" in text or "scald" in text:
-#                 actions.append(text)
-
-#     if actions:
-#         return (
-#             f"Out-of-range temperatures at {anomalies}; "
-#             f"matching actions found: {actions}"
-#         )
-#     else:
-#         return (
-#             f"Out-of-range temperatures at {anomalies}, "
-#             "but no related action in Significant Findings and Action Plan!"
-#         )
-
 def process(event, context):
     """
     Handler for SNS event from Textract Callback.
@@ -731,25 +678,28 @@ def process(event, context):
         f"{workTypeRef} || "
         f"{digital_outcome}"
     )
-    body_lines = []
-    body_lines.append(f"Hello {first_name},\n")
-    body_lines.append(f"Below are the proofing outputs for '{buildingName}' (Work Order #{workOrderNumber}):\n")
+    html_body_lines = []
+
+    html_body_lines.append(f"<p>Hello {first_name},</p>")
+    html_body_lines.append(f"<p>Below are the proofing outputs for '<strong>{buildingName}</strong>' (Work Order #{workOrderNumber}):</p>")
 
     for q_num, email_heading in EMAIL_QUESTIONS.items():
         q_key = f"Q{q_num}"
         answer = proofing_results.get(q_key, "(no result)")
-        # indent each line of the AI’s answer
-        indented = "\n".join("  " + ln for ln in str(answer).splitlines())
-        body_lines.append(f"{email_heading}:\n{indented}\n")
+        indented = "<br>".join(str(answer).splitlines())
+        html_body_lines.append(f"<p><strong>{email_heading}:</strong><br>{indented}</p>")
 
-    body_lines.append("Regards,\nDigital Validation\n")
+    html_body_lines.append("<p>Regards,<br>Digital Validation</p>")
 
-    body_lines.append(f"Link to Work Order in Salesforce: \n https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view\n")
-    body_lines.append("\n"
-                      "You can download the original PDF here:\n"
-    f"{presigned_url}")
+    html_body_lines.append(
+        f'<p>Link to Work Order in Salesforce can be accessed: <a href="https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view">here</a></p>'
+    )
 
-    body_text = "\n".join(body_lines)
+    html_body_lines.append(
+        f'<p>Link to the PDF can be accessed: <a href="{presigned_url}">here</a></p>'
+    )
+
+    html_body_text = "\n".join(html_body_lines)
 
     # ——— 6) Send the email via SES ———
     source_email = "luke.gasson@metrosafety.co.uk"
@@ -768,8 +718,11 @@ def process(event, context):
         "Message": {
             "Subject": {"Data": subject},
             "Body": {
-                "Text": {"Data": body_text}
-            }
+                "Html": {
+                    "Data": html_body_text,
+                    "Charset": "UTF-8"
+                    }
+                }
         }
     }
 
