@@ -288,8 +288,11 @@ def process(event, context):
                 status = "PASS" if parsed.get("status") == "ok" else "FAIL"
                 proofing_results["Q9"] = status
 
+            
             elif q_num == 11:
-                proofing_results[f"Q{q_num}"] = prompt  # PASS or FAIL: detail
+                # build_user_message already returns "PASS" or "FAIL: details"
+                prompt = build_user_message(q_num, parsed)
+                proofing_results["Q11"] = prompt
                 continue
 
             else:
