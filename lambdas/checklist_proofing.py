@@ -22,6 +22,7 @@ EMAIL_QUESTIONS = {
     4: "Building Description completeness assessment",
     5: "Water Systems vs Water Assets",
     9: "Risk Rating & Management Control review",
+    11: "SFAP completeness check"
     # 10:"",
     # 12:"",
     # 15:"",
@@ -216,6 +217,24 @@ def extract_json_data(json_content, question_number):
             "accompanying_assessor":      accompanying_assessor,
             "risk_review_reassessment":   risk_review_reassessment
         }
+    
+    # ——— Q11: SFAP completeness check ———
+    if question_number == 11:
+        issues = []
+        for sec in payload.get("sections", []):
+            if sec.get("name") == "Significant Findings and Action Plan":
+                for tbl in sec.get("tables", []):
+                    # skip the title row ["", "<something>"]
+                    for row in tbl.get("rows", [])[1:]:
+                        label = row[0] if len(row) > 0 else ""
+                        content_val = row[1] if len(row) > 1 else ""
+                        if label in ("Observation", "Target Date", "Action Required") and not content_val.strip():
+                            issues.append({
+                                "page": tbl.get("page"),
+                                "label": label
+                            })
+        return {"sfap_issues": issues}
+
 
      # ——— Q12: Written Scheme of Control ———
     if question_number == 12:
@@ -424,6 +443,21 @@ def build_user_message(question_number, content):
             f"{rv or 'None found'}\n\n"
             "If all three parts are present and complete, reply “PASS”. "
             "Otherwise list which part is missing or incomplete."
+        )
+    
+    # ——— Q11 prompt ———
+    if question_number == 11:
+        issues = content.get("sfap_issues", [])
+        if not issues:
+            return (
+                "Question 11: In the ‘Significant Findings and Action Plan’ tables, all “Observation”, "
+                "“Target Date” and “Action Required” rows have non-empty content. PASS."
+            )
+        detail = "\n".join(f"- page {i['page']}: missing {i['label']}" for i in issues)
+        return (
+            "Question 11: The following SFAP entries are missing required content:\n\n"
+            f"{detail}\n\n"
+            "Please list each missing item. If none, reply “PASS”."
         )
     
     # ——— Q12 Prompt ———
