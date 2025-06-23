@@ -695,7 +695,7 @@ def process(event, context):
 
     first_name = resourceName.split()[0] if resourceName else "there"
 
-    question_keys = ["Q2", "Q3", "Q4", "Q5", "Q9"]
+    question_keys = ["Q2", "Q3", "Q4", "Q5", "Q9", "Q11"]
     results = [
         proofing_results.get(key, "").strip().upper().splitlines()[0]
         for key in question_keys
