@@ -289,8 +289,9 @@ def process(event, context):
             continue
 
         if q_num == 11:
-            proofing_results[f"Q{q_num}"] = prompt  # PASS or FAIL: detail
+            proofing_results["Q11"] = build_user_message(11, parsed)  # PASS or FAIL: details
             continue
+
 
         # Q3 still via Bedrock
         if q_num == 3:
