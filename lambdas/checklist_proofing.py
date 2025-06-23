@@ -14,7 +14,7 @@ ses = boto3.client('ses', region_name='eu-west-2')
 
 
 
-BCC_ADDRESSES = "peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
+BCC_ADDRESSES = ""#"peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
 
 EMAIL_QUESTIONS = {
     2: "Verify Contents listing for Water Assets & Appendices A–D",
