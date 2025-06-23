@@ -22,7 +22,7 @@ EMAIL_QUESTIONS = {
     4: "Building Description completeness assessment",
     5: "Water Systems vs Water Assets",
     9: "Risk Rating & Management Control review",
-    11: "SFAP completeness check"
+    11: "Verify Content listed in Significant Findings and Action Plan is complete"
     # 10:"",
     # 12:"",
     # 15:"",
