@@ -449,17 +449,11 @@ def build_user_message(question_number, content):
     if question_number == 11:
         issues = content.get("sfap_issues", [])
         if not issues:
-            return (
-                "Question 11: In the ‘Significant Findings and Action Plan’ tables, all “Observation”, "
-                "“Target Date” and “Action Required” rows have non-empty content. PASS."
-            )
-        detail = "\n".join(f"- page {i['page']}: missing {i['label']}" for i in issues)
-        return (
-            "Question 11: The following SFAP entries are missing required content:\n\n"
-            f"{detail}\n\n"
-            "Please list each missing item. If none, reply “PASS”."
-        )
-    
+            return "PASS"
+        # format each missing item as “page X missing Y”
+        detail = "; ".join(f"page {m['page']} missing {m['label']}" for m in issues)
+        return f"FAIL: {detail}"
+        
     # ——— Q12 Prompt ———
     if question_number == 12:
         issues = content.get("scheme_issues", [])
