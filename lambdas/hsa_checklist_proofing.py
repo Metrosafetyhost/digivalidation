@@ -12,12 +12,13 @@ bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
 s3       = boto3.client('s3')
 ses = boto3.client('ses', region_name='eu-west-2')
 
-BCC_ADDRESSES = "peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
+BCC_ADDRESSES = ""#"peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
 
 EMAIL_QUESTIONS = {
     3: "Totals consistency check (Section 1.1 vs Significant Findings and Action Plan)",
     4: "Building Description completeness assessment",
-    9: "Risk Rating & Management Control review"
+    9: "Risk Rating & Management Control review",
+    11: "Verify Content listed in Significant Findings and Action Plan is complete"
 }
 
 def extract_json_data(json_content, question_number):
@@ -116,6 +117,27 @@ def extract_json_data(json_content, question_number):
             "header": table["header"],
             "rows": rows
         }
+    
+        # ——— Q11: SFAP completeness check ———
+    if question_number == 11:
+        issues = []
+        for sec in payload.get("sections", []):
+            if sec.get("name") == "Significant Findings and Action Plan":
+                for tbl in sec.get("tables", []):
+                    # skip the title row ["", "<something>"]
+                    for row in tbl.get("rows", [])[1:]:
+                        label = row[0] if len(row) > 0 else ""
+                        content_val = row[1] if len(row) > 1 else ""
+                        if label in ("Observation", "Target Date", "Action Required") and not content_val.strip():
+                            issues.append({
+                                "page": tbl.get("page"),
+                                "label": label
+                            })
+        return {"sfap_issues": issues}
+
+    # fallback
+    logger.error(f"No handler for question_number={question_number}; returning empty message")
+    return ""
 
 def build_user_message(question_number, content):
     
@@ -160,6 +182,16 @@ def build_user_message(question_number, content):
             "PASS: Both Risk Rating Levels and Management Control Text are complete. Check Legionella Inherent Risk manually and ensure no content is missing.\n"
             "Otherwise, name which section is missing or empty."
         )
+    
+        # ——— Q11 prompt ———
+    if question_number == 11:
+        issues = content.get("sfap_issues", [])
+        if not issues:
+            return "PASS"
+        detail = "; ".join(f"page {m['page']} missing {m['label']}" for m in issues)
+        return f"FAIL: {detail}"
+    
+
     # fallback
     logger.error(f"No handler for question_number={question_number}; returning empty message")
     return ""
@@ -247,7 +279,7 @@ def process(event, context):
 
     # ——— 3) Loop through Q1–Q15, always sending to Bedrock ———
     proofing_results = {}
-    for q_num in (3, 4, 9):
+    for q_num in (3, 4, 9, 11):
         try:
             parsed = extract_json_data(content, q_num)
 
@@ -255,6 +287,10 @@ def process(event, context):
                 # Local check only—no Bedrock call
                 status = "PASS" if parsed.get("status") == "ok" else "FAIL"
                 proofing_results["Q9"] = status
+
+            elif q_num == 11:
+                proofing_results[f"Q{q_num}"] = prompt  # PASS or FAIL: detail
+                continue
 
             else:
                 # Q3 & Q4 still go to AI
@@ -282,7 +318,7 @@ def process(event, context):
     first_name = resourceName.split()[0] if resourceName else "there"
 
 
-    question_keys = ["Q3", "Q4", "Q9"]
+    question_keys = ["Q3", "Q4", "Q9", "Q11"]
     results = [
         proofing_results.get(key, "").strip().upper().splitlines()[0]
         for key in question_keys

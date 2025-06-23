@@ -670,12 +670,11 @@ def process(event, context):
                 proofing_results[f"Q{q_num}"] = "(no prompt built)"
                 continue
 
-            # <<< SHORT-CIRCUIT Q11: no AI call needed >>>
             if q_num == 11:
-                proofing_results[f"Q{q_num}"] = prompt  # PASS or FAIL: detail
+                proofing_results[f"Q{q_num}"] = prompt
                 continue
 
-            # Otherwise, send to Bedrock as before
+            # otherwise, send to Bedrock as before
             ai_reply = send_to_bedrock(prompt)
             proofing_results[f"Q{q_num}"] = ai_reply or "(empty response)"
 
