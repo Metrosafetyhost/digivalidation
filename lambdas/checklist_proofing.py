@@ -450,7 +450,6 @@ def build_user_message(question_number, content):
         issues = content.get("sfap_issues", [])
         if not issues:
             return "PASS"
-        # format each missing item as “page X missing Y”
         detail = "; ".join(f"page {m['page']} missing {m['label']}" for m in issues)
         return f"FAIL: {detail}"
         
@@ -669,9 +668,16 @@ def process(event, context):
 
             if not prompt:
                 proofing_results[f"Q{q_num}"] = "(no prompt built)"
-            else:
-                ai_reply = send_to_bedrock(prompt)
-                proofing_results[f"Q{q_num}"] = ai_reply or "(empty response)"
+                continue
+
+            # <<< SHORT-CIRCUIT Q11: no AI call needed >>>
+            if q_num == 11:
+                proofing_results[f"Q{q_num}"] = prompt  # PASS or FAIL: detail
+                continue
+
+            # Otherwise, send to Bedrock as before
+            ai_reply = send_to_bedrock(prompt)
+            proofing_results[f"Q{q_num}"] = ai_reply or "(empty response)"
 
         except Exception as ex:
             logger.warning(
