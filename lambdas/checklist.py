@@ -98,25 +98,26 @@ def extract_tables_grouped(blocks):
                     unique.append(row)
 
             # decide whether to merge or start a new table
-            is_same_section = (
+            is_continuation = (
                 last_tbl
-                and b.get("Page",1) > last_tbl["page"]
                 and current_header == last_tbl["header"]
+                and unique
+                # only if the very first cell of this table is blank
+                and unique[0][0] == ""
             )
 
-            if is_same_section:
-                # merge into the previous table
-                last_tbl["rows"].extend(unique)
+            if is_continuation:
+                # drop that empty-first-cell row, then merge in the rest
+                last_tbl["rows"].extend(unique[1:])
             else:
                 tbl = {
-                    "page": b.get("Page",1),
+                    "page": b.get("Page", 1),
                     "header": current_header,
                     "rows": unique,
                     "bbox": b["Geometry"]["BoundingBox"]
                 }
                 tables.append(tbl)
                 last_tbl = tbl
-
     return tables
 
 def extract_key_value_pairs(blocks):
