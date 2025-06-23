@@ -60,12 +60,12 @@ def extract_tables_grouped(blocks):
     last_tbl = None
     sorted_blocks = sorted(
         blocks,
-        key=lambda b: (b.get("Page",1), b["Geometry"]["BoundingBox"]["Top"])
+        key=lambda b: (b.get("Page", 1), b["Geometry"]["BoundingBox"]["Top"])
     )
     current_header = None
 
     for b in sorted_blocks:
-        if b["BlockType"] == "LINE" and is_major_heading(b.get("Text","")):
+        if b["BlockType"] == "LINE" and is_major_heading(b.get("Text", "")):
             current_header = b["Text"].strip()
 
         if b["BlockType"] == "TABLE" and current_header:
@@ -73,17 +73,20 @@ def extract_tables_grouped(blocks):
             rows = []
             for rel in b.get("Relationships", []):
                 if rel["Type"] == "CHILD":
-                    cells = [c for c in blocks if c["Id"] in rel["Ids"] and c["BlockType"]=="CELL"]
+                    cells = [
+                        c for c in blocks
+                        if c["Id"] in rel["Ids"] and c["BlockType"] == "CELL"
+                    ]
                     rowm = {}
                     for c in cells:
                         ri = c["RowIndex"]
                         txt = ""
                         for r2 in c.get("Relationships", []):
-                            if r2["Type"]=="CHILD":
+                            if r2["Type"] == "CHILD":
                                 for cid in r2["Ids"]:
-                                    w = next((x for x in blocks if x["Id"]==cid), None)
-                                    if w and w["BlockType"] in ("WORD","LINE"):
-                                        txt += w.get("Text","") + " "
+                                    w = next((x for x in blocks if x["Id"] == cid), None)
+                                    if w and w["BlockType"] in ("WORD", "LINE"):
+                                        txt += w.get("Text", "") + " "
                         rowm.setdefault(ri, []).append(txt.strip())
                     for ri in sorted(rowm):
                         rows.append(rowm[ri])
@@ -97,18 +100,14 @@ def extract_tables_grouped(blocks):
                     seen.add(key)
                     unique.append(row)
 
-            # decide whether to merge or start a new table
-            is_continuation = (
-                last_tbl
-                and current_header == last_tbl["header"]
+            # **merge-only-if** under SFaAP *and* first cell is _not_ empty
+            if (
+                current_header == "Significant Findings and Action Plan"
+                and last_tbl
                 and unique
-                # only if the very first cell of this table is blank
-                and unique[0][0] == ""
-            )
-
-            if is_continuation:
-                # drop that empty-first-cell row, then merge in the rest
-                last_tbl["rows"].extend(unique[1:])
+                and unique[0][0] != ""
+            ):
+                last_tbl["rows"].extend(unique)
             else:
                 tbl = {
                     "page": b.get("Page", 1),
@@ -118,7 +117,9 @@ def extract_tables_grouped(blocks):
                 }
                 tables.append(tbl)
                 last_tbl = tbl
+
     return tables
+
 
 def extract_key_value_pairs(blocks):
     id_map = {b['Id']:b for b in blocks}
