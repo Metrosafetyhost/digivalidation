@@ -57,45 +57,66 @@ def is_major_heading(txt):
 
 def extract_tables_grouped(blocks):
     tables = []
+    last_tbl = None
     sorted_blocks = sorted(
         blocks,
         key=lambda b: (b.get("Page",1), b["Geometry"]["BoundingBox"]["Top"])
     )
     current_header = None
+
     for b in sorted_blocks:
         if b["BlockType"] == "LINE" and is_major_heading(b.get("Text","")):
             current_header = b["Text"].strip()
+
         if b["BlockType"] == "TABLE" and current_header:
             # collect rows...
             rows = []
-            for rel in b.get("Relationships",[]):
+            for rel in b.get("Relationships", []):
                 if rel["Type"] == "CHILD":
                     cells = [c for c in blocks if c["Id"] in rel["Ids"] and c["BlockType"]=="CELL"]
                     rowm = {}
                     for c in cells:
                         ri = c["RowIndex"]
                         txt = ""
-                        for r2 in c.get("Relationships",[]):
+                        for r2 in c.get("Relationships", []):
                             if r2["Type"]=="CHILD":
                                 for cid in r2["Ids"]:
                                     w = next((x for x in blocks if x["Id"]==cid), None)
                                     if w and w["BlockType"] in ("WORD","LINE"):
                                         txt += w.get("Text","") + " "
-                        rowm.setdefault(ri,[]).append(txt.strip())
+                        rowm.setdefault(ri, []).append(txt.strip())
                     for ri in sorted(rowm):
                         rows.append(rowm[ri])
+
             # dedupe rows
-            seen = set(); unique=[]
+            seen = set()
+            unique = []
             for row in rows:
                 key = tuple(row)
                 if key not in seen:
-                    seen.add(key); unique.append(row)
-            tables.append({
-                "page": b.get("Page",1),
-                "header": current_header,
-                "rows": unique,
-                "bbox": b["Geometry"]["BoundingBox"]
-            })
+                    seen.add(key)
+                    unique.append(row)
+
+            # decide whether to merge or start a new table
+            is_same_section = (
+                last_tbl
+                and b.get("Page",1) > last_tbl["page"]
+                and current_header == last_tbl["header"]
+            )
+
+            if is_same_section:
+                # merge into the previous table
+                last_tbl["rows"].extend(unique)
+            else:
+                tbl = {
+                    "page": b.get("Page",1),
+                    "header": current_header,
+                    "rows": unique,
+                    "bbox": b["Geometry"]["BoundingBox"]
+                }
+                tables.append(tbl)
+                last_tbl = tbl
+
     return tables
 
 def extract_key_value_pairs(blocks):
