@@ -77,48 +77,26 @@ def extract_json_data(json_content, question_number):
 
         # ————— Q9: Risk Dashboard – Management Control & Inherent Risk —————
     if question_number == 9:
-        # 1. Find the section named exactly "Overall Risk Rating"
-        overall_sec = next(
-            (sec for sec in payload.get("sections", [])
-             if sec.get("name") == "Overall Risk Rating"),
-            None
-        )
-        if not overall_sec:
-            return {"status": "error", "message": "Section 'Overall Risk Rating' not found"}
+        rating = None
 
-        # 2. From that section, pick the table whose header is exactly "Overall Risk Rating"
-        candidate_tables = [
-            tbl for tbl in overall_sec.get("tables", [])
-            if tbl.get("header") == "Overall Risk Rating"
-        ]
-        if not candidate_tables:
-            return {"status": "error", "message": "No 'Overall Risk Rating' table present"}
+        # 1) find the “Overall Risk Rating” section by exact name
+        for sec in payload.get("sections", []):
+            if sec.get("name", "").strip() == "Overall Risk Rating":
+                # 2) join all paragraphs (handles line-break splits)
+                text = " ".join(sec.get("paragraphs", []))
+                # 3) pull the capitalised word after “is:”
+                m = re.search(r"is:\s*([A-Z][a-z]+)", text)
+                if m:
+                    rating = m.group(1)
+                break
 
-        table = candidate_tables[0]
-        rows = table.get("rows", [])
-
-        # 3. Ensure no cell is blank
-        blank_cells = []
-        for i, row in enumerate(rows):
-            for j, cell in enumerate(row):
-                if cell is None or cell == "":
-                    blank_cells.append({"row": i+1, "col": j+1})
-
-        if blank_cells:
-            return {
-                "status": "incomplete",
-                "message": "Found blank cells in Overall Risk Rating table",
-                "blank_cells": blank_cells
-            }
-
-        # 4. All good
-        return {
-            "status": "ok",
-            "header": table["header"],
-            "rows": rows
-        }
+        # 4) PASS if found, else FAIL
+        if rating:
+            return {"Q9": "PASS", "value": rating}
+        else:
+            return {"Q9": "FAIL", "value": None}
     
-        # ——— Q11: SFAP completeness check ———
+    # ——— Q11: SFAP completeness check ———
     if question_number == 11:
         issues = []
         for sec in payload.get("sections", []):
@@ -284,10 +262,11 @@ def process(event, context):
             parsed = extract_json_data(content, q_num)
 
             if q_num == 9:
-                # Local check only—no Bedrock call
-                status = "PASS" if parsed.get("status") == "ok" else "FAIL"
-                proofing_results["Q9"] = status
-
+                # parsed is {"Q9": "PASS"|"FAIL", "value": "<Moderate>"|None}
+                proofing_results["Q9"] = parsed.get("Q9")
+                # if you want to keep the actual rating for later:
+                proofing_results["Q9_value"] = parsed.get("value", "")
+                continue
             
             elif q_num == 11:
                 # build_user_message already returns "PASS" or "FAIL: details"

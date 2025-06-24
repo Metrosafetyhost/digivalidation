@@ -261,7 +261,6 @@ def process(event, context):
         )
         return {"statusCode": 500, "body": "Cannot fetch Textract JSON"}
 
-    # ——— 3) Loop through Q1–Q15, always sending to Bedrock ———
     proofing_results = {}
     for q_num in (3, 4, 9, 11):
         parsed = extract_json_data(content, q_num)
