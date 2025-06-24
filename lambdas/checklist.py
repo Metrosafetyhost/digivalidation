@@ -101,19 +101,31 @@ def extract_tables_grouped(blocks):
                     unique.append(row)
 
             # **merge-only-if** under SFaAP *and* first cell is _not_ empty
-            if (
+            # grab the first‐row’s first cell
+            first_cell = unique[0][0] if unique and unique[0] else ""
+
+            # only merge if it's clearly a SFAP “continuation” row:
+            #  • starts with the word “Priority”  (Priority Low/Medium/High)
+            #  • or contains a dd/mm/yyyy date
+            is_fragment = (
                 current_header == "Significant Findings and Action Plan"
                 and last_tbl
-                and unique
-                and unique[0][0] != ""
-            ):
+                and (
+                    first_cell.startswith("Priority")
+                    or bool(re.search(r"\b\d{2}/\d{2}/\d{4}\b", first_cell))
+                )
+            )
+
+            if is_fragment:
+                # drop nothing—just glue on the extra rows
                 last_tbl["rows"].extend(unique)
             else:
+                # this is a brand‐new table
                 tbl = {
-                    "page": b.get("Page", 1),
+                    "page":  b.get("Page",1),
                     "header": current_header,
-                    "rows": unique,
-                    "bbox": b["Geometry"]["BoundingBox"]
+                    "rows":   unique,
+                    "bbox":   b["Geometry"]["BoundingBox"]
                 }
                 tables.append(tbl)
                 last_tbl = tbl
