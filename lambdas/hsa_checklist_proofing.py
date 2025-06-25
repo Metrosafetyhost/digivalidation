@@ -235,10 +235,9 @@ def process(event, context):
     ClientMethod="get_object",
     Params={
         "Bucket": pdf_bucket,
-        "Key":   pdf_key
-    },
-    ExpiresIn=604800   # link valid for 7 days
-)
+        "Key":   pdf_key}, 
+        ExpiresIn=604800   # link valid for 7 days
+    )
 
     # if not tex_bucket or not tex_key or not work_order_id:
     #     logger.error("Missing one of textract_bucket/textract_key/workOrderId in event: %s", event)
