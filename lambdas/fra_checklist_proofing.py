@@ -326,12 +326,11 @@ def process(event, context):
 
     # ——— 5) Build a structured plaintext email body ———
     subject = (
-        f"AI || "
+        f"{digital_outcome} || "
         f"{workOrderNumber}/"
         f"{work_order_id} || "
         f"{buildingName} || "
-        f"{workTypeRef} || "
-        f"{digital_outcome}"
+        f"{workTypeRef}"
     )
     html_body_lines = []
 
