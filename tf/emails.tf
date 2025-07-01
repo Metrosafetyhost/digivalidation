@@ -1,4 +1,4 @@
-# 1. (Optional) Verify your "From" address in SES
+# 1. Verify your "From" address in SES
 resource "aws_ses_email_identity" "sender" {
   email = "luke.gasson@metrosafety.co.uk"
 }
@@ -15,7 +15,6 @@ resource "aws_ses_email_identity" "recipient_cristian" {
   email = "cristian.carabus@metrosafety.co.uk"
 }
 
-# 2. Look up the Salesforce‐input Lambda role (you already have this)
 data "aws_iam_role" "salesforce_input" {
   name = "bedrock-lambda-salesforce_input"
 }

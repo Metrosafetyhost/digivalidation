@@ -547,3 +547,33 @@ resource "aws_iam_role_policy_attachment" "hsa_s3_read_metrosafetyprod" {
   role       = "bedrock-lambda-hsa_checklist_proofing"
   policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprodfiles.arn
 }
+
+
+# 1. Build the IAM policy document
+data "aws_iam_policy_document" "lambda_s3_read_pabiltotesting" {
+  statement {
+    sid       = "AllowListBucket"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::pabiltotesting"]
+  }
+  statement {
+    sid       = "AllowGetObject"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
+    resources = ["arn:aws:s3:::pabiltotesting/*"]
+  }
+}
+
+# 2. Create the IAM policy
+resource "aws_iam_policy" "lambda_s3_read_pabiltotesting" {
+  name        = "LambdaS3ReadPabilToTesting"
+  description = "Allow Lambda to read objects from pabiltotesting bucket"
+  policy      = data.aws_iam_policy_document.lambda_s3_read_pabiltotesting.json
+}
+
+# 3. Attach it to your Lambda’s execution role
+resource "aws_iam_role_policy_attachment" "attach_s3_read_pabiltotesting" {
+  role       = "bedrock-lambda-categorisation"              # or aws_iam_role.lambda_role.name
+  policy_arn = aws_iam_policy.lambda_s3_read_pabiltotesting.arn
+}
