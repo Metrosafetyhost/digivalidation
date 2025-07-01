@@ -137,7 +137,9 @@ def proof_table_content(html, record_id):
                     "proofed":   restored
                 })
 
-        return str(soup), log_entries
+        final_html = str(soup)
+        final_html = apply_glossary(final_html)
+        return final_html, log_entries
 
     except Exception as e:
         logger.error(f"Error in proof_table_content for {record_id}: {e}")
@@ -188,6 +190,8 @@ def proof_plain_text(text, record_id):
         proofed_text = " ".join(
             [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
         ).strip()
+        #apply glossary to words before returning
+        proofed_text = apply_glossary(proofed_text)
         return proofed_text if proofed_text else text
     except Exception as e:
         logger.error(f"Error proofing plain text for record {record_id}: {e}")
@@ -312,23 +316,21 @@ def load_payload(event):
         logger.error(f"Unexpected error in load_payload: {e}")
         return None, None, {}, {}
     
-
-# def notify_run(workorder_id, status):
-#     subject = f"Work Order {workorder_id} Processed: {status}"
-#     body = (
-#         f"Hello team,\n\n"
-#         f"The proofing Lambda has just run for Work Order ID: {workorder_id}.\n"
-#         f"Overall status: {status}.\n\n"
-#         f"Cheers,\nYour AWS Lambda"
-#     )
-#     ses_client.send_email(
-#         Source=SENDER,
-#         Destination={ "ToAddresses": [RECIPIENT] },
-#         Message={
-#             "Subject": { "Data": subject },
-#             "Body": { "Text": { "Data": body } }
-#         }
-#     )
+def apply_glossary(text):
+    """
+    Enforce canonical spellings for key terms.
+    """
+    corrections = {
+        # “e scooter”, “escooter”, → “e-scooter”
+        r"\b(e[\s\-]?scooter)\b": "e-scooter",
+        # “flexi hose”, “flexihose”, “flexi-hose” → “flexi-hose”
+        r"\b(flexi[\s\-]?hose)\b": "flexi-hose",
+        # catch combi boiler / coiler / collar variants → “Combi Boiler”
+        r"\bcombi[\s\-]?(boiler|coiler|collar)\b": "Combi Boiler",
+    }
+    for pattern, replacement in corrections.items():
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
 
 def process(event, context):
     # 1) parse common fields

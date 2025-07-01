@@ -3,6 +3,7 @@ import boto3
 import logging
 import re
 import os
+from botocore.client import Config
 # ——— Initialise logging ———
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -10,6 +11,11 @@ logger.setLevel(logging.INFO)
 # ——— AWS clients ———
 bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
 s3       = boto3.client('s3')
+s3 = boto3.client(
+    "s3",
+    region_name="eu-west-2",
+    config=Config(signature_version="s3v4")
+)
 ses = boto3.client('ses', region_name='eu-west-2')
 
 BCC_ADDRESSES = "peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk"
