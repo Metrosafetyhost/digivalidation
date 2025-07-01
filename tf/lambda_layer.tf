@@ -549,7 +549,7 @@ resource "aws_iam_role_policy_attachment" "hsa_s3_read_metrosafetyprod" {
 }
 
 
-# 1. Build the IAM policy document
+#IAM Policy for categorisation - this being s3 perms 
 data "aws_iam_policy_document" "lambda_s3_read_pabiltotesting" {
   statement {
     sid       = "AllowListBucket"
@@ -574,6 +574,11 @@ resource "aws_iam_policy" "lambda_s3_read_pabiltotesting" {
 
 # 3. Attach it to your Lambda’s execution role
 resource "aws_iam_role_policy_attachment" "attach_s3_read_pabiltotesting" {
-  role       = "bedrock-lambda-categorisation"              # or aws_iam_role.lambda_role.name
+  role       = "bedrock-lambda-categorisation"
   policy_arn = aws_iam_policy.lambda_s3_read_pabiltotesting.arn
+}
+
+resource "aws_iam_role_policy_attachment" "categorisation_bedrock_attach" {
+  role       = "bedrock-lambda-categorisation"
+  policy_arn = aws_iam_policy.bedrock_invoke_policy.arn
 }
