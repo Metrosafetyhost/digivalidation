@@ -10,7 +10,7 @@ logger.setLevel(logging.INFO)
 
 # ——— AWS clients ———
 bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
-s3       = boto3.client('s3')
+
 s3 = boto3.client(
     "s3",
     region_name="eu-west-2",
