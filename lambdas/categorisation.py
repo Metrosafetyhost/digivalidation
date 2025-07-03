@@ -55,6 +55,7 @@ def classify_asset_text(text):
         accept      = "application/json"
     )
     raw = resp["body"].read().decode("utf-8")
+    logger.info("<< classify_asset_text: raw Bedrock response: %s", raw)
 
     # parse the JSON blob out of Bedrock’s response
     try:
@@ -67,17 +68,30 @@ def classify_asset_text(text):
         raise
 
 def process(event, context):
-    # 1. Read the JSON array from HTTP body
-    body = json.loads(event["body"])
+    logger.info("<< process: received event: %s", json.dumps(event))
+
+    # read the JSON array from HTTP body
+    try:
+        body = json.loads(event.get("body","[]"))
+    except Exception as e:
+        logger.error("process: could not decode event['body']: %s", e, exc_info=True)
+        raise
+
+    logger.info(">> process: HTTP body parsed as: %s", body)
     samples = [obj.get("input") for obj in body]
+    logger.info(">> process: extracted samples: %s", samples)
 
     # 2. Classify each sample
     results = []
     for txt in samples:
         try:
-            results.append(classify_asset_text(txt))
+            out = classify_asset_text(txt)
+            results.append(out)
         except Exception as ex:
+            logger.warning("process: classification error for input '%s': %s", txt, ex)
             results.append({ "error": str(ex), "input": txt })
+
+    logger.info("<< process: returning results: %s", results)
 
     # 3. Return bare JSON array
     return {
