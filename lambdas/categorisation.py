@@ -26,9 +26,9 @@ def classify_asset_text(text):
         "• Label__c: the reference code in Asset_Instructions__c (e.g. 'FF1')\n"
         "• Name: combine:\n"
         "    1) the Location text (after 'Location:' up to the full stop),\n"
-        # "    2) the object identifier (uppercase acronym of Object_Type__c, e.g. 'Emergency Light' → 'EL'),\n"
-        # "    3) the Label__c\n"
-        # "  separated by commas.\n\n"
+        "    2) the object identifier (uppercase acronym of Object_Type__c, e.g. 'Emergency Light' → 'EML') Note is always has to be three letters (if two words, first two letters of first word, and first letter of Second. If three words, first letter of each word),\n"
+        "    3) the Label__c\n"
+        "  separated by commas.\n\n"
         f"Input: {text}\n\n"
         "Output as a single JSON object, using these exact keys:\n"
         "{\n"
@@ -41,7 +41,7 @@ def classify_asset_text(text):
     )
     payload = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens":        500,
+        "max_tokens":        1000,
         "temperature":       0.0,
         "messages": [
             { "role": "user", "content": prompt }
