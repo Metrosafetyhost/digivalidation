@@ -147,11 +147,14 @@ def proof_table_content(html, record_id):
 
 
 def proof_plain_text(text, record_id):
-    PRESERVE_TAGS = ['<p>', '<ul>', '<li>', '<u>', '</p>', ',</ul>', '</li>', '</u>']
-    if any(tag in text.lower() for tag in PRESERVE_TAGS):
-        plain_text = text
+
+    protected = protect_html(text)
+    PRESERVE_TAGS = ['[[P]]','[[/P]]','[[UL]]','[[/UL]]','[[LI]]','[[/LI]]','[[U]]','[[/U]]']
+    if any(tag in protected.lower() for tag in PRESERVE_TAGS):
+        plain_text = protected
     else:
-        plain_text = strip_html(text)
+        plain_text = strip_html(protected)
+
     try:
         logger.info(f"Proofing record {record_id}. Plain text: {plain_text}")
         payload = {
@@ -191,8 +194,13 @@ def proof_plain_text(text, record_id):
             [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
         ).strip()
         #apply glossary to words before returning
-        proofed_text = apply_glossary(proofed_text)
-        return proofed_text if proofed_text else text
+        
+        restored = restore_html(proofed_text)
+
+        restored = apply_glossary(restored) 
+
+        return restored if restored else text
+    
     except Exception as e:
         logger.error(f"Error proofing plain text for record {record_id}: {e}")
         return text
@@ -358,7 +366,7 @@ def process(event, context):
             proofed.append({"recordId":rid,"content":html})
         else:
             txt = proof_plain_text(cont, rid)
-            orig = strip_html(cont); corr=strip_html(txt)
+            orig = cont; corr = txt #orig = strip_html(cont); corr=strip_html(txt)
             if corr!=orig:
                 flag = True
                 logs.append({"recordId":rid,"header":"","original":orig,"proofed":corr})
