@@ -360,17 +360,15 @@ def process(event, context):
         job_id = tex_resp["JobId"]
         logger.info("Started Textract job %s for s3://%s/%s", job_id, bucket_name, document_key)
 
-        # ─── (2) Poll until Textract finishes ───────────────────────────────────
         blocks = poll_for_job_completion(job_id)
         logger.info("Textract job %s SUCCEEDED; collected %d blocks", job_id, len(blocks))
 
-        # ─── (3) Run extraction logic (tables/forms → sections) ─────────────────
         tables = extract_tables_grouped(blocks)
         fields = extract_key_value_pairs(blocks)
         secs   = group_sections(blocks, tables, fields)
         logger.info("Grouped into %d sections for %s", len(secs), document_key)
 
-        # ─── (4) Write combined JSON to S3: processed/<pdfName>.json ───────────
+        #change here 
         pdf_base      = document_key.split("/")[-1].replace(".pdf", ".json")
         processed_key = f"processed/{pdf_base}"
         combined_body = {"document": document_key, "sections": secs}
