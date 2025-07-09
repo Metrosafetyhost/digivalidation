@@ -358,48 +358,56 @@ def make_diff(original: str, proofed: str) -> str:
     )
     return '\n'.join(diff) or '(no visible diff)'
 
-def write_changes_csv(all_entries, workorder_id):
+def make_word_diff(orig: str, proof: str) -> str:
+    # simple word-level diff, prefixed with +/-
+    diff = difflib.ndiff(orig.split(), proof.split())
+    return " ".join(diff)
+
+def write_changes_csv(log_entries, workorder_id):
     """
-    Filters out only the changed entries, writes them (with diffs)
-    to S3 under the 'changes/' folder, and returns the S3 key + count.
+    Pick out only the entries where original != proofed,
+    strip HTML tags, compute a word-diff, and write
+    a CSV with columns: recordId, header, original, proofed, diff.
+    Returns (s3_key, count).
     """
-    # 1) Filter
-    changed = [
-        e for e in all_entries
-        if e['original'].strip() != e['proofed'].strip()
+    # 1) Filter only true changes
+    real_changes = [
+        e for e in log_entries
+        if e.get("original") != e.get("proofed")
+           and not e.get("original", "").startswith("No changes needed")
     ]
+    if not real_changes:
+        return None, 0
 
-    # 2) Build filename
-    key = f"changes/{workorder_id}_changes.csv"
-
-    # 3) Write CSV in-memory
+    # 2) Prepare in-memory CSV
     buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=[
-        'recordId', 'header', 'original', 'proofed', 'diff'
-    ])
+    fieldnames = ["recordId", "header", "original", "proofed", "diff"]
+    writer = csv.DictWriter(buf, fieldnames=fieldnames)
     writer.writeheader()
 
-    for e in changed:
-        diff_text = make_diff(e['original'], e['proofed'])
-        # escape newlines so they land in one cell
-        safe_diff = diff_text.replace('\n', '\\n')
+    for e in real_changes:
+        orig_text  = strip_html(e["original"])
+        proof_text = strip_html(e["proofed"])
+        diff_text  = make_word_diff(orig_text, proof_text)
+
         writer.writerow({
-            'recordId': e['recordId'],
-            'header':   e['header'],
-            'original': e['original'],
-            'proofed':  e['proofed'],
-            'diff':     safe_diff
+            "recordId": e["recordId"],
+            "header":   e.get("header", ""),
+            "original": orig_text,
+            "proofed":  proof_text,
+            "diff":     diff_text
         })
 
-    # 4) Push to S3
+    # 3) Push to S3 (or wherever you need)
+    key = f"changes/{workorder_id}_changes.csv"
     s3_client.put_object(
         Bucket=BUCKET_NAME,
         Key=key,
-        Body=buf.getvalue().encode('utf-8'),
-        ContentType='text/csv'
+        Body=buf.getvalue().encode("utf-8"),
+        ContentType="text/csv"
     )
 
-    return key, len(changed)
+    return key, len(real_changes)
 
 def process(event, context):
     # 1) parse common fields
@@ -452,9 +460,13 @@ def process(event, context):
     csv_key = update_logs_csv(logs, f"{workorder_id}_logs", "logs")
     store_metadata(workorder_id, csv_key, status)
 
-    changed_key, change_count = write_changes_csv(logs, workorder_id)
-    logger.info(f"Changes‐only CSV written to s3://{BUCKET_NAME}/{changed_key} ({change_count} rows)")
-
+    if flag:
+        changed_key, change_count = write_changes_csv(logs, workorder_id)
+        logger.info(
+            f"Changes CSV (/changes/) written to s3://{BUCKET_NAME}/{changed_key}; "
+            f"{change_count} rows."
+        )
+        
     final_response = {
         "workOrderId":     workorder_id,
         "contentType":     ct,
