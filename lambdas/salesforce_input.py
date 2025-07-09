@@ -4,8 +4,8 @@ import logging
 import uuid
 import time
 import io
-import os
 import csv
+import difflib
 from bs4 import BeautifulSoup
 import re
 
@@ -340,6 +340,64 @@ def apply_glossary(text):
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
     return text
 
+def make_diff(original: str, proofed: str) -> str:
+    """
+    Return a little unified-diff between original and proofed.
+    """
+    o_lines = original.splitlines()
+    p_lines = proofed.splitlines()
+    diff = difflib.unified_diff(
+        o_lines,
+        p_lines,
+        fromfile='original',
+        tofile='proofed',
+        lineterm=''
+    )
+    return '\n'.join(diff) or '(no visible diff)'
+
+def write_changes_csv(all_entries, workorder_id):
+    """
+    Filters out only the changed entries, writes them (with diffs)
+    to S3 under the 'changes/' folder, and returns the S3 key + count.
+    """
+    # 1) Filter
+    changed = [
+        e for e in all_entries
+        if e['original'].strip() != e['proofed'].strip()
+    ]
+
+    # 2) Build filename
+    key = f"changes/{workorder_id}_changes.csv"
+
+    # 3) Write CSV in-memory
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=[
+        'recordId', 'header', 'original', 'proofed', 'diff'
+    ])
+    writer.writeheader()
+
+    for e in changed:
+        diff_text = make_diff(e['original'], e['proofed'])
+        # escape newlines so they land in one cell
+        safe_diff = diff_text.replace('\n', '\\n')
+        writer.writerow({
+            'recordId': e['recordId'],
+            'header':   e['header'],
+            'original': e['original'],
+            'proofed':  e['proofed'],
+            'diff':     safe_diff
+        })
+
+    # 4) Push to S3
+    s3_client.put_object(
+        Bucket=BUCKET_NAME,
+        Key=key,
+        Body=buf.getvalue().encode('utf-8'),
+        ContentType='text/csv'
+    )
+
+    return key, len(changed)
+
 def process(event, context):
     # 1) parse common fields
     body = json.loads(event.get("body",""))
@@ -351,7 +409,7 @@ def process(event, context):
     workOrderNumber = body.get("workOrderNumber")
 
     # 2) ALWAYS run your AI-proofing
-    wo, ct, proof_reqs, table_data = load_payload(event)
+    ct, proof_reqs = load_payload(event)
     if not proof_reqs:
         return {"statusCode":400,"body":json.dumps({"error":"No proofing items found"})}
 
@@ -379,6 +437,9 @@ def process(event, context):
     status = "Proofed" if flag else "Original"
     csv_key = update_logs_csv(logs, f"{workorder_id}_logs", "logs")
     store_metadata(workorder_id, csv_key, status)
+
+    changed_key, change_count = write_changes_csv(logs, workorder_id)
+    logger.info(f"Changes‐only CSV written to s3://{BUCKET_NAME}/{changed_key} ({change_count} rows)")
 
     final_response = {
         "workOrderId":     workorder_id,
