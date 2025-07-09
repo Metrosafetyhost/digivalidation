@@ -50,9 +50,9 @@ TAG_MAP = {
     '</li>':'[[/LI]]',
     '<u>': '[[U]]',
     '</u>':'[[/U]]',
-    '<br>':   '[[BR]]',
-    '<br/>':  '[[BR]]',
-    '<br />': '[[BR]]',
+    '<br>':'[[BR]]',
+    '<br/>':'[[BR]]',
+    '<br />':'[[BR]]',
 }
 
 def protect_html(text):
@@ -153,8 +153,7 @@ def proof_plain_text(text, record_id):
 
     protected = protect_html(text)
 
-    PRESERVE_TAGS = list(TAG_MAP.values())
-    if any(ph in protected for ph in PRESERVE_TAGS):
+    if any(ph in protected for ph in TAG_MAP.values()):
         plain_text = protected
     else:
         plain_text = strip_html(protected)
@@ -427,16 +426,27 @@ def process(event, context):
                     flag = True
             proofed.append({"recordId":rid,"content":html})
         else:
-            txt = proof_plain_text(cont, rid)
-            orig = cont; corr = txt #orig = strip_html(cont); corr=strip_html(txt)
-            if corr!=orig:
+            txt  = proof_plain_text(cont, rid)
+            orig = protect_html(cont)
+            corr = txt
+
+            if corr != orig:
                 flag = True
-                logs.append({"recordId":rid,"header":"","original":orig,"proofed":corr})
+                logs.append({
+                    "recordId": rid,
+                    "header":    "",
+                    "original":  orig,
+                    "proofed":   corr
+                })
             else:
-                logs.append({"recordId":rid,"header":"",
-                             "original":"No changes needed: "+orig,
-                             "proofed":"No changes made."})
-            proofed.append({"recordId":rid,"content":txt})
+                logs.append({
+                    "recordId": rid,
+                    "header":    "",
+                    "original":  "No changes needed: " + orig,
+                    "proofed":   "No changes made."
+                })
+
+            proofed.append({"recordId": rid, "content": txt})
 
     status = "Proofed" if flag else "Original"
     csv_key = update_logs_csv(logs, f"{workorder_id}_logs", "logs")
