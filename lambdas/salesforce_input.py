@@ -50,6 +50,9 @@ TAG_MAP = {
     '</li>':'[[/LI]]',
     '<u>': '[[U]]',
     '</u>':'[[/U]]',
+    '<br>':   '[[BR]]',
+    '<br/>':  '[[BR]]',
+    '<br />': '[[BR]]',
 }
 
 def protect_html(text):
@@ -149,8 +152,9 @@ def proof_table_content(html, record_id):
 def proof_plain_text(text, record_id):
 
     protected = protect_html(text)
-    PRESERVE_TAGS = ['[[P]]','[[/P]]','[[UL]]','[[/UL]]','[[LI]]','[[/LI]]','[[U]]','[[/U]]']
-    if any(tag in protected.lower() for tag in PRESERVE_TAGS):
+
+    PRESERVE_TAGS = list(TAG_MAP.values())
+    if any(ph in protected for ph in PRESERVE_TAGS):
         plain_text = protected
     else:
         plain_text = strip_html(protected)
