@@ -366,11 +366,12 @@ def make_word_diff(orig: str, proof: str) -> str:
 def write_changes_csv(log_entries, workorder_id):
     """
     Pick out only the entries where original != proofed,
-    strip HTML tags, compute a word-diff, and write
+    strip HTML tags, compute a word-diff, and append or create
     a CSV with columns: recordId, header, original, proofed, diff.
     Returns (s3_key, count).
     """
-    # 1) Filter only true changes
+    # 0) define your headers and filter
+    fieldnames = ["recordId", "header", "original", "proofed", "diff"]
     real_changes = [
         e for e in log_entries
         if e.get("original") != e.get("proofed")
@@ -379,16 +380,25 @@ def write_changes_csv(log_entries, workorder_id):
     if not real_changes:
         return None, 0
 
-    # 2) Prepare in-memory CSV
-    buf = io.StringIO()
-    fieldnames = ["recordId", "header", "original", "proofed", "diff"]
-    writer = csv.DictWriter(buf, fieldnames=fieldnames)
-    writer.writeheader()
+    s3_key = f"changes/{workorder_id}_changes.csv"
 
+    # 1) try to load existing CSV (so we append), otherwise start fresh
+    try:
+        obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
+        existing = obj["Body"].read().decode("utf-8")
+        buf = io.StringIO(existing, newline="")
+        writer = csv.DictWriter(buf, fieldnames=fieldnames)
+        # header already there, so skip writeheader()
+    except s3_client.exceptions.NoSuchKey:
+        buf = io.StringIO(newline="")
+        writer = csv.DictWriter(buf, fieldnames=fieldnames)
+        writer.writeheader()
+
+    # 2) write each real change as a new row
     for e in real_changes:
         orig_text  = strip_html(e["original"])
         proof_text = strip_html(e["proofed"])
-        diff_text  = make_word_diff(orig_text, proof_text)
+        diff_text  = make_word_diff(orig_text, proof_text).replace("\n", " ")
 
         writer.writerow({
             "recordId": e["recordId"],
@@ -398,16 +408,15 @@ def write_changes_csv(log_entries, workorder_id):
             "diff":     diff_text
         })
 
-    # 3) Push to S3 (or wherever you need)
-    key = f"changes/{workorder_id}_changes.csv"
+    # 3) push the updated CSV back to S3
     s3_client.put_object(
         Bucket=BUCKET_NAME,
-        Key=key,
+        Key=s3_key,
         Body=buf.getvalue().encode("utf-8"),
         ContentType="text/csv"
     )
 
-    return key, len(real_changes)
+    return s3_key, len(real_changes)
 
 def process(event, context):
     # 1) parse common fields
