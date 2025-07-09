@@ -363,66 +363,29 @@ def make_word_diff(orig: str, proof: str) -> str:
     diff = difflib.ndiff(orig.split(), proof.split())
     return " ".join(diff)
 
-def write_changes_csv(log_entries, workorder_id):
-    """
-    Filter out only the truly changed entries, strip HTML, build a flat diff,
-    then write a brand-new CSV with the same style as update_logs_csv.
-    """
-    # 1) build your rows list
-    rows = []
-    # the very first row is the header row, just like your other CSV
-    rows.append(["Record ID",
-                 "Header",
-                 "Original Text",
-                 "Proofed Text",
-                 "Diff"])
+def write_changes_csv(changes, workorder_id):
+    # build header + one row per change
+    rows = [["Record ID","Header","Original Text","Proofed Text","Diff"]]
+    for e in changes:
+        orig  = re.sub(r"[\r\n]+"," ", strip_html(e["original"])).strip()
+        proof = re.sub(r"[\r\n]+"," ", strip_html(e["proofed"])).strip()
+        diff  = make_word_diff(orig, proof).replace("\n"," ")
+        rows.append([e["recordId"], e.get("header",""), orig, proof, diff])
 
-    for e in log_entries:
-        orig = strip_html(e["original"])
-        proof = strip_html(e["proofed"])
-        # skip anything that didn’t actually change
-        if orig == proof or orig.startswith("No changes needed"):
-            continue
-
-        # flatten internal newlines so Excel doesn’t glue rows together
-        orig_clean  = re.sub(r"[\r\n]+", " ", orig).strip()
-        proof_clean = re.sub(r"[\r\n]+", " ", proof).strip()
-        diff = make_word_diff(orig_clean, proof_clean)
-        diff_flat = diff.replace("\n", " ")  # just in case
-
-        rows.append([
-            e.get("recordId",""),
-            e.get("header",""),
-            orig_clean,
-            proof_clean,
-            diff_flat
-        ])
-
-    if len(rows) == 1:
-        # no real changes
-        return None, 0
-
-    # 2) dump it out in one go
+    # write out exactly like update_logs_csv
     buf = io.StringIO(newline="")
-    writer = csv.writer(
-        buf,
-        delimiter=",",
-        quotechar='"',
-        quoting=csv.QUOTE_MINIMAL,
-        escapechar="\\",
-        lineterminator="\n"
-    )
+    writer = csv.writer(buf, lineterminator="\n")
     writer.writerows(rows)
 
-    # 3) upload to S3
     key = f"changes/{workorder_id}_changes.csv"
     s3_client.put_object(
-        Bucket=BUCKET_NAME,
-        Key=key,
-        Body=buf.getvalue().encode("utf-8"),
-        ContentType="text/csv"
+      Bucket=BUCKET_NAME,
+      Key=key,
+      Body=buf.getvalue().encode("utf-8"),
+      ContentType="text/csv"
     )
-    return key, len(rows) - 1
+    return key, len(rows)-1
+
 
 
 def process(event, context):
@@ -476,13 +439,18 @@ def process(event, context):
     csv_key = update_logs_csv(logs, f"{workorder_id}_logs", "logs")
     store_metadata(workorder_id, csv_key, status)
 
-    if flag:
-        changed_key, change_count = write_changes_csv(logs, workorder_id)
+    real_changes = [
+        e for e in logs
+        if e["original"] != e["proofed"]
+           and not e["original"].startswith("No changes needed")
+    ]
+
+    if real_changes:
+        changed_key, change_count = write_changes_csv(real_changes, workorder_id)
         logger.info(
-            f"Changes CSV (/changes/) written to s3://{BUCKET_NAME}/{changed_key}; "
-            f"{change_count} rows."
+            f"Changes CSV written to s3://{BUCKET_NAME}/{changed_key}; "
+            f"{change_count} row(s)."
         )
-        
     final_response = {
         "workOrderId":     workorder_id,
         "contentType":     ct,
