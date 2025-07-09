@@ -363,30 +363,85 @@ def make_word_diff(orig: str, proof: str) -> str:
     diff = difflib.ndiff(orig.split(), proof.split())
     return " ".join(diff)
 
-def write_changes_csv(changes, workorder_id):
-    # build header + one row per change
-    rows = [["Record ID","Header","Original Text","Proofed Text","Diff"]]
-    for e in changes:
-        orig  = re.sub(r"[\r\n]+"," ", strip_html(e["original"])).strip()
-        proof = re.sub(r"[\r\n]+"," ", strip_html(e["proofed"])).strip()
-        diff  = make_word_diff(orig, proof).replace("\n"," ")
-        rows.append([e["recordId"], e.get("header",""), orig, proof, diff])
+def write_changes_csv(log_entries, workorder_id):
+    """
+    Append any *new* changes to the existing changes CSV in S3,
+    merging + deduping so you end up with one row per change ever seen.
+    """
+    s3_key = f"changes/{workorder_id}_changes.csv"
+    header = ["Record ID","Header","Original Text","Proofed Text","Diff"]
 
-    # write out exactly like update_logs_csv
+    # 1) Build up only the truly changed rows from *this* run
+    new_rows = []
+    for e in log_entries:
+        orig = strip_html(e["original"])
+        proof = strip_html(e["proofed"])
+        if orig == proof or orig.startswith("No changes needed"):
+            continue
+
+        orig_clean  = re.sub(r"[\r\n]+", " ", orig).strip()
+        proof_clean = re.sub(r"[\r\n]+", " ", proof).strip()
+        diff_text   = make_word_diff(orig_clean, proof_clean).replace("\n", " ")
+
+        new_rows.append([
+            e["recordId"],
+            e.get("header",""),
+            orig_clean,
+            proof_clean,
+            diff_text
+        ])
+
+    if not new_rows:
+        # nothing new to add
+        return None, 0
+
+    # 2) Load the existing CSV (if any)
+    merged = []
+    try:
+        obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
+        text = obj["Body"].read().decode("utf-8")
+        reader = csv.reader(io.StringIO(text))
+        merged = list(reader)
+    except s3_client.exceptions.NoSuchKey:
+        # no existing changes file yet
+        merged = []
+
+    # 3) Start fresh: header + old rows (minus their header) + new rows
+    rows = [header]
+    if merged:
+        rows.extend(merged[1:])  # skip old header
+    rows.extend(new_rows)
+
+    # 4) Dedupe exact duplicates
+    seen = set()
+    deduped = [rows[0]]
+    for row in rows[1:]:
+        tup = tuple(row)
+        if tup not in seen:
+            seen.add(tup)
+            deduped.append(row)
+
+    # 5) Write it all back out
     buf = io.StringIO(newline="")
-    writer = csv.writer(buf, lineterminator="\n")
-    writer.writerows(rows)
-
-    key = f"changes/{workorder_id}_changes.csv"
-    s3_client.put_object(
-      Bucket=BUCKET_NAME,
-      Key=key,
-      Body=buf.getvalue().encode("utf-8"),
-      ContentType="text/csv"
+    writer = csv.writer(
+        buf,
+        delimiter=",",
+        quotechar='"',
+        quoting=csv.QUOTE_MINIMAL,
+        escapechar="\\",
+        lineterminator="\n"
     )
-    return key, len(rows)-1
+    writer.writerows(deduped)
 
+    s3_client.put_object(
+        Bucket=BUCKET_NAME,
+        Key=s3_key,
+        Body=buf.getvalue().encode("utf-8"),
+        ContentType="text/csv"
+    )
 
+    # return how many *unique* rows we now have
+    return s3_key, len(deduped) - 1
 
 def process(event, context):
     # 1) parse common fields
