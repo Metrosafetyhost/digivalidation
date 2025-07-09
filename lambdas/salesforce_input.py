@@ -409,7 +409,7 @@ def process(event, context):
     workOrderNumber = body.get("workOrderNumber")
 
     # 2) ALWAYS run your AI-proofing
-    ct, proof_reqs = load_payload(event)
+    wo, ct, proof_reqs, tabledata = load_payload(event)
     if not proof_reqs:
         return {"statusCode":400,"body":json.dumps({"error":"No proofing items found"})}
 
