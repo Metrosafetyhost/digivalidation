@@ -363,6 +363,10 @@ def make_word_diff(orig: str, proof: str) -> str:
     diff = difflib.ndiff(orig.split(), proof.split())
     return " ".join(diff)
 
+def drop_placeholders(text: str) -> str:
+    # remove any [[TAG]] or [[/TAG]]
+    return re.sub(r"\[\[\/?[A-Z]+\]\]", "", text)
+
 def write_changes_csv(log_entries, workorder_id):
     """
     Append any *new* changes to the existing changes CSV in S3,
@@ -371,17 +375,21 @@ def write_changes_csv(log_entries, workorder_id):
     s3_key = f"changes/{workorder_id}_changes.csv"
     header = ["Record ID","Header","Original Text","Proofed Text","Diff"]
 
-    # 1) Build up only the truly changed rows from *this* run
+    # build up only the truly changed rows from *this* run
     new_rows = []
     for e in log_entries:
-        orig = strip_html(e["original"])
-        proof = strip_html(e["proofed"])
+        orig = drop_placeholders(strip_html(e["original"]))
+        proof = drop_placeholders(strip_html(e["proofed"]))
         if orig == proof or orig.startswith("No changes needed"):
             continue
 
         orig_clean  = re.sub(r"[\r\n]+", " ", orig).strip()
         proof_clean = re.sub(r"[\r\n]+", " ", proof).strip()
-        diff_text   = make_word_diff(orig_clean, proof_clean).replace("\n", " ")
+
+        #collapse into single lines 
+        tokens = difflib.ndiff(orig_clean.split(), proof_clean.split())
+        changes = [t for t in tokens if t.startswith(("+ ", "- "))]
+        diff_text = " ".join(changes)
 
         new_rows.append([
             e["recordId"],
@@ -395,7 +403,7 @@ def write_changes_csv(log_entries, workorder_id):
         # nothing new to add
         return None, 0
 
-    # 2) Load the existing CSV (if any)
+    # Load CSV
     merged = []
     try:
         obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
