@@ -375,7 +375,6 @@ def write_changes_csv(log_entries, workorder_id):
     s3_key = f"changes/{workorder_id}_changes.csv"
     header = ["Record ID","Header","Original Text","Proofed Text","Diff"]
 
-    # build up only the truly changed rows from *this* run
     new_rows = []
     for e in log_entries:
         orig = drop_placeholders(strip_html(e["original"]))
@@ -386,9 +385,17 @@ def write_changes_csv(log_entries, workorder_id):
         orig_clean  = re.sub(r"[\r\n]+", " ", orig).strip()
         proof_clean = re.sub(r"[\r\n]+", " ", proof).strip()
 
-        #collapse into single lines 
         tokens = difflib.ndiff(orig_clean.split(), proof_clean.split())
-        changes = [t for t in tokens if t.startswith(("+ ", "- "))]
+        changes = []
+        for t in tokens:
+            if not t.startswith(("+ ", "- ")):
+                continue
+            word = t[2:]
+            # skip anything that is purely a tag or placeholder
+            if re.fullmatch(r"</?p>|\[\[\/?[A-Z]+\]\]", word):
+                continue
+            changes.append(t)
+
         diff_text = " ".join(changes)
 
         new_rows.append([
@@ -400,7 +407,6 @@ def write_changes_csv(log_entries, workorder_id):
         ])
 
     if not new_rows:
-        # nothing new to add
         return None, 0
 
     # Load CSV
