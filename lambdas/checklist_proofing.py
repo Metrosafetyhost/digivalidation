@@ -727,13 +727,13 @@ def process(event, context):
 
     html_body_lines.append("<p>Regards,<br>Digital Validation</p>")
 
-    html_body_lines.append(
-        f'<p>Link to Work Order in Salesforce can be accessed: <a href="https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view">here</a></p>'
-    )
+    # html_body_lines.append(
+    #     f'<p>Link to Work Order in Salesforce can be accessed: <a href="https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view">here</a></p>'
+    # )
 
-    html_body_lines.append(
-        f'<p>Link to the PDF can be accessed: <a href="{presigned_url}">here</a></p>'
-    )
+    # html_body_lines.append(
+    #     f'<p>Link to the PDF can be accessed: <a href="{presigned_url}">here</a></p>'
+    # )
 
     html_body_text = "\n".join(html_body_lines)
 

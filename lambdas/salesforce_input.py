@@ -420,7 +420,7 @@ def write_changes_csv(log_entries, workorder_id):
         # no existing changes file yet
         merged = []
 
-    # 3) Start fresh: header + old rows (minus their header) + new rows
+    # start fresh: header + old rows (minus their header) + new rows
     rows = [header]
     if merged:
         rows.extend(merged[1:])  # skip old header
@@ -435,7 +435,7 @@ def write_changes_csv(log_entries, workorder_id):
             seen.add(tup)
             deduped.append(row)
 
-    # 5) Write it all back out
+    # write it all back out
     buf = io.StringIO(newline="")
     writer = csv.writer(
         buf,
