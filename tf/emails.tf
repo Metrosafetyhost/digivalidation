@@ -15,6 +15,10 @@ resource "aws_ses_email_identity" "recipient_cristian" {
   email = "cristian.carabus@metrosafety.co.uk"
 }
 
+resource "aws_ses_email_identity" "metroit" {
+  email = "metroit@metrosafety.co.uk"
+}
+
 data "aws_iam_role" "salesforce_input" {
   name = "bedrock-lambda-salesforce_input"
 }
