@@ -18,7 +18,7 @@ s3 = boto3.client(
 )
 ses = boto3.client('ses', region_name='eu-west-2')
 
-BCC_ADDRESSES = "peter.taylor@metrosafety.co.uk, cristian.carabus@metrosafety.co.uk, metroit@metrosafety.co.uk"
+BCC_ADDRESSES = "cristian.carabus@metrosafety.co.uk, metroit@metrosafety.co.uk"
 
 EMAIL_QUESTIONS = {
     3: "Totals consistency check (Section 1.1 vs Significant Findings and Action Plan)",
