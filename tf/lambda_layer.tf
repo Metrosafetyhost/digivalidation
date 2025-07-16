@@ -442,7 +442,8 @@ resource "aws_iam_role_policy" "salesforce_input_s3_marker" {
       {
         Effect = "Allow"
         Action = [
-          "s3:PutObject"
+          "s3:PutObject",
+          "s3:PutObjectTagging"
         ]
         Resource = "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*/.textract_ran"
       },
