@@ -554,7 +554,7 @@ def process(event, context):
                 doc_key  = newest["Key"]
 
                 # write your marker so you don’t re-process next time
-                s3_client.put_object(Bucket=PDF_BUCKET, Key=marker, Body=b"")
+                s3_client.put_object(Bucket=PDF_BUCKET, Key=marker, Body=b"", Tagging="marker=.textract_ran")
 
                 # fire off your proofing lambda
                 payload = {

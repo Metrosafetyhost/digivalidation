@@ -445,9 +445,39 @@ resource "aws_iam_role_policy" "salesforce_input_s3_marker" {
           "s3:PutObject"
         ]
         Resource = "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*/.textract_ran"
+      },
+
+       # allow DeleteObject so your code can remove expired markers
+      {
+        Effect = "Allow"
+        Action = [ "s3:DeleteObject" ]
+        Resource = "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*/.textract_ran"
       }
     ]
   })
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "expire_only_textract_markers" {
+  bucket = aws_s3_bucket.metrosafetyprodfiles.id
+
+  rule {
+    id     = "expire-only-textract-markers"
+    status = "Enabled"
+
+    filter {
+      and {
+        # everything under WorkOrders/…
+        prefix = "WorkOrders/"
+        tags = {
+          marker = "textract_ran"
+        }
+      }
+    }
+
+    expiration {
+      days = 1
+    }
+  }
 }
 
 # 2) Attach a new inline policy that grants lambda:InvokeFunction on the checklist Lambda
