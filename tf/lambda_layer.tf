@@ -462,7 +462,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "expire_only_textract_markers" 
   bucket = "metrosafetyprodfiles"
 
   rule {
-    id     = "expire-only-textract-markers"
+    id     = "expire-one-day"
     status = "Enabled"
 
     filter {
