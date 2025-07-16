@@ -470,7 +470,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "expire_only_textract_markers" 
         # everything under WorkOrders/…
         prefix = "WorkOrders/"
         tags = {
-          marker = "textract_ran"
+          marker = ".textract_ran"
         }
       }
     }
