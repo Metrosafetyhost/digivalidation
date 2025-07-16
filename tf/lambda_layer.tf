@@ -458,7 +458,7 @@ resource "aws_iam_role_policy" "salesforce_input_s3_marker" {
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "expire_only_textract_markers" {
-  bucket = aws_s3_bucket.metrosafetyprodfiles.id
+  bucket = "metrosafetyprodfiles"
 
   rule {
     id     = "expire-only-textract-markers"
