@@ -348,6 +348,8 @@ def process(event, context):
         err = f"When directly invoked, 'bucket_name' and 'document_key' must be provided. Received: {json.dumps(event)}"
         logger.error(err)
         return {"statusCode": 400, "body": err}
+    
+    logger.info("About to call start_document_analysis for s3://%s/%s", bucket_name, document_key)
 
     try:
         # ─── (1) Start Textract job ─────────────────────────────────────────────
