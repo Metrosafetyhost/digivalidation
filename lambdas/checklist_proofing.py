@@ -23,7 +23,7 @@ BCC_ADDRESSES = "cristian.carabus@metrosafety.co.uk, metroit@metrosafety.co.uk"
 
 EMAIL_QUESTIONS = {
     2: "Verify Contents listing for Water Assets & Appendices A–D",
-    3: "Totals consistency check (Section 1.1 vs Significant Findings and Action Plan)",
+    #3: "Totals consistency check (Section 1.1 vs Significant Findings and Action Plan)",
     4: "Building Description completeness assessment",
     5: "Water Systems vs Water Assets",
     9: "Risk Rating & Management Control review",
