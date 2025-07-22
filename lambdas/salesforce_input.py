@@ -384,16 +384,18 @@ def make_diff(original: str, proofed: str) -> str:
 
 def parse_diff(diff_str: str) -> tuple[str,str]:
     """
-    Given a single diff string like "- foo + bar - baz + qux",
-    returns two semi‑colon‑separated strings:
-      ("foo; baz", "bar; qux")
+    Pulls out only tokens with letters/digits,
+    so punctuation‑only bits (“-” or “/”) are skipped.
     """
-    removed = re.findall(r'-\s*([^+–]+)', diff_str)
-    added   = re.findall(r'\+\s*([^+–]+)', diff_str)
-    # strip whitespace and join
-    removed_text = '; '.join(r.strip() for r in removed)
-    added_text   = '; '.join(a.strip() for a in added)
-    return removed_text, added_text
+    raw_removed = re.findall(r'-\s*([^+–]+)', diff_str)
+    raw_added   = re.findall(r'\+\s*([^+–]+)', diff_str)
+
+    def clean(tokens):
+        # keep only things with a letter or digit
+        kept = [t.strip() for t in tokens if re.search(r'\w', t)]
+        return '; '.join(kept)
+
+    return clean(raw_removed), clean(raw_added)
 
 def make_word_diff(orig: str, proof: str) -> str:
     # simple word-level diff, prefixed with +/-
