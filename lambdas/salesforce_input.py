@@ -382,6 +382,19 @@ def make_diff(original: str, proofed: str) -> str:
     )
     return '\n'.join(diff) or '(no visible diff)'
 
+def parse_diff(diff_str: str) -> tuple[str,str]:
+    """
+    Given a single diff string like "- foo + bar - baz + qux",
+    returns two semi‑colon‑separated strings:
+      ("foo; baz", "bar; qux")
+    """
+    removed = re.findall(r'-\s*([^+–]+)', diff_str)
+    added   = re.findall(r'\+\s*([^+–]+)', diff_str)
+    # strip whitespace and join
+    removed_text = '; '.join(r.strip() for r in removed)
+    added_text   = '; '.join(a.strip() for a in added)
+    return removed_text, added_text
+
 def make_word_diff(orig: str, proof: str) -> str:
     # simple word-level diff, prefixed with +/-
     diff = difflib.ndiff(orig.split(), proof.split())
@@ -397,15 +410,13 @@ def write_changes_csv(log_entries, workorder_id):
     merging + deduping so you end up with one row per change ever seen.
     """
     s3_key = f"changes/{workorder_id}_changes.csv"
-    header = ["Record ID","Header","Original Text","Proofed Text","Diff"]
+    # <-- updated header with two explicit columns
+    header = ["Record ID","Header","Original Text","Proofed Text","Removed","Added"]
 
     new_rows = []
     for e in log_entries:
         orig = drop_placeholders(strip_html(e["original"]))
         proof = drop_placeholders(strip_html(e["proofed"]))
-        if orig == proof or orig.startswith("No changes needed"):
-            continue
-
         orig_clean  = re.sub(r"[\r\n]+", " ", orig).strip()
         proof_clean = re.sub(r"[\r\n]+", " ", proof).strip()
 
@@ -419,39 +430,39 @@ def write_changes_csv(log_entries, workorder_id):
             if re.fullmatch(r"</?p>|\[\[\/?[A-Z]+\]\]", word):
                 continue
             changes.append(t)
-
         diff_text = " ".join(changes)
+
+        removed_text, added_text = parse_diff(diff_text)
 
         new_rows.append([
             e["recordId"],
             e.get("header",""),
             orig_clean,
             proof_clean,
-            diff_text
+            removed_text,
+            added_text
         ])
 
     if not new_rows:
         return None, 0
 
-    # Load CSV
+    # 2) Load existing CSV and merge
     merged = []
     try:
-        obj = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
+        obj  = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
         text = obj["Body"].read().decode("utf-8")
         reader = csv.reader(io.StringIO(text))
         merged = list(reader)
     except s3_client.exceptions.NoSuchKey:
-        # no existing changes file yet
         merged = []
 
-    # start fresh: header + old rows (minus their header) + new rows
+    #Combine old + new, then dedupe
     rows = [header]
     if merged:
-        rows.extend(merged[1:])  # skip old header
+        rows.extend(merged[1:])
     rows.extend(new_rows)
 
-    # 4) Dedupe exact duplicates
-    seen = set()
+    seen   = set()
     deduped = [rows[0]]
     for row in rows[1:]:
         tup = tuple(row)
@@ -459,7 +470,7 @@ def write_changes_csv(log_entries, workorder_id):
             seen.add(tup)
             deduped.append(row)
 
-    # write it all back out
+    # 4) Write back out
     buf = io.StringIO(newline="")
     writer = csv.writer(
         buf,
@@ -478,7 +489,7 @@ def write_changes_csv(log_entries, workorder_id):
         ContentType="text/csv"
     )
 
-    # return how many *unique* rows we now have
+    # return the S3 key and how many rows (minus header)
     return s3_key, len(deduped) - 1
     
 
