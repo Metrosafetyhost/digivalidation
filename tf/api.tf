@@ -81,3 +81,28 @@ resource "aws_lambda_permission" "apigw_lambda_categorisation" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
 }
+
+# 1) Integration for your new DigiValidation Lambda
+resource "aws_apigatewayv2_integration" "digivalidation_integration" {
+  api_id           = aws_apigatewayv2_api.lambda_api.id
+  integration_type = "AWS_PROXY"
+  integration_uri  = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-digival"  
+  # ← update to your actual function ARN
+}
+
+# 2) Route for POST /digivalidation
+resource "aws_apigatewayv2_route" "digivalidation_route" {
+  api_id    = aws_apigatewayv2_api.lambda_api.id
+  route_key = "POST /digivalidation"
+  target    = "integrations/${aws_apigatewayv2_integration.digivalidation_integration.id}"
+}
+
+# 3) Permission to allow API Gateway to invoke the DigiValidation Lambda
+resource "aws_lambda_permission" "apigw_lambda_digivalidation" {
+  statement_id  = "AllowExecutionFromAPIGatewayDigivalidation"
+  action        = "lambda:InvokeFunction"
+  function_name = "bedrock-lambda-digival"  
+  # ← the name of your Lambda (not the ARN)
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
+}
