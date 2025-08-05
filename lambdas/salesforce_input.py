@@ -99,6 +99,7 @@ def proof_table_content(html, record_id):
                 "Output only the corrected JSON array of strings, matching the input array exactly."
                 "Ensure each sentence ends with a full stop unless it already ends with appropriate punctuation (e.g. '.', '!', '?')"
                 "After each “:” or “;”, capitalise the first letter of the word immediately following"
+                "If you see a comma used where a sentence should end, replace it with a full stop."
             ),
             "messages": [{
                 "role": "user",
@@ -182,6 +183,7 @@ def proof_plain_text(text, record_id):
                     "- Do NOT split, merge, or add any new sentences or content.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
                     "- After each “:” or “;”, capitalise the first letter of the word immediately following\n"
+                    "- If you see a comma used where a sentence should end, replace it with a full stop."
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
                     "Text to proofread: " + plain_text
                 )
