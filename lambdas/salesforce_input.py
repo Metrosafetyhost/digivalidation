@@ -203,6 +203,7 @@ def proof_plain_text(text, record_id):
         proofed_text = " ".join(
             [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
         ).strip()
+
         #apply glossary to words before returning
         
         restored = restore_html(proofed_text)
@@ -345,6 +346,10 @@ def apply_glossary(text):
         r"\b(flexi[\s\-]?hose)\b": "flexi-hose",
         # catch combi boiler / coiler / collar variants → “Combi Boiler”
         r"\bcombi[\s\-]?(boiler|coiler|collar)\b": "Combi Boiler",
+        # story → storey
+        r"\bstory\b": "storey",
+        # single stage alarm → “Single Stage Alarm”
+        r"\bsingle[\s\-]+stage[\s\-]+alarm\b": "Single Stage Alarm",
     }
     for pattern, replacement in corrections.items():
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
