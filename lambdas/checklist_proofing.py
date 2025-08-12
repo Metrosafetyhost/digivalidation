@@ -26,7 +26,7 @@ EMAIL_QUESTIONS = {
     #3: "Totals consistency check (Section 1.1 vs Significant Findings and Action Plan)",
     4: "Building Description completeness assessment",
     5: "Water Systems vs Water Assets",
-    9: "Risk Rating & Management Control review",
+    #9: "Risk Rating & Management Control review",
     11: "Verify Content listed in Significant Findings and Action Plan is complete"
     # 10:"",
     # 12:"",

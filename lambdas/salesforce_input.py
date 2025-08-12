@@ -350,6 +350,10 @@ def apply_glossary(text):
         r"\bstory\b": "storey",
         # single stage alarm → “Single Stage Alarm”
         r"\bsingle[\s\-]+stage[\s\-]+alarm\b": "Single Stage Alarm",
+        # plc → PLC
+        r"\bplc\b": "PLC",
+        # are are → are
+        r"\bare\s+are\b": "are",
     }
     for pattern, replacement in corrections.items():
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
@@ -474,7 +478,7 @@ def write_changes_csv(log_entries, workorder_id):
     rows.extend(new_rows)
 
     seen   = set()
-    deduped = [rows[0]]
+    deduped = [rows[0]] 
     for row in rows[1:]:
         tup = tuple(row)
         if tup not in seen:
