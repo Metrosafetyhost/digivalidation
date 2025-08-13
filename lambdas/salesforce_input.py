@@ -155,43 +155,46 @@ def proof_table_content(html, record_id):
 
 
 def proof_plain_text(text, record_id):
-
     protected = protect_html(text)
 
-    if any(ph in protected for ph in TAG_MAP.values()):
-        plain_text = protected
-    else:
-        plain_text = strip_html(protected)
+    # If the field already contains placeholders/HTML, treat as plain
+    plain_text = protected if any(ph in protected for ph in TAG_MAP.values()) else strip_html(protected)
 
     try:
         logger.info(f"Proofing record {record_id}. Plain text: {plain_text}")
+
+        # Hard limits to prevent expansions on very short inputs (headings/labels)
+        # If it's <= 8 words, we only allow case/spacing/punctuation tweaks — no word additions.
+        short_input = len(plain_text.split()) <= 8
+
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
             "system": (
-            "You are a meticulous proofreader. "
-            "Correct spelling, grammar and clarity only — no extra commentary or re-structuring."
-            "Ensure each sentence ends with a full stop unless it already ends with appropriate punctuation (e.g. '.', '!', '?')"
-        ),
+                "You are a strict proofreading function.\n"
+                "TASK: Return ONLY a JSON object of the form {\"text\": \"...\"}.\n"
+                "CONSTRAINTS:\n"
+                "- British English spelling/grammar/punctuation only.\n"
+                "- Do NOT add, remove, reorder, split, or merge words.\n"
+                "- Do NOT add introductions, summaries, advice, bullets, or examples.\n"
+                "- Preserve the exact meaning and structure.\n"
+                "- If unsure, return the input unchanged.\n"
+                "- If the input is a short fragment or heading, do NOT try to make it a full sentence.\n"
+            ),
             "messages": [{
                 "role": "user",
                 "content": (
-                    "Proofread the following text according to these strict guidelines:\n"
-                    "- Do NOT add any new introductory text or explanatory sentences before or after the original content - aka  **Do not** add any introductory sentence such as “Here is the corrected text:” or similar.\n"
-                    "- Spelling and grammar are corrected in British English, and spacing is corrected.\n"
-                    "- Headings, section titles, and structure remain unchanged.\n"
-                    "- Do NOT remove any words or phrases from the original content.\n"
-                    "- Do NOT split, merge, or add any new sentences or content.\n"
-                    "- Ensure that lists, bullet points, and standalone words remain intact.\n"
-                    "- After each “:” or “;”, capitalise the first letter of the word immediately following\n"
-                    "- If you see a comma used where a sentence should end, replace it with a full stop.\n"
-                    "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
-                    "Text to proofread: " + plain_text
+                    "Return EXACTLY this JSON schema with the corrected text:\n"
+                    "{\"text\": \"<corrected>\"}\n\n"
+                    "Requirements:\n"
+                    f"- Treat this as {'a short fragment; absolutely no word additions' if short_input else 'normal text'}.\n"
+                    "- No extra fields, no explanations, no code fences.\n"
+                    f"INPUT:\n{plain_text}"
                 )
             }],
-            "max_tokens": 1500,
-            "temperature": 0.3
-            
+            "max_tokens": 400,
+            "temperature": 0
         }
+
         logger.info("Sending payload to Bedrock: " + json.dumps(payload, indent=2))
         response = bedrock_client.invoke_model(
             modelId=BEDROCK_MODEL_ID,
@@ -200,20 +203,39 @@ def proof_plain_text(text, record_id):
             body=json.dumps(payload)
         )
         response_body = json.loads(response["body"].read().decode("utf-8"))
-        proofed_text = " ".join(
-            [msg["text"] for msg in response_body.get("content", []) if msg.get("type") == "text"]
+        model_text = " ".join(
+            [msg.get("text","") for msg in response_body.get("content", []) if msg.get("type") == "text"]
         ).strip()
 
-        #apply glossary to words before returning
-        
-        restored = restore_html(proofed_text)
+        # Parse strict JSON; fall back safely if parse fails
+        corrected = None
+        try:
+            obj = json.loads(model_text)
+            if isinstance(obj, dict) and "text" in obj and isinstance(obj["text"], str):
+                corrected = obj["text"]
+        except Exception:
+            logger.warning("Plain-text proof: model did not return valid JSON; using original text.")
+            corrected = plain_text
 
-        restored = apply_glossary(restored) 
+        # FINAL SAFETY GUARD: reject expansions (word growth > 20%) or added bullets/colons if short
+        inp_words = plain_text.split()
+        out_words = corrected.split()
+        grew_too_much = len(out_words) > max(1, int(len(inp_words) * 1.2))
+        looks_like_advice = any(sym in corrected for sym in ["•", "-", ":", "Here are", "tips", "suggestions"])
 
+        if grew_too_much or (short_input and looks_like_advice):
+            logger.warning(
+                f"Plain-text proof rejected for record {record_id}: grew_too_much={grew_too_much}, "
+                f"short_input={short_input}, looks_like_advice={looks_like_advice}"
+            )
+            corrected = plain_text  # keep original (already protected/stripped)
+
+        restored = restore_html(corrected)
+        restored = apply_glossary(restored)
         return restored if restored else text
-    
+
     except Exception as e:
-        logger.error(f"Error proofing plain text for record {record_id}: {e}")
+        logger.error(f"Error in proof_plain_text for {record_id}: {e}")
         return text
 
 def update_logs_csv(log_entries, filename, folder):
