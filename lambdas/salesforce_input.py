@@ -191,7 +191,7 @@ def proof_plain_text(text, record_id):
                     f"INPUT:\n{plain_text}"
                 )
             }],
-            "max_tokens": 400,
+            "max_tokens": 1500,
             "temperature": 0
         }
 
