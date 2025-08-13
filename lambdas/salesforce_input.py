@@ -183,7 +183,7 @@ def proof_plain_text(text, record_id):
                     "- Do NOT split, merge, or add any new sentences or content.\n"
                     "- Ensure that lists, bullet points, and standalone words remain intact.\n"
                     "- After each “:” or “;”, capitalise the first letter of the word immediately following\n"
-                    "- If you see a comma used where a sentence should end, replace it with a full stop."
+                    "- If you see a comma used where a sentence should end, replace it with a full stop.\n"
                     "- Ensure only to proofread once, NEVER repeat the same text twice in the output.\n\n"
                     "Text to proofread: " + plain_text
                 )
@@ -354,6 +354,8 @@ def apply_glossary(text):
         r"\bplc\b": "PLC",
         # are are → are
         r"\bare\s+are\b": "are",
+        # Fire Safety Officer from Essex Fire Brigade
+        r"\bfire safety officer from essex fire brigade\b": "Fire Safety Officer from Essex Fire Brigade",
     }
     for pattern, replacement in corrections.items():
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
