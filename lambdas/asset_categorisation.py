@@ -16,7 +16,6 @@ logger.setLevel(logging.INFO)
 # ---------- Clients ----------
 s3 = boto3.client("s3")
 client = OpenAI
-OpenAI.api_key = os.getenv('OPENAI_API_KEY')
 
 # ---------- Config via Env ----------
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")  # vision-capable
@@ -116,9 +115,6 @@ def parse_event_for_s3(event: dict):
     return bucket, s3_key
 
 def call_openai_with_image(image_url: str) -> dict:
-    """
-    Send vision prompt + image to OpenAI Responses API and return structured JSON per SCHEMA.
-    """
     resp = client.responses.create(
         model=MODEL,
         input=[{
@@ -132,22 +128,21 @@ def call_openai_with_image(image_url: str) -> dict:
         store=False,
     )
 
-    # Extract the structured JSON ("output_json") back out
     payload = None
     try:
         for item in getattr(resp, "output", []) or []:
             if item.get("type") == "message":
                 for c in item.get("content", []):
-                    if c.get("type") == "output_json" and "parsed" in c:
-                        payload = c["parsed"]
-                        break
+                    if c.get("type") == "output_json":
+                        payload = c.get("parsed")
+                        if payload:
+                            break
             if payload:
                 break
     except Exception:
         logger.exception("Failed to parse output_json from response")
 
     if payload is None:
-        # Graceful fallback: return minimal safe structure
         payload = {
             "what_is_it": None,
             "manufacturer_brand": None,
@@ -167,6 +162,7 @@ def call_openai_with_image(image_url: str) -> dict:
         }
 
     return payload
+
 
 # ---------- Lambda Handler ----------
 def process(event, context):
