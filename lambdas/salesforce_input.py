@@ -67,6 +67,16 @@ def restore_html(text):
         text = text.replace(placeholder, real)
     return text
 
+KNOWN_TAGS = {"P","/P","UL","/UL","LI","/LI","U","/U","BR"}
+
+def normalise_placeholders(text: str) -> str:
+    """Convert single-bracket tags [P], [/P], [br] into the double-bracket
+    format [[P]], [[/P]], [[BR]] so restore_html() can recognise them."""
+    def to_dbl(m):
+        tag = m.group(1).replace(" ", "").upper()
+        return f"[[{tag}]]" if tag in KNOWN_TAGS else m.group(0)
+    return re.sub(r"\[\s*([A-Za-z/ ]+?)\s*\]", to_dbl, text)
+
 def proof_table_content(html, record_id):
     try:
         soup  = BeautifulSoup(html, "html.parser")
@@ -230,7 +240,7 @@ def proof_plain_text(text, record_id):
             )
             corrected = plain_text  # keep original (already protected/stripped)
 
-        restored = restore_html(corrected)
+        restored = restore_html(normalise_placeholders(corrected))
         restored = apply_glossary(restored)
         return restored if restored else text
 
