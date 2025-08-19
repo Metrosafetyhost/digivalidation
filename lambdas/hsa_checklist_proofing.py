@@ -241,6 +241,8 @@ def process(event, context):
     CHANGES_BUCKET = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
     changes_key = f"changes/{work_order_id}_changes.csv"
 
+    changes_url = None
+
     try:
         # Optional existence check
         s3.head_object(Bucket=CHANGES_BUCKET, Key=changes_key)
