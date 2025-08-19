@@ -1,8 +1,9 @@
 import os
+from openai import OpenAI
 import json
 import logging
 from urllib.parse import unquote_plus
-from dotenv import load_dotenv
+
 
 import boto3
 from openai import OpenAI
@@ -11,14 +12,11 @@ from openai import OpenAI
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass 
+
 # ---------- Clients ----------
 s3 = boto3.client("s3")
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+client = OpenAI
+OpenAI.api_key = os.getenv('OPENAI_API_KEY')
 
 # ---------- Config via Env ----------
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")  # vision-capable
