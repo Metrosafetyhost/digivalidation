@@ -612,3 +612,37 @@ resource "aws_iam_role_policy_attachment" "categorisation_bedrock_attach" {
   role       = "bedrock-lambda-categorisation"
   policy_arn = aws_iam_policy.bedrock_invoke_policy.arn
 }
+
+#read on s3 file for hsra
+resource "aws_iam_policy" "hsa_changes_csv_read" {
+  name        = "HSAChangesCsvRead"
+  description = "Allow hsa_checklist_proofing Lambda to read CSVs under changes/"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = ["s3:ListBucket"],
+        Resource = "arn:aws:s3:::metrosafety-bedrock-output-data-dev-bedrock-lambda",
+        Condition = {
+          StringLike = { "s3:prefix" : "changes/*" }
+        }
+      },
+      {
+        Sid    = "AllowGetHeadOnChangesObjects",
+        Effect = "Allow",
+        Action = [
+          "s3:GetObject",
+          "s3:HeadObject"
+        ],
+        Resource = "arn:aws:s3:::metrosafety-bedrock-output-data-dev-bedrock-lambda/changes/*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "hsa_changes_csv_read_attach" {
+  role       = data.aws_iam_role.hsa_proofing_role.name
+  policy_arn = aws_iam_policy.hsa_changes_csv_read.arn
+}
