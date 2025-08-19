@@ -11,8 +11,11 @@ from openai import OpenAI
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-load_dotenv()
-
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass 
 # ---------- Clients ----------
 s3 = boto3.client("s3")
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))

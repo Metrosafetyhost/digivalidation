@@ -4,6 +4,7 @@ import logging
 import re
 import os
 from botocore.client import Config
+from botocore.exceptions import ClientError
 # ——— Initialise logging ———
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -237,13 +238,23 @@ def process(event, context):
     pdf_bucket = event.get("bucket_name")
     pdf_key    = event.get("document_key")
 
-    presigned_url = s3.generate_presigned_url(
-    ClientMethod="get_object",
-    Params={
-        "Bucket": pdf_bucket,
-        "Key":   pdf_key}, 
-        ExpiresIn=604800   # link valid for 7 days
-    )
+    CHANGES_BUCKET = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
+    changes_key = f"changes/{work_order_id}_changes.csv"
+
+    try:
+        # Optional existence check
+        s3.head_object(Bucket=CHANGES_BUCKET, Key=changes_key)
+        changes_url = s3.generate_presigned_url(
+            ClientMethod="get_object",
+            Params={"Bucket": CHANGES_BUCKET, "Key": changes_key},
+            ExpiresIn=604800
+        )
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            logger.warning(f"Changes CSV not found: {changes_key}")
+        else:
+            logger.exception("Error generating presigned URL for changes CSV")
 
     # if not tex_bucket or not tex_key or not work_order_id:
     #     logger.error("Missing one of textract_bucket/textract_key/workOrderId in event: %s", event)
@@ -303,8 +314,7 @@ def process(event, context):
     )
 
     first_name = resourceName.split()[0] if resourceName else "there"
-
-
+    
     question_keys = ["Q3", "Q4", "Q9", "Q11"]
     results = [
         proofing_results.get(key, "").strip().upper().splitlines()[0]
@@ -338,9 +348,9 @@ def process(event, context):
     #     f'<p>Link to Work Order in Salesforce can be accessed: <a href="https://metrosafety.lightning.force.com/lightning/r/WorkOrder/{work_order_id}/view">here</a></p>'
     # )
 
-    # html_body_lines.append(
-    #     f'<p>Link to the PDF can be accessed: <a href="{presigned_url}">here</a></p>'
-    # )
+    html_body_lines.append(
+         f'<p>Link to the spelling/grammar changes made to the Building Description & Actions can be found: <a href="{changes_url}">here</a></p>'
+    )
 
     html_body_text = "\n".join(html_body_lines)
 

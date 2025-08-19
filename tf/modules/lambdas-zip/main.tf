@@ -239,3 +239,42 @@ resource "aws_iam_role_policy_attachment" "lambda_logs" {
   role       = aws_iam_role.lambda[each.key].name
   policy_arn = aws_iam_policy.lambda_logging[each.key].arn
 }
+
+# --- locals: paths & names ---
+locals {
+  layer_name  = "openai-deps"
+  runtimes    = ["python3.11", "python3.12"]   # include the one your Lambda uses
+  build_root  = "${path.module}/.build"
+  dist_root   = "${path.module}/dist"
+  layer_dir   = "${local.build_root}/${local.layer_name}"
+  layer_zip   = "${local.dist_root}/${local.layer_name}.zip"
+  reqs_file   = "${path.module}/layer-requirements.txt"
+}
+
+# --- build the layer zip locally ---
+resource "null_resource" "build_openai_layer" {
+  triggers = { req_hash = filesha256(local.reqs_file) }
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/bash", "-lc"]
+    command = <<-EOT
+      set -euo pipefail
+      rm -rf "${local.layer_dir}" "${local.layer_zip}"
+      mkdir -p "${local.layer_dir}/python" "${local.dist_root}"
+      python3 -m pip install --upgrade pip
+      python3 -m pip install -r "${local.reqs_file}" -t "${local.layer_dir}/python"
+      (cd "${local.layer_dir}" && zip -qr "${local.layer_zip}" .)
+      echo "Built layer at ${local.layer_zip}"
+    EOT
+  }
+}
+
+# --- publish the layer in AWS ---
+resource "aws_lambda_layer_version" "openai" {
+  filename            = local.layer_zip
+  layer_name          = local.layer_name
+  compatible_runtimes = local.runtimes
+  source_code_hash    = filesha256(local.layer_zip)
+  depends_on          = [null_resource.build_openai_layer]
+}
+
