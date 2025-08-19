@@ -646,3 +646,13 @@ resource "aws_iam_role_policy_attachment" "hsa_changes_csv_read_attach" {
   role       = data.aws_iam_role.hsa_proofing_role.name
   policy_arn = aws_iam_policy.hsa_changes_csv_read.arn
 }
+
+resource "aws_iam_role_policy_attachment" "fra_changes_csv_read_attach" {
+  role       = data.aws_iam_role.fra_proofing_role.name
+  policy_arn = aws_iam_policy.hsa_changes_csv_read.arn
+}
+
+resource "aws_iam_role_policy_attachment" "checklist_changes_csv_read_attach" {
+  role       = aws_iam_role.bedrock_lambda_checklist_proofing.name
+  policy_arn = aws_iam_policy.hsa_changes_csv_read.arn
+}
