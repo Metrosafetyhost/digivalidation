@@ -21,3 +21,7 @@ output "lambda_log_groups" {
   description = "A map of Lambda function names to their CloudWatch log groups"
   value       = { for key, log in aws_cloudwatch_log_group.lambda_logging : key => log.name }
 }
+
+output "namespace" {
+  value = var.namespace
+}

@@ -50,3 +50,27 @@ variable "build_dir" {
   description = "The directory where the lambda code is built"
   default     = "dist"
 }
+
+# Provide via TF Cloud/Workspace vars or CI; do NOT hardcode
+# variable "openai_api_key" {
+#   type      = string
+#   sensitive = true
+# }
+
+# Name
+variable "openai_secret_name" {
+  type    = string
+  default = "openai/api_key"
+}
+
+# Lambdas that should have OpenAI enabled (layer + secret access)
+variable "openai_enabled_lambdas" {
+  type    = list(string)
+  default = ["asset_categorisation"] # add more later as needed
+}
+
+# OpenAI layer ARN (eu-west-2 ARM64 for your runtime)
+variable "openai_layer_arn" {
+  type    = string
+  default = "arn:aws:lambda:eu-west-2:837329614132:layer:openai-py-313-arm64:1"
+}

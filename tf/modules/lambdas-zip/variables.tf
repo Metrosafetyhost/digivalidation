@@ -124,3 +124,4 @@ variable "log_retention" {
   description = "Cloudwatch log retention"
   default     = 30
 }
+

@@ -5,8 +5,19 @@ import boto3
 from openai import OpenAI
 import base64
 
+
+def _load_openai_key():
+    arn = os.environ.get("OPENAI_SECRET_ARN")
+    if arn:
+        sm = boto3.client("secretsmanager")
+        val = sm.get_secret_value(SecretId=arn)
+        s = val.get("SecretString")
+        return s if s is not None else base64.b64decode(val["SecretBinary"]).decode()
+    return os.environ.get("OPENAI_API_KEY")  # fallback
+
+OPENAI_API_KEY = _load_openai_key()
+
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 
 PROMPT = (
     "Analyse the photo and answer these (UK context). "
