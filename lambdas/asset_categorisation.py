@@ -69,7 +69,7 @@ def ask_with_image(image_url: str) -> dict | None:
     except Exception:
         return None
 
-def process(event: dict) -> dict | None:
+def process(event, context):
     """
     event expects:
       { "bucket": "my-bucket", "s3_key": "path/to.jpg" }
