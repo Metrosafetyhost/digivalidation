@@ -1,13 +1,13 @@
-# asset_categorisation.py (minimal)
-import os, json
+# asset_categorisation.py (minimal, inline-image version)
+import os, json, mimetypes
 from urllib.parse import urlparse
 import boto3
 from openai import OpenAI
+import base64
 
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 
-# Ask your existing questions. (Replace this block with your exact prompt text if you want.)
 PROMPT = (
     "Analyse the photo and answer these (UK context). "
     "Return ONLY strict JSON with these fields and null for anything not visible:\n"
@@ -33,19 +33,20 @@ PROMPT = (
 s3 = boto3.client("s3")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-def _presigned_url(bucket: str, key: str, expires=3600) -> str:
-    return s3.generate_presigned_url(
-        "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=expires
-    )
+def _guess_mime(key: str, default="image/jpeg") -> str:
+    mime, _ = mimetypes.guess_type(key)
+    return mime or default
 
-def _normalize_s3(bucket: str | None, s3_key: str) -> tuple[str, str]:
-    if s3_key.startswith("s3://"):
-        p = urlparse(s3_key)
-        return (bucket or p.netloc, p.path.lstrip("/"))
-    return (bucket, s3_key)
+def s3_to_data_url(bucket: str, key: str) -> str:
+    obj = s3.get_object(Bucket=bucket, Key=key)
+    b = obj["Body"].read()
+    # Prefer the object's ContentType if present; fall back to extension; then jpeg
+    mime = obj.get("ContentType") or _guess_mime(key)
+    return f"data:{mime};base64,{base64.b64encode(b).decode()}"
 
-def ask_with_image(image_url: str) -> dict | None:
-    """Return the JSON dict the model gives, or None if it's not a valid JSON answer."""
+def ask_with_image_data(bucket: str, key: str) -> dict | None:
+    """Send the S3 image inline (no external fetch). Return parsed JSON or None."""
+    data_url = s3_to_data_url(bucket, key)
     resp = client.chat.completions.create(
         model=MODEL,
         response_format={"type": "json_object"},
@@ -57,19 +58,24 @@ def ask_with_image(image_url: str) -> dict | None:
                 "role": "user",
                 "content": [
                     {"type": "text", "text": PROMPT},
-                    {"type": "image_url", "image_url": {"url": image_url}},
+                    {"type": "image_url", "image_url": {"url": data_url}},
                 ],
             },
         ],
     )
     try:
         content = resp.choices[0].message.content or ""
-        # If the model didn't actually return JSON, this will throw
         return json.loads(content)
     except Exception:
         return None
 
-def process(event, context):
+def _normalize_s3(bucket: str | None, s3_key: str) -> tuple[str, str]:
+    if s3_key.startswith("s3://"):
+        p = urlparse(s3_key)
+        return (bucket or p.netloc, p.path.lstrip("/"))
+    return (bucket, s3_key)
+
+def process(event, context=None):
     """
     event expects:
       { "bucket": "my-bucket", "s3_key": "path/to.jpg" }
@@ -85,8 +91,8 @@ def process(event, context):
     if not bucket or not key:
         return None
 
-    img_url = _presigned_url(bucket, key)
-    return ask_with_image(img_url)
+    # Inline path (no presigned URL)
+    return ask_with_image_data(bucket, key)
 
 def lambda_handler(event, context):
     if isinstance(event, str):
@@ -97,9 +103,9 @@ def lambda_handler(event, context):
     if not isinstance(event, dict):
         return {"statusCode": 200, "body": json.dumps(None)}
 
-    result = process(event)
+    result = process(event, context)
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(result),  # either the JSON dict or null
+        "body": json.dumps(result),
     }
