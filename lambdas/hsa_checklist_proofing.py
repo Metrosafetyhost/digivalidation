@@ -351,8 +351,9 @@ def process(event, context):
     # )
 
     html_body_lines.append(
-         f'<p>Link to the spelling/grammar changes made to the Building Description & Actions can be found: <a href="{changes_url}">here</a></p>'
+    f'<p>Link to the spelling/grammar changes made to the Building Description & Actions:<br>{changes_url}</p>'
     )
+
 
     html_body_text = "\n".join(html_body_lines)
 
