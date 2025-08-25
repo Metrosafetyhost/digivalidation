@@ -67,16 +67,16 @@ module "lambdas_zip" {
     }
 
     # All the others keep their current handler names (you said they use "process")
-    basic_event             = { handler = "process" }
-    bedrock                 = { handler = "process" }
-    categorisation          = { handler = "process" }
-    checklist               = { handler = "process" }
-    checklist_proofing      = { handler = "process" }
-    config                  = { handler = "process" }
-    db                      = { handler = "process" }
-    digival                 = { handler = "process" }
-    fra_checklist_proofing  = { handler = "process" }
-    hsa_checklist_proofing  = { handler = "process" }
-    salesforce_input        = { handler = "process" }
+    basic_event            = { handler = "process", timeout = 240, memory_size = 512 }
+    bedrock                = { handler = "process", timeout = 240, memory_size = 512 }
+    categorisation         = { handler = "process", timeout = 240, memory_size = 512 }
+    checklist              = { handler = "process", timeout = 240, memory_size = 512 }
+    checklist_proofing     = { handler = "process", timeout = 240, memory_size = 512 }
+    config                 = { handler = "process", timeout = 240, memory_size = 512 }
+    db                     = { handler = "process", timeout = 240, memory_size = 512 }
+    digival                = { handler = "process", timeout = 240, memory_size = 512 }
+    fra_checklist_proofing = { handler = "process", timeout = 240, memory_size = 512 }
+    hsa_checklist_proofing = { handler = "process", timeout = 240, memory_size = 512 }
+    salesforce_input       = { handler = "process", timeout = 240, memory_size = 512 }
   }
 }
