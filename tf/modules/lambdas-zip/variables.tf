@@ -125,3 +125,9 @@ variable "log_retention" {
   default     = 30
 }
 
+# NEW: allow passing multiple layers to ALL lambdas
+variable "lambda_layer_arns" {
+  type    = list(string)
+  default = []
+}
+

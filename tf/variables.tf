@@ -74,3 +74,4 @@ variable "openai_layer_arn" {
   type    = string
   default = "arn:aws:lambda:eu-west-2:837329614132:layer:openai-py-313-arm64:1"
 }
+
