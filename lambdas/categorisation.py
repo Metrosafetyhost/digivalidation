@@ -70,33 +70,51 @@ def classify_asset_text(text):
 def process(event, context):
     logger.info("<< process: received event: %s", json.dumps(event))
 
-    # read the JSON array from HTTP body
+    # 1) Parse HTTP body (JSON array)
     try:
-        body = json.loads(event.get("body","[]"))
+        body = json.loads(event.get("body", "[]"))
     except Exception as e:
         logger.error("process: could not decode event['body']: %s", e, exc_info=True)
         raise
 
     logger.info(">> process: HTTP body parsed as: %s", body)
-    samples = [obj.get("input") for obj in body]
-    logger.info(">> process: extracted samples: %s", samples)
 
-    # 2. Classify each sample
+    # 2) Build inputs (backwards compatible)
+    samples = []
+    for obj in body:
+        base = (obj.get("input") or "")
+        desc = obj.get("description")
+        cvid = obj.get("contentVersionId")
+
+        if desc or cvid:
+            extra = []
+            if desc:
+                extra.append(f"Description: {desc}")
+            if cvid:
+                extra.append(f"ContentVersionId: {cvid}")
+            base = base + ("\n\nAdditional context:\n" + "\n".join(extra))
+
+        samples.append(base)
+
+    logger.info(">> process: assembled samples for model: %s", samples)
+
+    # 3) Classify each sample
     results = []
     for txt in samples:
         try:
             out = classify_asset_text(txt)
-            results.append(out)
+            results.append(out)   # same response shape
         except Exception as ex:
-            logger.warning("process: classification error for input '%s': %s", txt, ex)
-            results.append({ "error": str(ex), "input": txt })
+            logger.warning("process: classification error for input '%s': %s", txt, ex, exc_info=True)
+            results.append({"error": str(ex), "input": txt})
 
     logger.info("<< process: returning results: %s", results)
 
-    # 3. Return bare JSON array
+    # 4) Return bare JSON array (unchanged contract)
     return {
         "statusCode": 200,
-        "headers": { "Content-Type": "application/json" },
+        "headers": {"Content-Type": "application/json"},
         "body": json.dumps(results)
     }
+
 
