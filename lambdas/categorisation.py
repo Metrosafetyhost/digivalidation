@@ -79,38 +79,32 @@ def process(event, context):
 
     logger.info(">> process: HTTP body parsed as: %s", body)
 
-    # 2) Build inputs (backwards compatible)
+    # 2) Extract inputs for Claude, but also pick up description/contentVersionId for later use
     samples = []
+    metadata = []   # <-- NEW: capture, but don't use yet
     for obj in body:
         base = (obj.get("input") or "")
         desc = obj.get("description")
         cvid = obj.get("contentVersionId")
-
-        if desc or cvid:
-            extra = []
-            if desc:
-                extra.append(f"Description: {desc}")
-            if cvid:
-                extra.append(f"ContentVersionId: {cvid}")
-            base = base + ("\n\nAdditional context:\n" + "\n".join(extra))
-
         samples.append(base)
+        metadata.append({"description": desc, "contentVersionId": cvid})
 
     logger.info(">> process: assembled samples for model: %s", samples)
+    logger.info(">> process: collected metadata (unused for now): %s", metadata)
 
-    # 3) Classify each sample
+    # 3) Classify each sample (Claude sees ONLY the input text)
     results = []
     for txt in samples:
         try:
             out = classify_asset_text(txt)
-            results.append(out)   # same response shape
+            results.append(out)   # unchanged contract
         except Exception as ex:
             logger.warning("process: classification error for input '%s': %s", txt, ex, exc_info=True)
             results.append({"error": str(ex), "input": txt})
 
     logger.info("<< process: returning results: %s", results)
 
-    # 4) Return bare JSON array (unchanged contract)
+    # 4) Return bare JSON array (same as before, no new fields returned)
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "application/json"},
