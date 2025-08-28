@@ -18,7 +18,7 @@ module "lambdas_zip" {
     "fra_checklist_proofing",
     "hsa_checklist_proofing",
     "salesforce_input",
-    "emails.",
+    //"emails.",
   ]
 
   # IMPORTANT: these must be the zip *file names* that exist in your build dir
@@ -35,7 +35,7 @@ module "lambdas_zip" {
     "fra_checklist_proofing.py",
     "hsa_checklist_proofing.py",
     "salesforce_input.py",
-    "emails.py",
+    //"emails.py",
   ]
 
   runtime       = "python3.13"
@@ -80,7 +80,7 @@ module "lambdas_zip" {
     fra_checklist_proofing = { handler = "process", timeout = 240, memory_size = 512 }
     hsa_checklist_proofing = { handler = "process", timeout = 240, memory_size = 512 }
     salesforce_input       = { handler = "process", timeout = 240, memory_size = 512 }
-    emails                 = { handler = "process", timeout = 240, memory_size = 512 }
+    //emails                 = { handler = "process", timeout = 240, memory_size = 512 }
 
   }
 }
