@@ -5,6 +5,7 @@ import uuid
 import time
 import io
 import csv
+import os
 import difflib
 from bs4 import BeautifulSoup
 import re
@@ -22,6 +23,10 @@ lambda_client = boto3.client("lambda")
 bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
 s3_client = boto3.client('s3')
 dynamodb = boto3.resource('dynamodb')
+
+sqs = boto3.client("sqs")
+SQS_URL = os.environ.get("FINALIZER_SQS_URL", "")
+QUIET_SECONDS = 300  # 5 minutes
 
 # Email nots perms 
 ses_client = boto3.client("ses", region_name="eu-west-2")
@@ -66,6 +71,36 @@ def restore_html(text):
     for real, placeholder in TAG_MAP.items():
         text = text.replace(placeholder, real)
     return text
+
+# utility helpers - emailing 
+def record_touch(workorder_id: str, changes_key: str | None, email_addr: str | None):
+    table = dynamodb.Table(TABLE_NAME)
+    now = int(time.time())
+    expr = """
+        SET last_event_ts = :ts,
+            emailed       = if_not_exists(emailed, :false)
+    """
+    vals = {":ts": now, ":false": False}
+    if changes_key:
+        expr += ", changes_s3_key = :chg"
+        vals[":chg"] = changes_key
+    if email_addr:
+        expr += ", emailAddress = :email"
+        vals[":email"] = email_addr
+    table.update_item(
+        Key={"workorder_id": workorder_id},
+        UpdateExpression=expr,
+        ExpressionAttributeValues=vals
+    )
+
+def schedule_finalizer(workorder_id: str, delay_seconds: int = QUIET_SECONDS):
+    if not SQS_URL:
+        return
+    sqs.send_message(
+        QueueUrl=SQS_URL,
+        MessageBody=json.dumps({"workorder_id": workorder_id}),
+        DelaySeconds=delay_seconds
+    )
 
 # KNOWN_TAGS = {"P","/P","UL","/UL","LI","/LI","U","/U","BR"}
 
@@ -617,6 +652,10 @@ def process(event, context):
             f"Changes CSV written to s3://{BUCKET_NAME}/{changed_key}; "
             f"{change_count} row(s)."
         )
+
+        record_touch(workorder_id, changed_key, email_addr)
+        schedule_finalizer(workorder_id)
+        
     final_response = {
         "workOrderId":     workorder_id,
         "contentType":     ct,
