@@ -666,6 +666,12 @@ resource "aws_iam_role_policy_attachment" "attach_s3_read_pabiltotesting_to_asse
   policy_arn = aws_iam_policy.lambda_s3_read_pabiltotesting.arn
 }
 ############################################
+# Account/region
+############################################
+
+data "aws_region" "current" {}
+
+############################################
 # Config (adjust if needed)
 ############################################
 locals {
@@ -695,9 +701,18 @@ data "aws_lambda_function" "finalize" {
   function_name = local.finalize_function_name
 }
 
+# MUST be after data "aws_lambda_function" blocks
 locals {
-  process_exec_role_name  = regexreplace(data.aws_lambda_function.process.role,  "arn:aws:iam::[0-9]+:role/", "")
-  finalize_exec_role_name = regexreplace(data.aws_lambda_function.finalize.role, "arn:aws:iam::[0-9]+:role/", "")
+  process_exec_role_name  = replace(
+    data.aws_lambda_function.process.role,
+    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/",
+    ""
+  )
+  finalize_exec_role_name = replace(
+    data.aws_lambda_function.finalize.role,
+    "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/",
+    ""
+  )
 }
 
 ############################################
