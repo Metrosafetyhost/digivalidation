@@ -80,6 +80,9 @@ def _at_expr(dt_utc: datetime) -> str:
     # Scheduler wants no 'Z' and no offset in the string
     return f"at({dt_utc.strftime('%Y-%m-%dT%H:%M:%S')})"
 
+def _should_email(work_type: str) -> bool:
+    return (work_type or "").upper() == "C-HSA"
+
 def schedule_finalize(workorder_id: str, delay_seconds: int = 300):
     run_at_utc = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
     schedule_name = f"finalize-{workorder_id}"
@@ -659,16 +662,19 @@ def process(event, context):
            and not e["original"].startswith("No changes needed")
     ]
 
-    if real_changes:
-        changed_key, change_count = write_changes_csv(real_changes, workorder_id)
-        logger.info(f"Changes CSV written s3://{BUCKET_NAME}/{changed_key}; {change_count} row(s).")
-        _write_heartbeat(workorder_id, changed_key or f"changes/{workorder_id}_changes.csv")
-    else:
-        # still refresh heartbeat so we know activity happened
-        _write_heartbeat(workorder_id, f"changes/{workorder_id}_changes.csv")
+    if (workTypeRef or "").upper() == "C-HSA":
+        if real_changes:
+            changed_key, change_count = write_changes_csv(real_changes, workorder_id)
+            logger.info(f"Changes CSV written s3://{BUCKET_NAME}/{changed_key}; {change_count} row(s).")
+            _write_heartbeat(workorder_id, changed_key or f"changes/{workorder_id}_changes.csv")
+        else:
+            # still refresh heartbeat so finalize knows activity happened
+            _write_heartbeat(workorder_id, f"changes/{workorder_id}_changes.csv")
 
-    # Debounce: push (or create) a finalize for +5 minutes
-    schedule_finalize(workorder_id, delay_seconds=300)  # 5 minutes
+        # Debounce: push (or create) a finalize for +5 minutes
+        schedule_finalize(workorder_id, workTypeRef=workTypeRef, delay_seconds=300)
+    else:
+        logger.info(f"Skipping heartbeat + finalize scheduling for workTypeRef={workTypeRef}")
 
     final_response = {
         "workOrderId":     workorder_id,

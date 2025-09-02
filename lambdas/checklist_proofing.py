@@ -729,7 +729,6 @@ def process(event, context):
     )
     html_body_lines = []
 
-    html_body_lines.append(f"<p>Hello {first_name},</p>")
     html_body_lines.append(f"<p>Below are the proofing outputs for '<strong>{buildingName}</strong>' (Work Order #{workOrderNumber}):</p>")
 
     for q_num, email_heading in EMAIL_QUESTIONS.items():

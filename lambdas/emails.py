@@ -76,17 +76,15 @@ def process(event, context):
     presigned = s3.generate_presigned_url(
         "get_object",
         Params={"Bucket": BUCKET_NAME, "Key": csv_key},
-        ExpiresIn=3600  # 1 hour
+        ExpiresIn=1440  # 24 hours
     )
 
-    subject = f"Changes CSV ready for Work Order {workorder_id}"
+    subject = f"Digital Validation for Work Order {workorder_id}"
     body_text = (
         f"Hi,\n\n"
-        f"The changes CSV for workOrderId {workorder_id} is ready.\n\n"
-        f"S3 Key: s3://{BUCKET_NAME}/{csv_key}\n"
-        f"Last modified: {_iso(last_mod)}\n\n"
-        f"Download (valid 1 hour):\n{presigned}\n\n"
-        f"— Metro Safety Bot"
+        f"Provided are the spelling and grammar changes made to the Building Description & Actions\n\n"
+        f"Download (valid 24 hours):\n{presigned}\n\n"
+        f"Regards, \n-Digital Validation"
     )
 
     ses.send_email(
