@@ -15,6 +15,8 @@ def _iso(dt): return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 def process(event, context):
     workorder_id = event.get("workOrderId")
+    workOrderNumber = event.get("workOrderNumber")
+    workTypeRef = event.get("workTypeRef")
     if not workorder_id:
         return {"statusCode": 400, "body": "Missing workOrderId"}
 
@@ -79,7 +81,7 @@ def process(event, context):
         ExpiresIn=1440  # 24 hours
     )
 
-    subject = f"Digital Validation for Work Order {workorder_id}"
+    subject = f"PASS || {workOrderNumber} || {workorder_id}"
     body_text = (
         f"Hi,\n\n"
         f"Provided are the spelling and grammar changes made to the Building Description & Actions\n\n"
