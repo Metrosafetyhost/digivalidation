@@ -669,7 +669,6 @@ resource "aws_iam_role_policy_attachment" "attach_s3_read_pabiltotesting_to_asse
 ############################################
 # Auto-discover Lambdas & account/region
 ############################################
-data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
 # Function names we have
