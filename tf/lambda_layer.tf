@@ -666,12 +666,6 @@ resource "aws_iam_role_policy_attachment" "attach_s3_read_pabiltotesting_to_asse
   policy_arn = aws_iam_policy.lambda_s3_read_pabiltotesting.arn
 }
 ############################################
-# Account/region
-############################################
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
-
-############################################
 # Config (adjust if needed)
 ############################################
 locals {
