@@ -83,32 +83,32 @@ def _at_expr(dt_utc: datetime) -> str:
 def _should_email(work_type: str) -> bool:
     return (work_type or "").upper() == "C-HSA"
 
-def schedule_finalize(workorder_id: str, delay_seconds: int = 300):
+def schedule_finalize(workorder_id: str, workTypeRef: str, delay_seconds: int = 300):
     run_at_utc = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
     schedule_name = f"finalize-{workorder_id}"
 
-    target_input = json.dumps({"workOrderId": workorder_id})
+    target_input = json.dumps({
+        "workOrderId": workorder_id,
+        "workTypeRef": workTypeRef   # include type in payload to finalize lambda
+    })
 
     kwargs = {
         "Name": schedule_name,
         "FlexibleTimeWindow": {"Mode": "OFF"},
         "ScheduleExpression": _at_expr(run_at_utc),
-        "ScheduleExpressionTimezone": "UTC",   # optional but explicit
+        "ScheduleExpressionTimezone": "UTC",
         "Target": {
             "Arn": FINALIZE_LAMBDA_ARN,
             "RoleArn": SCHEDULER_ROLE_ARN,
             "Input": target_input,
         },
         "State": "ENABLED",
-        "GroupName": "default",                # default group (exists by default)
-        # "Description": f"Finalize CSV for {workorder_id}",
+        "GroupName": "default",
     }
 
     try:
-        # try create first
         eventbridge_sched.create_schedule(**kwargs)
     except eventbridge_sched.exceptions.ConflictException:
-        # schedule already exists → update it to the new time/payload
         eventbridge_sched.update_schedule(**kwargs)
 
 def _write_heartbeat(workorder_id: str, csv_key: str):
