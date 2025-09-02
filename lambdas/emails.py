@@ -9,7 +9,7 @@ eventbridge_sched = boto3.client("scheduler", region_name="eu-west-2")
 BUCKET_NAME = os.environ.get("BUCKET_NAME", "metrosafety-bedrock-output-data-dev-bedrock-lambda")
 HEARTBEAT_TABLE = os.environ.get("HEARTBEAT_TABLE", "ProofingHeartbeats")
 SENDER = "luke.gasson@metrosafety.co.uk"
-RECIPIENT = "luke.gasson@metrosafety.co.uk"
+RECIPIENT = "metroit@metrosafety.co.uk"
 
 def _iso(dt): return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -78,15 +78,13 @@ def process(event, context):
     presigned = s3.generate_presigned_url(
         "get_object",
         Params={"Bucket": BUCKET_NAME, "Key": csv_key},
-        ExpiresIn=1440  # 24 hours
+        ExpiresIn=86400  # 24 hours
     )
 
-    subject = f"PASS || {workOrderNumber} || {workorder_id}"
+    subject = f"PASS || {workOrderNumber} || {workorder_id} || {workTypeRef}"
     body_text = (
-        f"Hi,\n\n"
-        f"Provided are the spelling and grammar changes made to the Building Description & Actions\n\n"
-        f"Download (valid 24 hours):\n{presigned}\n\n"
-        f"Regards, \n-Digital Validation"
+        f"Please find below a link to the spelling and grammar changes made to the Building Description & Actions\n"
+        f"{presigned}\n\n"
     )
 
     ses.send_email(

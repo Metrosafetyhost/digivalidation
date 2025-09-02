@@ -35,7 +35,12 @@ lambda_client = boto3.client("lambda")
 # Email nots perms 
 ses_client = boto3.client("ses", region_name="eu-west-2")
 SENDER = "luke.gasson@metrosafety.co.uk"
-RECIPIENT = "luke.gasson@metrosafety.co.uk"  
+RECIPIENT = "luke.gasson@metrosafety.co.uk" 
+
+ALLOWED_EMAIL_TYPES = {"C-HSA", "C-RARA"}
+
+def _should_email(work_type: str) -> bool:
+    return (work_type or "").upper() in ALLOWED_EMAIL_TYPES
 
 # Configurations
 BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
@@ -79,9 +84,6 @@ def restore_html(text):
 def _at_expr(dt_utc: datetime) -> str:
     # Scheduler wants no 'Z' and no offset in the string
     return f"at({dt_utc.strftime('%Y-%m-%dT%H:%M:%S')})"
-
-def _should_email(work_type: str) -> bool:
-    return (work_type or "").upper() == "C-HSA"
 
 def schedule_finalize(workorder_id: str, workTypeRef: str, delay_seconds: int = 300):
     run_at_utc = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
@@ -662,7 +664,7 @@ def process(event, context):
            and not e["original"].startswith("No changes needed")
     ]
 
-    if (workTypeRef or "").upper() == "C-HSA":
+    if _should_email(workTypeRef):
         if real_changes:
             changed_key, change_count = write_changes_csv(real_changes, workorder_id)
             logger.info(f"Changes CSV written s3://{BUCKET_NAME}/{changed_key}; {change_count} row(s).")
