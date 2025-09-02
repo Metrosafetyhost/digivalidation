@@ -10,6 +10,20 @@ from bs4 import BeautifulSoup
 import re
 from datetime import datetime, timedelta, timezone
 import botocore
+import boto3
+from boto3.dynamodb.conditions import Key, Attr
+
+# AWS clients
+bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
+s3_client = boto3.client("s3")
+dynamodb = boto3.resource("dynamodb")   # <— stick with "dynamodb"
+
+# Now you can use this safely
+heartbeat_tbl = dynamodb.Table("ProofingHeartbeats")
+eventbridge_sched = boto3.client("scheduler", region_name="eu-west-2")
+
+FINALIZE_LAMBDA_ARN = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-emails"
+# SCHEDULER_ROLE_ARN   = "arn:aws:iam::123456789012:role/eventbridge-scheduler-invoke-lambda"
 
 # Initialise logger
 logger = logging.getLogger()
@@ -66,6 +80,48 @@ def restore_html(text):
     for real, placeholder in TAG_MAP.items():
         text = text.replace(placeholder, real)
     return text
+
+def _iso_utc(dt: datetime) -> str:
+    return dt.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def schedule_finalize(workorder_id: str, delay_seconds: int = 300):
+    name = f"finalize-{workorder_id}"
+    run_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
+    schedule_expr = f"at({_iso_utc(run_at)})"
+
+    target_input = json.dumps({"workOrderId": workorder_id})
+    try:
+        eventbridge_sched.create_schedule(
+            Name=name,
+            ScheduleExpression=schedule_expr,
+            FlexibleTimeWindow={"Mode": "OFF"},
+            State="ENABLED",
+            Target={
+                "Arn": FINALIZE_LAMBDA_ARN,
+                "RoleArn": SCHEDULER_ROLE_ARN,
+                "Input": target_input,
+            }
+        )
+    except eventbridge_sched.exceptions.ConflictException:
+        # already exists → update the time (debounce)
+        eventbridge_sched.update_schedule(
+            Name=name,
+            ScheduleExpression=schedule_expr,
+            FlexibleTimeWindow={"Mode": "OFF"},
+            State="ENABLED",
+            Target={
+                "Arn": FINALIZE_LAMBDA_ARN,
+                "RoleArn": SCHEDULER_ROLE_ARN,
+                "Input": target_input,
+            }
+        )
+
+def _write_heartbeat(workorder_id: str, csv_key: str):
+    heartbeat_tbl.put_item(Item={
+        "workorder_id": workorder_id,
+        "csv_key": csv_key,
+        "last_update": int(time.time()),
+    })
 
 # KNOWN_TAGS = {"P","/P","UL","/UL","LI","/LI","U","/U","BR"}
 
@@ -613,10 +669,15 @@ def process(event, context):
 
     if real_changes:
         changed_key, change_count = write_changes_csv(real_changes, workorder_id)
-        logger.info(
-            f"Changes CSV written to s3://{BUCKET_NAME}/{changed_key}; "
-            f"{change_count} row(s)."
-        )
+        logger.info(f"Changes CSV written s3://{BUCKET_NAME}/{changed_key}; {change_count} row(s).")
+        _write_heartbeat(workorder_id, changed_key or f"changes/{workorder_id}_changes.csv")
+    else:
+        # still refresh heartbeat so we know activity happened
+        _write_heartbeat(workorder_id, f"changes/{workorder_id}_changes.csv")
+
+    # Debounce: push (or create) a finalize for +5 minutes
+    schedule_finalize(workorder_id, delay_seconds=300)  # 5 minutes
+    
     final_response = {
         "workOrderId":     workorder_id,
         "contentType":     ct,

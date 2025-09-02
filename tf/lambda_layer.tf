@@ -665,3 +665,201 @@ resource "aws_iam_role_policy_attachment" "attach_s3_read_pabiltotesting_to_asse
   role       = data.aws_iam_role.asset_categorisation_role.name
   policy_arn = aws_iam_policy.lambda_s3_read_pabiltotesting.arn
 }
+
+############################################
+# Auto-discover Lambdas & account/region
+############################################
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+
+# Function names we have
+locals {
+  process_function_name  = "bedrock-lambda-salesforce_input"
+  finalize_function_name = "bedrock-lambda-emails"
+  bucket_name            = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
+}
+
+data "aws_lambda_function" "process" {
+  function_name = local.process_function_name
+}
+
+data "aws_lambda_function" "finalize" {
+  function_name = local.finalize_function_name
+}
+
+# Convert role ARNs -> role NAMES (needed by aws_iam_role_policy_attachment)
+locals {
+  process_exec_role_name  = regexreplace(data.aws_lambda_function.process.role,  "arn:aws:iam::[0-9]+:role/", "")
+  finalize_exec_role_name = regexreplace(data.aws_lambda_function.finalize.role, "arn:aws:iam::[0-9]+:role/", "")
+}
+
+############################################
+# DynamoDB heartbeat table
+############################################
+resource "aws_dynamodb_table" "proofing_heartbeats" {
+  name         = "ProofingHeartbeats"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "workorder_id"
+
+  attribute {
+    name = "workorder_id"
+    type = "S"
+  }
+}
+
+############################################
+# EventBridge Scheduler role (assumed by service)
+############################################
+data "aws_iam_policy_document" "scheduler_trust" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["scheduler.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "eventbridge_scheduler_invoke_lambda" {
+  name               = "eventbridge-scheduler-invoke-lambda"
+  assume_role_policy = data.aws_iam_policy_document.scheduler_trust.json
+}
+
+# Allow Scheduler to invoke ONLY your finalize Lambda
+data "aws_iam_policy_document" "scheduler_invoke_finalize" {
+  statement {
+    sid     = "InvokeFinalize"
+    actions = ["lambda:InvokeFunction"]
+    resources = [data.aws_lambda_function.finalize.arn] # must be the FUNCTION ARN
+  }
+}
+
+resource "aws_iam_policy" "scheduler_invoke_finalize" {
+  name   = "scheduler-invoke-finalize"
+  policy = data.aws_iam_policy_document.scheduler_invoke_finalize.json
+}
+
+resource "aws_iam_role_policy_attachment" "scheduler_attach" {
+  role       = aws_iam_role.eventbridge_scheduler_invoke_lambda.name
+  policy_arn = aws_iam_policy.scheduler_invoke_finalize.arn
+}
+
+output "SCHEDULER_ROLE_ARN" {
+  value = aws_iam_role.eventbridge_scheduler_invoke_lambda.arn
+}
+
+############################################
+# Policy for PROCESS lambda (Salesforce input)
+# - create/update/delete schedules
+# - pass the Scheduler role
+# - write heartbeat
+############################################
+data "aws_iam_policy_document" "process_scheduler" {
+  statement {
+    sid = "ManageFinalizeSchedules"
+    actions = [
+      "scheduler:CreateSchedule",
+      "scheduler:UpdateSchedule",
+      "scheduler:DeleteSchedule",
+      "scheduler:GetSchedule",
+    ]
+    resources = [
+      "arn:aws:scheduler:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:schedule/default/finalize-*"
+    ]
+  }
+
+  statement {
+    sid       = "PassSchedulerRole"
+    actions   = ["iam:PassRole"]
+    resources = [aws_iam_role.eventbridge_scheduler_invoke_lambda.arn]
+  }
+
+  statement {
+    sid       = "WriteHeartbeat"
+    actions   = ["dynamodb:PutItem"]
+    resources = [aws_dynamodb_table.proofing_heartbeats.arn]
+  }
+
+  # Allow invoking Bedrock models
+  statement {
+    sid       = "InvokeBedrock"
+    actions   = ["bedrock:InvokeModel"]
+    resources = ["*"] 
+    # (or scope to arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0)
+  }
+
+  # Allow invoking the checklist Lambda
+  statement {
+    sid       = "InvokeChecklistLambda"
+    actions   = ["lambda:InvokeFunction"]
+    resources = ["arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-checklist"]
+  }
+}
+
+resource "aws_iam_policy" "process_scheduler" {
+  name   = "process-lambda-scheduler-dynamodb"
+  policy = data.aws_iam_policy_document.process_scheduler.json
+}
+
+resource "aws_iam_role_policy_attachment" "process_scheduler_attach" {
+  role       = local.process_exec_role_name
+  policy_arn = aws_iam_policy.process_scheduler.arn
+}
+
+############################################
+# Policy for FINALIZE lambda (bedrock-lambda-emails)
+# - read heartbeat
+# - S3 read CSV (+ optional list)
+# - SES send
+# - scheduler update/delete/get
+# - iam:PassRole (because your finalize code may reschedule itself)
+############################################
+data "aws_iam_policy_document" "finalize_policy" {
+  statement {
+    sid     = "HeartbeatGet"
+    actions = ["dynamodb:GetItem"]
+    resources = [aws_dynamodb_table.proofing_heartbeats.arn]
+  }
+
+  statement {
+    sid     = "S3ReadCSV"
+    actions = ["s3:HeadObject", "s3:GetObject"]
+    resources = ["arn:aws:s3:::${local.bucket_name}/*"]
+  }
+
+  statement {
+    sid       = "S3ListOptional"
+    actions   = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::${local.bucket_name}"]
+  }
+
+  statement {
+    sid     = "SendEmail"
+    actions = ["ses:SendEmail", "ses:SendRawEmail"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "UpdateDeleteSchedules"
+    actions = ["scheduler:UpdateSchedule", "scheduler:DeleteSchedule", "scheduler:GetSchedule"]
+    resources = [
+      "arn:aws:scheduler:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:schedule/default/finalize-*"
+    ]
+  }
+
+  statement {
+    sid       = "PassSchedulerRole"
+    actions   = ["iam:PassRole"]
+    resources = [aws_iam_role.eventbridge_scheduler_invoke_lambda.arn]
+  }
+}
+
+resource "aws_iam_policy" "finalize_policy" {
+  name   = "finalize-lambda-heartbeat-s3-ses-scheduler"
+  policy = data.aws_iam_policy_document.finalize_policy.json
+}
+
+resource "aws_iam_role_policy_attachment" "finalize_attach" {
+  role       = local.finalize_exec_role_name
+  policy_arn = aws_iam_policy.finalize_policy.arn
+}

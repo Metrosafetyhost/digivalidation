@@ -1,100 +1,107 @@
-import json, time, os, boto3
-from botocore.exceptions import ClientError
+import os, json, time, boto3
+from datetime import datetime, timezone, timedelta
 
-import logging
+dynamo = boto3.resource("dynamodb")
+s3 = boto3.client("s3")
+ses = boto3.client("ses", region_name="eu-west-2")
+eventbridge_sched = boto3.client("scheduler", region_name="eu-west-2")
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+BUCKET_NAME = os.environ.get("BUCKET_NAME", "metrosafety-bedrock-output-data-dev-bedrock-lambda")
+HEARTBEAT_TABLE = os.environ.get("HEARTBEAT_TABLE", "ProofingHeartbeats")
+SENDER = "luke.gasson@metrosafety.co.uk"
+RECIPIENT = "luke.gasson@metrosafety.co.uk"
 
-# Reuse the same constants your live processor uses
-# Falls back to literals if the import isn't available in this package
-try:
-    from salesforce_input import TABLE_NAME as _TABLE_NAME, BUCKET_NAME as _BUCKET_NAME, SENDER as _DEFAULT_SENDER
-except Exception:
-    _TABLE_NAME = "ProofingMetadata"
-    _BUCKET_NAME = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
-    _DEFAULT_SENDER = "luke.gasson@metrosafety.co.uk"
-
-TABLE_NAME    = _TABLE_NAME
-BUCKET_NAME   = _BUCKET_NAME 
-SENDER        = os.getenv("SENDER", _DEFAULT_SENDER)   # optional override via env
-REGION        = os.getenv("AWS_REGION", "eu-west-2")
-QUIET_SECONDS = int(os.getenv("QUIET_SECONDS", "300"))
-
-dynamodb   = boto3.resource("dynamodb")
-s3_client  = boto3.client("s3")
-ses_client = boto3.client("ses", region_name=REGION)
-table      = dynamodb.Table(TABLE_NAME)
-
-QUIET_SECONDS = int(os.environ.get("QUIET_SECONDS", "300"))
-
-table = dynamodb.Table(TABLE_NAME)
-
-def presign(key: str, expires=3600) -> str:
-    return s3_client.generate_presigned_url(
-        ClientMethod="get_object",
-        Params={"Bucket": BUCKET_NAME, "Key": key},
-        ExpiresIn=expires
-    )
-
-def send_link_email(to_addr: str, workorder_id: str, url: str):
-    subject = f"CSV ready for Work Order {workorder_id}"
-    html = f"""
-    <p>Hi,</p>
-    <p>Your changes CSV for work order <b>{workorder_id}</b> is ready:</p>
-    <p><a href="{url}">Download changes CSV</a></p>
-    <p>Link expires in 1 hour.</p>
-    """
-    ses_client.send_email(
-        Source=SENDER,
-        Destination={"ToAddresses": [to_addr]},
-        Message={"Subject": {"Data": subject}, "Body": {"Html": {"Data": html}}}
-    )
+def _iso(dt): return dt.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 def process(event, context):
-    logger.info(f"Received {len(event.get('Records', []))} SQS record(s)")
+    workorder_id = event.get("workOrderId")
+    if not workorder_id:
+        return {"statusCode": 400, "body": "Missing workOrderId"}
 
-    for rec in event["Records"]:
-        body = json.loads(rec["body"])
-        workorder_id = body.get("workorder_id")
-        logger.info(f"Finalizer: workorder_id={workorder_id}")
+    hb_tbl = dynamo.Table(HEARTBEAT_TABLE)
+    resp = hb_tbl.get_item(Key={"workorder_id": workorder_id})
+    item = resp.get("Item")
+    if not item:
+        # nothing to do
+        return {"statusCode": 200, "body": "No heartbeat"}
 
-        item = table.get_item(Key={"workorder_id": workorder_id}).get("Item")
-        if not item:
-            logger.warning("No DynamoDB item found; skipping")
-            continue
+    last_update = int(item.get("last_update", 0))
+    csv_key = item.get("csv_key", f"changes/{workorder_id}_changes.csv")
 
-        now = int(time.time())
-        last_ts = int(item.get("last_event_ts", 0))
-        if item.get("emailed") is True:
-            logger.info("Already emailed; skipping")
-            continue
-        if (now - last_ts) < QUIET_SECONDS:
-            logger.info(f"Quiet period not met ({now - last_ts}s < {QUIET_SECONDS}s); skipping")
-            continue
+    # ensure quiet period (e.g., 180s) since last update
+    quiet_required = 180
+    now = int(time.time())
+    if (now - last_update) < quiet_required:
+        # reschedule ourselves (small, one-off)
+        name = f"finalize-{workorder_id}"
+        run_at = datetime.now(timezone.utc) + timedelta(seconds=quiet_required)
+        eventbridge_sched.update_schedule(
+            Name=name,
+            ScheduleExpression=f"at({run_at.strftime('%Y-%m-%dT%H:%M:%SZ')})",
+            FlexibleTimeWindow={"Mode": "OFF"},
+            State="ENABLED",
+            Target={
+                "Arn": context.invoked_function_arn,
+                "RoleArn": os.environ["SCHEDULER_ROLE_ARN"],  # set as env
+                "Input": json.dumps({"workOrderId": workorder_id}),
+            }
+        )
+        return {"statusCode": 202, "body": "Rescheduled due to activity"}
 
-        key = item.get("changes_s3_key")
-        if not key:
-            logger.info("No changes_s3_key yet; skipping")
-            continue
+    # check CSV exists & hasn't been modified very recently
+    try:
+        head = s3.head_object(Bucket=BUCKET_NAME, Key=csv_key)
+    except s3.exceptions.NoSuchKey:
+        return {"statusCode": 200, "body": f"No CSV yet at {csv_key}"}
 
-        url = presign(key)
-        to_addr = item.get("emailAddress") or SENDER
-        logger.info(f"Sending link to {to_addr}: s3://{BUCKET_NAME}/{key}")
+    last_mod = head["LastModified"]  # datetime UTC
+    if (datetime.now(timezone.utc) - last_mod) < timedelta(seconds=60):
+        # very recent write → reschedule
+        name = f"finalize-{workorder_id}"
+        run_at = datetime.now(timezone.utc) + timedelta(seconds=120)
+        eventbridge_sched.update_schedule(
+            Name=name,
+            ScheduleExpression=f"at({run_at.strftime('%Y-%m-%dT%H:%M:%SZ')})",
+            FlexibleTimeWindow={"Mode": "OFF"},
+            State="ENABLED",
+            Target={
+                "Arn": context.invoked_function_arn,
+                "RoleArn": os.environ["SCHEDULER_ROLE_ARN"],
+                "Input": json.dumps({"workOrderId": workorder_id}),
+            }
+        )
+        return {"statusCode": 202, "body": "Rescheduled; CSV just updated"}
 
-        send_link_email(to_addr, workorder_id, url)
+    # presign (link) or attach
+    presigned = s3.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": BUCKET_NAME, "Key": csv_key},
+        ExpiresIn=3600  # 1 hour
+    )
 
-        try:
-            table.update_item(
-                Key={"workorder_id": workorder_id},
-                UpdateExpression="SET emailed = :true, emailed_ts = :now",
-                ConditionExpression="attribute_not_exists(emailed) OR emailed = :false",
-                ExpressionAttributeValues={":true": True, ":false": False, ":now": now},
-            )
-            logger.info("Marked emailed=True")
-        except ClientError as e:
-            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                logger.info("Another worker already marked emailed=True")
-            else:
-                logger.exception("Failed to update emailed flag")
-                raise
+    subject = f"Changes CSV ready for Work Order {workorder_id}"
+    body_text = (
+        f"Hi,\n\n"
+        f"The changes CSV for workOrderId {workorder_id} is ready.\n\n"
+        f"S3 Key: s3://{BUCKET_NAME}/{csv_key}\n"
+        f"Last modified: {_iso(last_mod)}\n\n"
+        f"Download (valid 1 hour):\n{presigned}\n\n"
+        f"— Metro Safety Bot"
+    )
+
+    ses.send_email(
+        Source=SENDER,
+        Destination={"ToAddresses": [RECIPIENT]},
+        Message={
+            "Subject": {"Data": subject},
+            "Body": {"Text": {"Data": body_text}}
+        }
+    )
+
+    # (optional) clean up: delete the schedule so it can be recreated fresh next time
+    try:
+        eventbridge_sched.delete_schedule(Name=f"finalize-{workorder_id}")
+    except Exception:
+        pass
+
+    return {"statusCode": 200, "body": "Email sent"}
