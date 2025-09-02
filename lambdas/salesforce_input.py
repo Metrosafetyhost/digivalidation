@@ -76,40 +76,37 @@ def restore_html(text):
         text = text.replace(placeholder, real)
     return text
 
-def _iso_utc(dt: datetime) -> str:
-    return dt.replace(tzinfo=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+def _at_expr(dt_utc: datetime) -> str:
+    # Scheduler wants no 'Z' and no offset in the string
+    return f"at({dt_utc.strftime('%Y-%m-%dT%H:%M:%S')})"
 
 def schedule_finalize(workorder_id: str, delay_seconds: int = 300):
-    name = f"finalize-{workorder_id}"
-    run_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
-    schedule_expr = f"at({_iso_utc(run_at)})"
+    run_at_utc = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
+    schedule_name = f"finalize-{workorder_id}"
 
     target_input = json.dumps({"workOrderId": workorder_id})
+
+    kwargs = {
+        "Name": schedule_name,
+        "FlexibleTimeWindow": {"Mode": "OFF"},
+        "ScheduleExpression": _at_expr(run_at_utc),
+        "ScheduleExpressionTimezone": "UTC",   # optional but explicit
+        "Target": {
+            "Arn": FINALIZE_LAMBDA_ARN,
+            "RoleArn": SCHEDULER_ROLE_ARN,
+            "Input": target_input,
+        },
+        "State": "ENABLED",
+        "GroupName": "default",                # default group (exists by default)
+        # "Description": f"Finalize CSV for {workorder_id}",
+    }
+
     try:
-        eventbridge_sched.create_schedule(
-            Name=name,
-            ScheduleExpression=schedule_expr,
-            FlexibleTimeWindow={"Mode": "OFF"},
-            State="ENABLED",
-            Target={
-                "Arn": FINALIZE_LAMBDA_ARN,
-                "RoleArn": SCHEDULER_ROLE_ARN,
-                "Input": target_input,
-            }
-        )
+        # try create first
+        eventbridge_sched.create_schedule(**kwargs)
     except eventbridge_sched.exceptions.ConflictException:
-        # already exists → update the time (debounce)
-        eventbridge_sched.update_schedule(
-            Name=name,
-            ScheduleExpression=schedule_expr,
-            FlexibleTimeWindow={"Mode": "OFF"},
-            State="ENABLED",
-            Target={
-                "Arn": FINALIZE_LAMBDA_ARN,
-                "RoleArn": SCHEDULER_ROLE_ARN,
-                "Input": target_input,
-            }
-        )
+        # schedule already exists → update it to the new time/payload
+        eventbridge_sched.update_schedule(**kwargs)
 
 def _write_heartbeat(workorder_id: str, csv_key: str):
     heartbeat_tbl.put_item(Item={

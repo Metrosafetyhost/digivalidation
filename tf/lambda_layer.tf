@@ -766,9 +766,9 @@ resource "aws_iam_role_policy_attachment" "scheduler_attach" {
   policy_arn = aws_iam_policy.scheduler_invoke_finalize.arn
 }
 
-output "SCHEDULER_ROLE_ARN" {
-  value = aws_iam_role.eventbridge_scheduler_invoke_lambda.arn
-}
+# output "SCHEDULER_ROLE_ARN" {
+#   value = aws_iam_role.eventbridge_scheduler_invoke_lambda.arn
+# }
 
 ############################################
 # PROCESS lambda policy (salesforce_input.py)
