@@ -665,19 +665,34 @@ resource "aws_iam_role_policy_attachment" "attach_s3_read_pabiltotesting_to_asse
   role       = data.aws_iam_role.asset_categorisation_role.name
   policy_arn = aws_iam_policy.lambda_s3_read_pabiltotesting.arn
 }
-
 ############################################
-# Auto-discover Lambdas & account/region
+# Account/region
 ############################################
+data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
-# Function names we have
+############################################
+# Config (adjust if needed)
+############################################
 locals {
+  # Your function names
   process_function_name  = "bedrock-lambda-salesforce_input"
   finalize_function_name = "bedrock-lambda-emails"
-  bucket_name            = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
+
+  # Buckets you use in code
+  csv_bucket   = "metrosafety-bedrock-output-data-dev-bedrock-lambda"  # BUCKET_NAME
+  pdf_bucket   = "metrosafetyprodfiles"                                 # PDF_BUCKET
+
+  # Model you call from salesforce_input.py
+  bedrock_model_arn = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0"
+
+  # The checklist lambda that salesforce_input.py invokes
+  checklist_lambda_arn = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-checklist"
 }
 
+############################################
+# Discover both Lambdas + their exec role names
+############################################
 data "aws_lambda_function" "process" {
   function_name = local.process_function_name
 }
@@ -686,7 +701,6 @@ data "aws_lambda_function" "finalize" {
   function_name = local.finalize_function_name
 }
 
-# Convert role ARNs -> role NAMES (needed by aws_iam_role_policy_attachment)
 locals {
   process_exec_role_name  = regexreplace(data.aws_lambda_function.process.role,  "arn:aws:iam::[0-9]+:role/", "")
   finalize_exec_role_name = regexreplace(data.aws_lambda_function.finalize.role, "arn:aws:iam::[0-9]+:role/", "")
@@ -707,7 +721,7 @@ resource "aws_dynamodb_table" "proofing_heartbeats" {
 }
 
 ############################################
-# EventBridge Scheduler role (assumed by service)
+# EventBridge Scheduler service role (assumed by Scheduler)
 ############################################
 data "aws_iam_policy_document" "scheduler_trust" {
   statement {
@@ -724,12 +738,12 @@ resource "aws_iam_role" "eventbridge_scheduler_invoke_lambda" {
   assume_role_policy = data.aws_iam_policy_document.scheduler_trust.json
 }
 
-# Allow Scheduler to invoke ONLY your finalize Lambda
+# Allow Scheduler to invoke ONLY your finalize lambda
 data "aws_iam_policy_document" "scheduler_invoke_finalize" {
   statement {
     sid     = "InvokeFinalize"
     actions = ["lambda:InvokeFunction"]
-    resources = [data.aws_lambda_function.finalize.arn] # must be the FUNCTION ARN
+    resources = [data.aws_lambda_function.finalize.arn]
   }
 }
 
@@ -748,12 +762,16 @@ output "SCHEDULER_ROLE_ARN" {
 }
 
 ############################################
-# Policy for PROCESS lambda (Salesforce input)
+# PROCESS lambda policy (salesforce_input.py)
 # - create/update/delete schedules
 # - pass the Scheduler role
 # - write heartbeat
+# - invoke Bedrock model
+# - invoke the checklist lambda
+# - S3 access (csv bucket + PDF bucket marker/prefixes)
 ############################################
-data "aws_iam_policy_document" "process_scheduler" {
+data "aws_iam_policy_document" "process_policy" {
+  # EventBridge Scheduler management (finalize-* schedules)
   statement {
     sid = "ManageFinalizeSchedules"
     actions = [
@@ -767,51 +785,81 @@ data "aws_iam_policy_document" "process_scheduler" {
     ]
   }
 
+  # Pass the Scheduler role to Scheduler targets
   statement {
     sid       = "PassSchedulerRole"
     actions   = ["iam:PassRole"]
     resources = [aws_iam_role.eventbridge_scheduler_invoke_lambda.arn]
   }
 
+  # Write heartbeat
   statement {
     sid       = "WriteHeartbeat"
     actions   = ["dynamodb:PutItem"]
     resources = [aws_dynamodb_table.proofing_heartbeats.arn]
   }
 
-  # Allow invoking Bedrock models
+  # Invoke Bedrock model (Claude Sonnet)
   statement {
     sid       = "InvokeBedrock"
     actions   = ["bedrock:InvokeModel"]
-    resources = ["*"] 
-    # (or scope to arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0)
+    resources = [local.bedrock_model_arn]
   }
 
-  # Allow invoking the checklist Lambda
+  # Invoke the checklist lambda
   statement {
     sid       = "InvokeChecklistLambda"
     actions   = ["lambda:InvokeFunction"]
-    resources = ["arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-checklist"]
+    resources = [local.checklist_lambda_arn]
+  }
+
+  # S3: read/write your CSV bucket (logs + changes)
+  statement {
+    sid     = "CsvBucketRW"
+    actions = ["s3:PutObject", "s3:GetObject", "s3:HeadObject"]
+    resources = ["arn:aws:s3:::${local.csv_bucket}/*"]
+  }
+  statement {
+    sid     = "CsvBucketList"
+    actions = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::${local.csv_bucket}"]
+  }
+
+  # S3: WorkOrders marker in PDF bucket (.textract_ran) and list prefix
+  statement {
+    sid     = "PdfBucketListWorkOrders"
+    actions = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::${local.pdf_bucket}"]
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["WorkOrders/*"]
+    }
+  }
+  statement {
+    sid     = "PdfBucketMarkerRW"
+    actions = ["s3:PutObject", "s3:PutObjectTagging", "s3:HeadObject", "s3:DeleteObject"]
+    resources = ["arn:aws:s3:::${local.pdf_bucket}/WorkOrders/*/.textract_ran"]
   }
 }
 
-resource "aws_iam_policy" "process_scheduler" {
-  name   = "process-lambda-scheduler-dynamodb"
-  policy = data.aws_iam_policy_document.process_scheduler.json
+resource "aws_iam_policy" "process_policy" {
+  name   = "process-lambda-scheduler-bedrock-dynamodb-s3"
+  policy = data.aws_iam_policy_document.process_policy.json
 }
 
-resource "aws_iam_role_policy_attachment" "process_scheduler_attach" {
+resource "aws_iam_role_policy_attachment" "process_attach" {
   role       = local.process_exec_role_name
-  policy_arn = aws_iam_policy.process_scheduler.arn
+  policy_arn = aws_iam_policy.process_policy.arn
 }
 
 ############################################
-# Policy for FINALIZE lambda (bedrock-lambda-emails)
+# FINALIZE (emails.py) lambda policy
 # - read heartbeat
 # - S3 read CSV (+ optional list)
 # - SES send
 # - scheduler update/delete/get
-# - iam:PassRole (because your finalize code may reschedule itself)
+# - iam:PassRole (self-reschedule)
 ############################################
 data "aws_iam_policy_document" "finalize_policy" {
   statement {
@@ -823,13 +871,13 @@ data "aws_iam_policy_document" "finalize_policy" {
   statement {
     sid     = "S3ReadCSV"
     actions = ["s3:HeadObject", "s3:GetObject"]
-    resources = ["arn:aws:s3:::${local.bucket_name}/*"]
+    resources = ["arn:aws:s3:::${local.csv_bucket}/*"]
   }
 
   statement {
     sid       = "S3ListOptional"
     actions   = ["s3:ListBucket"]
-    resources = ["arn:aws:s3:::${local.bucket_name}"]
+    resources = ["arn:aws:s3:::${local.csv_bucket}"]
   }
 
   statement {
