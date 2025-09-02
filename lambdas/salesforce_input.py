@@ -23,7 +23,7 @@ heartbeat_tbl = dynamodb.Table("ProofingHeartbeats")
 eventbridge_sched = boto3.client("scheduler", region_name="eu-west-2")
 
 FINALIZE_LAMBDA_ARN = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-emails"
-# SCHEDULER_ROLE_ARN   = "arn:aws:iam::123456789012:role/eventbridge-scheduler-invoke-lambda"
+SCHEDULER_ROLE_ARN   = "arn:aws:iam::837329614132:role/eventbridge-scheduler-invoke-lambda"
 
 # Initialise logger
 logger = logging.getLogger()
@@ -31,11 +31,6 @@ logger.setLevel(logging.INFO)
 
 PROOFING_CHECKLIST_ARN = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-checklist"
 lambda_client = boto3.client("lambda")
-
-# AWS clients
-bedrock_client = boto3.client("bedrock-runtime", region_name="eu-west-2")
-s3_client = boto3.client('s3')
-dynamodb = boto3.resource('dynamodb')
 
 # Email nots perms 
 ses_client = boto3.client("ses", region_name="eu-west-2")
@@ -677,7 +672,7 @@ def process(event, context):
 
     # Debounce: push (or create) a finalize for +5 minutes
     schedule_finalize(workorder_id, delay_seconds=300)  # 5 minutes
-    
+
     final_response = {
         "workOrderId":     workorder_id,
         "contentType":     ct,
