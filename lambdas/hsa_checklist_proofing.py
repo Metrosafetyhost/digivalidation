@@ -368,7 +368,7 @@ def process(event, context):
         "Source": source_email,
         "Destination": {
             "ToAddresses": [source_email],
-            "BccAddresses": bcc_list
+#            "BccAddresses": bcc_list
         },
         "Message": {
             "Subject": {"Data": subject},
