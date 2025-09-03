@@ -229,7 +229,6 @@ def process(event, context):
       - 'textract_bucket'
       - 'textract_key'
       - 'workOrderId'
-      - 'assessor_email'       ← ignored here, we override below for testing
     """
     logger.info("Received proofing event: %s", json.dumps(event))
 

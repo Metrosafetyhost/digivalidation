@@ -664,19 +664,21 @@ def process(event, context):
            and not e["original"].startswith("No changes needed")
     ]
 
-    if _should_email(workTypeRef):
-        if real_changes:
-            changed_key, change_count = write_changes_csv(real_changes, workorder_id)
-            logger.info(f"Changes CSV written s3://{BUCKET_NAME}/{changed_key}; {change_count} row(s).")
-            _write_heartbeat(workorder_id, changed_key or f"changes/{workorder_id}_changes.csv")
-        else:
-            # still refresh heartbeat so finalize knows activity happened
-            _write_heartbeat(workorder_id, f"changes/{workorder_id}_changes.csv")
+    if real_changes:
+        changed_key, change_count = write_changes_csv(real_changes, workorder_id)
+        logger.info(f"Changes CSV written s3://{BUCKET_NAME}/{changed_key}; {change_count} row(s).")
+        csv_for_heartbeat = changed_key or f"changes/{workorder_id}_changes.csv"
+    else:
+        csv_for_heartbeat = f"changes/{workorder_id}_changes.csv"
 
-        # Debounce: push (or create) a finalize for +5 minutes
+    # 2) ALWAYS write a heartbeat so checklist/FRA can fetch the link
+    _write_heartbeat(workorder_id, csv_for_heartbeat)
+
+    # 3) ONLY schedule the email for allowed types (C-HSA / C-RARA)
+    if _should_email(workTypeRef):
         schedule_finalize(workorder_id, workTypeRef=workTypeRef, delay_seconds=300)
     else:
-        logger.info(f"Skipping heartbeat + finalize scheduling for workTypeRef={workTypeRef}")
+        logger.info(f"Skipping finalize scheduling for workTypeRef={workTypeRef}")
 
     final_response = {
         "workOrderId":     workorder_id,

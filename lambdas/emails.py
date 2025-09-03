@@ -17,6 +17,8 @@ def process(event, context):
     workorder_id = event.get("workOrderId")
     workOrderNumber = event.get("workOrderNumber")
     workTypeRef = event.get("workTypeRef")
+    buildingName = event.get("buildingName")
+
     if not workorder_id:
         return {"statusCode": 400, "body": "Missing workOrderId"}
 
@@ -81,7 +83,13 @@ def process(event, context):
         ExpiresIn=86400  # 24 hours
     )
 
-    subject = f"PASS || {workOrderNumber} || {workorder_id} || {workTypeRef}"
+    subject = (
+        f"PASS || "
+        f"{workOrderNumber}/"
+        f"{workorder_id} || "
+        f"{buildingName} || "
+        f"{workTypeRef}"
+    )
     body_text = (
         f"Please find below a link to the spelling and grammar changes made to the Building Description & Actions\n"
         f"{presigned}\n\n"
