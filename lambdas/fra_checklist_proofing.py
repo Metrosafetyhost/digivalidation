@@ -375,7 +375,7 @@ def process(event, context):
     html_body_text = "\n".join(html_body_lines)
 
     # ——— 6) Send the email via SES ———
-    source_email = "luke.gasson@metrosafety.co.uk"
+    source_email = "metroit@metrosafety.co.uk"
     if not source_email:
         logger.error("SES_SOURCE_EMAIL not set in environment.")
         return {"statusCode": 500, "body": "Missing SES_SOURCE_EMAIL"}
@@ -386,7 +386,7 @@ def process(event, context):
         "Source": source_email,
         "Destination": {
             "ToAddresses": [source_email],
-            "BccAddresses": bcc_list
+            # "BccAddresses": bcc_list
         },
         "Message": {
             "Subject": {"Data": subject},
