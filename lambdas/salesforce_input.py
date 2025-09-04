@@ -85,15 +85,22 @@ def _at_expr(dt_utc: datetime) -> str:
     # Scheduler wants no 'Z' and no offset in the string
     return f"at({dt_utc.strftime('%Y-%m-%dT%H:%M:%S')})"
 
-def schedule_finalize(workorder_id: str, workTypeRef: str, delay_seconds: int = 300):
+def schedule_finalize(
+    workorder_id: str,
+    workTypeRef: str,
+    buildingName: str,
+    workOrderNumber: str,
+    delay_seconds: int = 300,
+):
     run_at_utc = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
     schedule_name = f"finalize-{workorder_id}"
 
     target_input = json.dumps({
         "workOrderId": workorder_id,
-        "workTypeRef": workTypeRef   # include type in payload to finalize lambda
+        "workTypeRef": workTypeRef,
+        "buildingName": buildingName,
+        "workOrderNumber": workOrderNumber,
     })
-
     kwargs = {
         "Name": schedule_name,
         "FlexibleTimeWindow": {"Mode": "OFF"},
@@ -676,7 +683,13 @@ def process(event, context):
 
     # 3) ONLY schedule the email for allowed types (C-HSA / C-RARA)
     if _should_email(workTypeRef):
-        schedule_finalize(workorder_id, workTypeRef=workTypeRef, delay_seconds=300)
+        schedule_finalize(
+            workorder_id,
+            workTypeRef=workTypeRef,
+            buildingName=buildingName,
+            workOrderNumber=workOrderNumber,
+            delay_seconds=300
+        )
     else:
         logger.info(f"Skipping finalize scheduling for workTypeRef={workTypeRef}")
 
