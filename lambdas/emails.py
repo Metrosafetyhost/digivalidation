@@ -47,7 +47,7 @@ def process(event, context):
             Target={
                 "Arn": context.invoked_function_arn,
                 "RoleArn": os.environ["SCHEDULER_ROLE_ARN"],  # set as env
-                "Input": json.dumps({"workOrderId": workorder_id}),
+                "Input": json.dumps({event}),
             }
         )
         return {"statusCode": 202, "body": "Rescheduled due to activity"}
@@ -97,7 +97,8 @@ def process(event, context):
 
     ses.send_email(
         Source=SENDER,
-        Destination={"ToAddresses": [RECIPIENT]},
+        Destination={"ToAddresses": [RECIPIENT],
+                     "BccAddresses": [SENDER]},
         Message={
             "Subject": {"Data": subject},
             "Body": {"Text": {"Data": body_text}}
