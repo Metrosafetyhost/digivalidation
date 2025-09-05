@@ -97,8 +97,7 @@ def process(event, context):
 
     ses.send_email(
         Source=SENDER,
-        Destination={"ToAddresses": [RECIPIENT],
-                     "BccAddresses": [SENDER]},
+        Destination={"ToAddresses": [RECIPIENT]},
         Message={
             "Subject": {"Data": subject},
             "Body": {"Text": {"Data": body_text}}
