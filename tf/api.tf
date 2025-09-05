@@ -106,3 +106,26 @@ resource "aws_lambda_permission" "apigw_lambda_digivalidation" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
 }
+
+# Integration for Asset Categorisation Lambda
+resource "aws_apigatewayv2_integration" "asset_categorisation_integration" {
+  api_id           = aws_apigatewayv2_api.lambda_api.id
+  integration_type = "AWS_PROXY"
+  integration_uri  = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-asset_categorisation"
+}
+
+# Route for POST /asset_categorisation
+resource "aws_apigatewayv2_route" "asset_categorisation_route" {
+  api_id    = aws_apigatewayv2_api.lambda_api.id
+  route_key = "POST /asset_categorisation"
+  target    = "integrations/${aws_apigatewayv2_integration.asset_categorisation_integration.id}"
+}
+
+# Permission to allow API Gateway to invoke the Asset Categorisation Lambda
+resource "aws_lambda_permission" "apigw_lambda_asset_categorisation" {
+  statement_id  = "AllowExecutionFromAPIGatewayAssetCategorisation"
+  action        = "lambda:InvokeFunction"
+  function_name = "bedrock-lambda-asset_categorisation"
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
+}
