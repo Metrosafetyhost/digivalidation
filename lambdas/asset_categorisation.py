@@ -27,14 +27,18 @@ OPENAI_API_KEY = _load_openai_key()
 # Prompts (tweak as you like)
 # ---------------------------
 SYSTEM_PROMPT = (
-    "You are a safety asset classifier. Given a single site asset photo, "
-    "extract the following fields as compact JSON with EXACT keys: "
+    "You are a safety asset classifier for UK sites. "
+    "Given a single site asset photo, output ALL of the following fields as compact JSON with EXACT keys: "
     "Manufacturer__c, What_Is_It__c, SerialNumber, Colour__c, Rough_Dimensions__c, "
     "Distinguishing_Features__c, Asset_Condition__c, Broken_Or_Needs_Replacement__c, "
     "Service_Provider_Or_Supplier__c, Other_Codes_Or_Numbers__c, How_To_Test__c, "
     "How_To_Replace__c, Parts_Needed__c, UK_Estimated_Price__c, Confidence__c. "
-    "If unknown, use an empty string, except Confidence__c which must be a number 0..1."
+    "Always provide a best-guess for every field, even if uncertain. "
+    "Base your assumptions on typical UK standards and suppliers if the photo does not show enough detail. "
+    "Return realistic rough values (e.g., '120mm diameter', '£20-£40', 'Screwdriver needed'). "
+    "Never leave a field blank. Confidence__c must be a number 0..1."
 )
+
 USER_INSTRUCTION = "Extract the fields from this image and return ONLY compact JSON."
 
 # ---------------------------
