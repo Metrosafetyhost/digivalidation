@@ -403,8 +403,14 @@ def build_user_message(question_number, content):
             "In the description you should see each asset type named (e.g. “Mains Cold Water Services (MCWS)”, "
             "“Point of Use (POU-01)”, “Multipoint of Use (MPOU-01)”). In the Asset Forms you should see a matching "
             "asset ID for each (e.g. MCW-01, POU-01, MPOU-01).\n\n"
-            "If every asset mentioned in the description has exactly one corresponding form entry and no extras, "
-            "reply “PASS”. Otherwise list what’s missing or extra."
+            "1) Consider ONLY core plant that should appear in the description: "
+            "MCW/MCWS (incoming mains cold water), CAL-* (calorifiers), COMBI-* (combination boilers). "
+            "TMVs may be mentioned in the description but are NOT a separate Water Asset record.\n"
+            "2) IGNORE the following when deciding PASS/FAIL: SHOWER-*, any pumps (e.g, CALP-*)\n"
+            "3) PASS if every core plant named in the description has a matching Asset ID in the Water Assets forms, "
+            "and there are no EXTRA core-plant Asset IDs that are not named in the description. "
+            "Extras limited to showers/pumps/etc. must NOT cause a fail.\n\n"
+            "Output format: reply with EXACTLY one word: PASS or FAIL. No explanation."
         )
     
     # Q9 prompt -> Inherent doesn;t print as table, so if each one is the same this can be done, however would be slightly inconsistent.
@@ -693,7 +699,12 @@ def process(event, context):
 
             # otherwise, send to Bedrock as before
             ai_reply = send_to_bedrock(prompt)
-            proofing_results[f"Q{q_num}"] = ai_reply or "(empty response)"
+
+            if q_num == 5:
+                m = re.search(r"\b(PASS|FAIL)\b", ai_reply or "", flags=re.IGNORECASE)
+                proofing_results[f"Q{q_num}"] = (m.group(1).upper() if m else "FAIL")
+            else:
+                proofing_results[f"Q{q_num}"] = ai_reply or "(empty response)"
 
         except Exception as ex:
             logger.warning(
