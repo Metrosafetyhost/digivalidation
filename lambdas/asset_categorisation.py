@@ -75,6 +75,46 @@ def presign(key: str, seconds: int = 900) -> str:
         ExpiresIn=seconds,
     )
 
+# EXACT picklist values from Salesforce (API values must match these)
+ASSET_CONDITION_VALUES = [
+    "C1 - Very Good Condition",
+    "C2 - Needs cleaning",
+    "C2 - Minor Defects Only",
+    "C3 - Maintenance required to return to an accepted level of service",
+    "C4 - Requires renewal",
+    "C5 - Asset Unserviceable",
+]
+
+def normalize_asset_condition(text: str) -> str:
+    t = (text or "").strip().lower()
+
+    # C5 — clearly broken/unsafe
+    if any(w in t for w in ["unserviceable", "not working", "doesn't work", "broken", "inoperative", "unsafe", "failed"]):
+        return "C5 - Asset Unserviceable"
+
+    # C4 — needs replacement / end-of-life
+    if any(w in t for w in ["requires renewal", "replace", "replacement", "end of life", "obsolete", "beyond repair", "major defect"]):
+        return "C4 - Requires renewal"
+
+    # C3 — needs maintenance/repair to return to service
+    if any(w in t for w in ["maintenance required", "requires maintenance", "repair", "service", "intermittent fault", "faulty"]):
+        return "C3 - Maintenance required to return to an accepted level of service"
+
+    # C2 (clean) — mainly dirty
+    if any(w in t for w in ["dirty", "dust", "grime", "cleaning", "needs cleaning"]):
+        return "C2 - Needs cleaning"
+
+    # C2 (minor defects) — scuffs/scratches/loose etc.
+    if any(w in t for w in ["minor defect", "minor defects", "scuff", "scratch", "crack", "loose", "wear", "worn", "cosmetic", "slight"]):
+        return "C2 - Minor Defects Only"
+
+    # C1 — good/very good/serviceable
+    if any(w in t for w in ["very good", "excellent", "good", "serviceable", "ok", "works", "working"]):
+        return "C1 - Very Good Condition"
+
+    # Fallback: choose a safe middle ground if the model is vague
+    return "C2 - Minor Defects Only"
+
 def call_openai(image_url: str) -> dict:
     """
     Call an OpenAI vision-capable model with an image URL and parse JSON out.
@@ -101,6 +141,7 @@ def call_openai(image_url: str) -> dict:
 
     try:
         data = json.loads(text)
+        data["Asset_Condition__c"] = normalize_asset_condition(data.get("Asset_Condition__c"))
     except Exception:
         data = {"_raw_response": text}
 
