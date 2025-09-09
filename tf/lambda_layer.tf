@@ -919,3 +919,32 @@ resource "aws_iam_role_policy_attachment" "finalize_attach" {
   role       = local.finalize_exec_role_name
   policy_arn = aws_iam_policy.finalize_policy.arn
 }
+
+
+# Read access to the whole metrosafetyprod bucket for asset_categorisation
+data "aws_iam_policy_document" "lambda_s3_read_metrosafetyprod" {
+  statement {
+    sid     = "AllowListBucket"
+    effect  = "Allow"
+    actions = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::metrosafetyprod"]
+  }
+
+  statement {
+    sid     = "AllowGetObject"
+    effect  = "Allow"
+    actions = ["s3:GetObject"]
+    resources = ["arn:aws:s3:::metrosafetyprod/*"]
+  }
+}
+
+resource "aws_iam_policy" "lambda_s3_read_metrosafetyprod" {
+  name        = "LambdaS3ReadMetroSafetyProd"
+  description = "Allow Lambda to list/get from metrosafetyprod"
+  policy      = data.aws_iam_policy_document.lambda_s3_read_metrosafetyprod.json
+}
+
+resource "aws_iam_role_policy_attachment" "attach_s3_read_metrosafetyprod_to_asset_cat" {
+  role       = data.aws_iam_role.asset_categorisation_role.name
+  policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprod.arn
+}
