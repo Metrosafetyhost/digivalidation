@@ -29,7 +29,7 @@ OPENAI_API_KEY = _load_openai_key()
 SYSTEM_PROMPT = (
     "You are a safety asset classifier for UK sites. "
     "Given a single site asset photo, output ALL of the following fields as compact JSON with EXACT keys: "
-    "Manufacturer__c, What_Is_It__c, SerialNumber, Colour__c, Rough_Dimensions__c, "
+    "Manufacturer_AI__c, What_Is_It__c, SerialNumber, Colour__c, Rough_Dimensions__c, "
     "Distinguishing_Features__c, Asset_Condition__c, Broken_Or_Needs_Replacement__c, "
     "Service_Provider_Or_Supplier__c, Other_Codes_Or_Numbers__c, How_To_Test__c, "
     "How_To_Replace__c, Parts_Needed__c, UK_Estimated_Price__c, Confidence__c. "
@@ -147,7 +147,7 @@ def call_openai(image_url: str) -> dict:
 
     # Ensure all keys present; coerce Confidence__c
     defaults = {
-        "Manufacturer__c": "", "What_Is_It__c": "", "SerialNumber": "", "Colour__c": "",
+        "Manufacturer_AI__c": "", "What_Is_It__c": "", "SerialNumber": "", "Colour__c": "",
         "Rough_Dimensions__c": "", "Distinguishing_Features__c": "", "Asset_Condition__c": "",
         "Broken_Or_Needs_Replacement__c": "", "Service_Provider_Or_Supplier__c": "",
         "Other_Codes_Or_Numbers__c": "", "How_To_Test__c": "", "How_To_Replace__c": "",
@@ -167,7 +167,7 @@ def make_error_result(msg: str) -> dict:
     Produce a result object with all expected fields empty so list alignment is preserved.
     """
     base = {
-        "Manufacturer__c": "", "What_Is_It__c": "", "SerialNumber": "", "Colour__c": "",
+        "Manufacturer_AI__c": "", "What_Is_It__c": "", "SerialNumber": "", "Colour__c": "",
         "Rough_Dimensions__c": "", "Distinguishing_Features__c": "", "Asset_Condition__c": "",
         "Broken_Or_Needs_Replacement__c": "", "Service_Provider_Or_Supplier__c": "",
         "Other_Codes_Or_Numbers__c": "", "How_To_Test__c": "", "How_To_Replace__c": "",
