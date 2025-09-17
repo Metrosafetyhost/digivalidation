@@ -82,6 +82,8 @@ RE_LEVEL = re.compile(r"\b(?:level|lvl|lv)\s*(\d{1,2})\b", re.I)
 RE_FLOOR_NUM = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:floor|flr|fl)\b", re.I)
 RE_MEZZ_NUM = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:mezz|mezzanine)\b", re.I)
 RE_BASEMENT_MEZZ = re.compile(r"\bbasement\s+mezz(?:anine)?\s*(b[1-3])\b", re.I)
+RE_B_MEZZ = re.compile(r"\bb\s*(\d{1,2})\s*mezz(?:anine)?\b", re.I)
+
 
 # to bias toward the "Location:" line
 def nearest_to_location(text, matches):
@@ -104,6 +106,14 @@ def extract_floor(raw: str) -> str | None:
     if m:
         token = f"basement mezzanine {m.group(1).lower()}"
         return CANONICAL_FLOORS.get(token)
+    
+    # 1b) "B5 Mezzanine" => "B5 Mezzanine"
+    m = nearest_to_location(txt, list(RE_B_MEZZ.finditer(txt)))
+    if m:
+        n = int(m.group(1))
+        if 1 <= n <= 50:
+            return f"B{n} Mezzanine"
+
 
     # 2) simple dictionary hits (GF/LG/Mezz/Roof/External)
     for token, canon in CANONICAL_FLOORS.items():
@@ -111,7 +121,9 @@ def extract_floor(raw: str) -> str | None:
             return canon
 
     # 3) basement B# / "Basement #"
-    m = nearest_to_location(txt, list(re.finditer(r"\b(?:basement(?:\s*(\d))?|b\s*(\d))\b", txt, re.I)))
+    m = nearest_to_location(
+        txt,
+        list(re.finditer(r"\b(?:basement(?:\s*(\d))?|b\s*(\d))\b(?!\s*mezz)", txt, re.I)))
     if m:
         g1, g2 = m.group(1), m.group(2)
         if g1 or g2:
