@@ -51,7 +51,7 @@ CANONICAL_FLOORS = {
 
     "grd mezzanine": "Grd Mezzanine",
     "ground mezzanine": "Grd Mezzanine",
-    "Ground floor Mezzanine": "Grd Mezzanine",
+    "ground floor mezzanine": "Grd Mezzanine",
 }
 
 # build basement mappings B1..B5
