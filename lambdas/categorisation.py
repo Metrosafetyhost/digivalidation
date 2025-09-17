@@ -19,7 +19,7 @@ MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 
 # Exact Salesforce picklist (trim to what you actually have)
 CANONICAL_FLOORS_SET = set(
-    ["Ground Floor", "Lower Ground", "Under Ground", "External Wall", "Roof", "Mezzanine", "Grd Mezzanine", "Basement", ] +
+    ["Ground Floor", "Lower Ground", "Under Ground", "External Wall", "Roof", "Grd Mezzanine", "Basement", ] +
     [f"Basement {n}" for n in range(1,6)] +
     [f"{n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} Floor" for n in range(1,51)] +
     [f"{n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} Mezzanine" for n in range(1,51)] +
@@ -43,7 +43,6 @@ CANONICAL_FLOORS = {
     "l.g.": "Lower Ground",
     "lgf": "Lower Ground",
 
-    "mezzanine": "1st Mezzanine",
     "mezzanine floor": "1st Mezzanine",
     "roof": "Roof",
     "external wall": "External Wall",
