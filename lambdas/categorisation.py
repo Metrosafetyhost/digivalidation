@@ -17,81 +17,122 @@ s3      = boto3.client(
 )
 MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 
-def _ordinal(n: int) -> str:
-    if 10 <= n % 100 <= 20:
-        suf = "th"
-    else:
-        suf = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
-    return f"{n}{suf}"
+# Exact Salesforce picklist (trim to what you actually have)
+CANONICAL_FLOORS_SET = set(
+    ["Ground Floor", "Lower Ground", "Under Ground", "External Wall", "Roof", "Mezzanine", "Grd Mezzanine"] +
+    [f"Basement {n}" for n in range(1,6)] +
+    [f"{n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} Floor" for n in range(1,51)] +
+    [f"{n}{'st' if n==1 else 'nd' if n==2 else 'rd' if n==3 else 'th'} Mezzanine" for n in range(1,51)] +
+    [f"Basement Mezzanine B{n}" for n in (1,2,3)]
+)
 
-def detect_floor(text: str) -> str | None:
-    """
-    Parse a free-text location description and return a canonical Floor__c label.
-    Examples returned: 'Ground Floor', 'Grd Mezzanine', 'Basement 2', 'B3 Mezzanine',
-                       '9th Floor', '15th Mezzanine', 'Lower Ground', 'Under Ground',
-                       'External Wall', 'Roof'.
-    """
-    if not text:
-        return None
-    s = text.lower()
+def to_picklist_or_none(v: str | None) -> str | None:
+    v = (v or "").strip()
+    return v if v in CANONICAL_FLOORS_SET else None
 
-    # Fixed phrases first (they should win over anything else)
-    if re.search(r'\broof\b', s):
-        return "Roof"
-    if re.search(r'\bexternal\s+wall\b', s):
-        return "External Wall"
-    if re.search(r'\blower\s+ground\b|\blg\b(?![a-z])', s):
-        return "Lower Ground"
-    if re.search(r'\bunder\s*ground\b', s):
-        return "Under Ground"
 
-    # Basement mezzanine:  "Basement Mezzanine B1|B2|..."
-    m = re.search(r'\bb(?:asement)?\s*mezzanine\s*b?(\d+)\b', s)
+CANONICAL_FLOORS = {
+    # exact tokens -> canonical picklist value
+    "ground floor": "Ground Floor",
+    "gf": "Ground Floor",
+    "grd": "Ground Floor",
+    "g/f": "Ground Floor",
+
+    "lower ground": "Lower Ground",
+    "lg": "Lower Ground",
+    "l.g.": "Lower Ground",
+    "lgf": "Lower Ground",
+
+    "mezzanine": "Mezzanine",
+    "roof": "Roof",
+    "external wall": "External Wall",
+    "underground": "Under Ground",
+    "under ground": "Under Ground",
+
+    "grd mezzanine": "Grd Mezzanine",
+    "ground mezzanine": "Grd Mezzanine",
+    "Ground floor Mezzanine": "Grd Mezzanine",
+}
+
+# build basement mappings B1..B5
+for n in range(1, 6):
+    CANONICAL_FLOORS[f"basement {n}"] = f"Basement {n}"
+    CANONICAL_FLOORS[f"b{n}"] = f"Basement {n}"
+
+# basement mezzanine variants
+CANONICAL_FLOORS["basement mezzanine b1"] = "Basement Mezzanine B1"
+CANONICAL_FLOORS["basement mezzanine b2"] = "Basement Mezzanine B2"
+CANONICAL_FLOORS["basement mezzanine b3"] = "Basement Mezzanine B3"
+
+ORDINALS = {  # for 1..50
+    1: "1st Floor", 2: "2nd Floor", 3: "3rd Floor",
+    **{n: f"{n}th Floor" for n in range(4, 51)}
+}
+MEZZ_ORDINALS = {
+    1: "1st Mezzanine", 2: "2nd Mezzanine", 3: "3rd Mezzanine",
+    **{n: f"{n}th Mezzanine" for n in range(4, 51)}
+}
+
+# compile regexes once
+RE_LEVEL = re.compile(r"\b(?:level|lvl|lv)\s*(\d{1,2})\b", re.I)
+RE_FLOOR_NUM = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:floor|flr|fl)\b", re.I)
+RE_MEZZ_NUM = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:mezz|mezzanine)\b", re.I)
+RE_BASEMENT_MEZZ = re.compile(r"\bbasement\s+mezz(?:anine)?\s*(b[1-3])\b", re.I)
+
+# to bias toward the "Location:" line
+def nearest_to_location(text, matches):
+    if not matches: return None
+    loc_idx = text.lower().find("location")
+    if loc_idx == -1:
+        return sorted(matches, key=lambda m: m.start())[0]
+    return min(matches, key=lambda m: abs(m.start() - loc_idx))
+
+def normalise(s):
+    return re.sub(r"\s+", " ", s.lower()).strip()
+
+def extract_floor(raw: str) -> str | None:
+    if not raw: return None
+    txt = " ".join(raw.split())  # collapse whitespace
+    low = txt.lower()
+
+    # 1) explicit basement mezz: "Basement Mezzanine B2"
+    m = nearest_to_location(txt, list(RE_BASEMENT_MEZZ.finditer(txt)))
     if m:
-        return f"Basement Mezzanine B{int(m.group(1))}"
+        token = f"basement mezzanine {m.group(1).lower()}"
+        return CANONICAL_FLOORS.get(token)
 
-    # "B2 Mezzanine", "B5 Mezzanine"
-    m = re.search(r'\bb(\d{1,2})\s*mezz(?:anine)?\b', s)
+    # 2) simple dictionary hits (GF/LG/Mezz/Roof/External)
+    for token, canon in CANONICAL_FLOORS.items():
+        if re.search(rf"\b{re.escape(token)}\b", low):
+            return canon
+
+    # 3) basement B# / "Basement #"
+    m = nearest_to_location(txt, list(re.finditer(r"\b(?:basement\s*(\d)|b\s*(\d))\b", txt, re.I)))
     if m:
-        return f"B{int(m.group(1))} Mezzanine"
+        n = int(m.group(1) or m.group(2))
+        if 1 <= n <= 5:
+            return f"Basement {n}"
 
-    # "Basement 5", "Basement 2"
-    m = re.search(r'\b(?:basement|b)\s*([1-9]\d?)\b', s)
-    if m:
-        return f"Basement {int(m.group(1))}"
-
-    # Bare "B5" => treat as "Basement 5"
-    m = re.search(r'\bb(\d{1,2})\b', s)
-    if m:
-        return f"Basement {int(m.group(1))}"
-
-    # Generic "Basement" with no number => choose Basement 1
-    if re.search(r'\bbasement\b', s):
-        return "Basement 1"
-
-    # Ground Floor / Ground Mezzanine
-    if re.search(r'\bgr(?:ou)?nd\s+floor\b|\bgf\b(?![a-z])', s):
-        return "Ground Floor"
-    if re.search(r'\bgrd\s*mezz(?:anine)?\b|\bground\s*mezz(?:anine)?\b', s):
-        return "Grd Mezzanine"
-
-    # "5th Mezzanine" / "12 Mezzanine"
-    m = re.search(r'\b(\d{1,2})(?:st|nd|rd|th)?\s*mezz(?:anine)?\b', s)
+    # 4) "Level 7" => "7th Floor"
+    m = nearest_to_location(txt, list(RE_LEVEL.finditer(txt)))
     if m:
         n = int(m.group(1))
-        return f"{_ordinal(n)} Mezzanine"
+        if 1 <= n <= 50:
+            return ORDINALS[n]
 
-    # "9th Floor" / "9 Floor" / "9th" (when clearly in floor context)
-    m = re.search(r'\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:floor|flr)\b', s)
+    # 5) "3rd floor", "4 fl", "2 flr"
+    m = nearest_to_location(txt, list(RE_FLOOR_NUM.finditer(txt)))
     if m:
         n = int(m.group(1))
-        return f"{_ordinal(n)} Floor"
+        if 1 <= n <= 50:
+            return ORDINALS[n]
 
-    # Sometimes it’s written as the ordinal without the word “floor”, but nearby context implies it.
-    m = re.search(r'\b(\d{1,2})(st|nd|rd|th)\b', s)
-    if m and "floor" in s:
+    # 6) "2nd mezz", "1 mezzanine"
+    m = nearest_to_location(txt, list(RE_MEZZ_NUM.finditer(txt)))
+    if m:
         n = int(m.group(1))
-        return f"{_ordinal(n)} Floor"
+        if 1 <= n <= 50:
+            return MEZZ_ORDINALS[n]
 
     return None
 
@@ -103,8 +144,6 @@ def classify_asset_text(text):
         "• Object_Category__c: the text after 'Type:'\n"
         "• Asset_Instructions__c: the text after 'Test:'\n"
         "• Label__c: the reference code in Asset_Instructions__c (e.g. 'FF1')\n"
-        "• Floor__c: Look at the text right after the word 'Location:'. If the first phrase after 'Location:' mentions a floor (e.g., “Basement 2”, “Ground Floor”, “3rd Floor”, “15th Mezzanine”, “Roof”, “External Wall”). "
-        " return its canonical name exactly as it appears up until the first comma. Capitalise the first letter of each word. If no floor is mentioned, return null"
         "• Name: combine:\n"
         "    1) the Location text (after 'Location:' up to the full stop),\n"
         "    2) the object identifier (uppercase acronym of Object_Type__c, e.g. 'Emergency Light' → 'EML') Note this always has to be three letters (if o words, first two letters of first word, and first letter of Second. If three words, first letter of each word),\n"
@@ -117,7 +156,6 @@ def classify_asset_text(text):
         '  "Object_Category__c": "…",\n'
         '  "Asset_Instructions__c": "…",\n'
         '  "Label__c": "…",\n'
-        '  "Floor__c": "…"\n' 
         '  "Name": "…"\n' 
         "}\n\n"
     )
@@ -179,6 +217,14 @@ def process(event, context):
     for txt in samples:
         try:
             out = classify_asset_text(txt)
+            # Deterministic first
+            floor = extract_floor(txt)
+            floor = to_picklist_or_none(floor)
+
+            logger.info("Floor extracted: %s | from text: %s", floor, txt[:200])
+
+            # Ensure we only return a valid picklist value (or null)
+            out["Floor__c"] = floor  # None -> JSON null; Apex will set blank
             results.append(out)   # unchanged contract
         except Exception as ex:
             logger.warning("process: classification error for input '%s': %s", txt, ex, exc_info=True)
