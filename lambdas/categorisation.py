@@ -43,7 +43,7 @@ CANONICAL_FLOORS = {
     "l.g.": "Lower Ground",
     "lgf": "Lower Ground",
 
-    "mezzanine": "Mezzanine",
+    "mezzanine": "1st Mezzanine",
     "mezzanine floor": "1st Mezzanine",
     "roof": "Roof",
     "external wall": "External Wall",
