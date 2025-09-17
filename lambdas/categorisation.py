@@ -140,7 +140,7 @@ def classify_asset_text(text):
 
     prompt = (
         "Please categorise the following asset description into these Salesforce fields:\n"
-        "• Object_Type__c: everything up to the first ' - Location', if nothing, return nothing\n"
+        "• Object_Type__c: everything up to the first ' - Location', if nothing, return null\n"
         "• Object_Category__c: the text after 'Type:'\n"
         "• Asset_Instructions__c: the text after 'Test:'\n"
         "• Label__c: the reference code in Asset_Instructions__c (e.g. 'FF1')'\n"
