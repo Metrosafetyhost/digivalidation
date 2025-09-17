@@ -117,9 +117,9 @@ def extract_floor(raw: str) -> str | None:
 
 
     # 2) simple dictionary hits (GF/LG/Mezz/Roof/External)
-    for token, canon in CANONICAL_FLOORS.items():
+    for token in sorted(CANONICAL_FLOORS.keys(), key=len, reverse=True):
         if re.search(rf"\b{re.escape(token)}\b", low):
-            return canon
+            return CANONICAL_FLOORS[token]
 
     # 3) basement B# / "Basement #"
     m = nearest_to_location(
