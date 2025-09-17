@@ -140,10 +140,10 @@ def classify_asset_text(text):
 
     prompt = (
         "Please categorise the following asset description into these Salesforce fields:\n"
-        "• Object_Type__c: everything up to the first ' - Location'\n"
+        "• Object_Type__c: everything up to the first ' - Location', if nothing, return nothing\n"
         "• Object_Category__c: the text after 'Type:'\n"
         "• Asset_Instructions__c: the text after 'Test:'\n"
-        "• Label__c: the reference code in Asset_Instructions__c (e.g. 'FF1'), if none, after 'Label:'\n"
+        "• Label__c: the reference code in Asset_Instructions__c (e.g. 'FF1')'\n"
         "• Name: combine:\n"
         "    1) the Location text (after 'Location:' up to the full stop),\n"
         "    2) the object identifier (uppercase acronym of Object_Type__c, e.g. 'Emergency Light' → 'EML') Note this always has to be three letters (if o words, first two letters of first word, and first letter of Second. If three words, first letter of each word),\n"
