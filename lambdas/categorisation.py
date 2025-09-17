@@ -44,6 +44,7 @@ CANONICAL_FLOORS = {
     "lgf": "Lower Ground",
 
     "mezzanine": "Mezzanine",
+    "mezzanine floor": "1st Mezzanine",
     "roof": "Roof",
     "external wall": "External Wall",
     "underground": "Under Ground",
@@ -52,7 +53,6 @@ CANONICAL_FLOORS = {
     "grd mezzanine": "Grd Mezzanine",
     "ground mezzanine": "Grd Mezzanine",
     "ground floor mezzanine": "Grd Mezzanine",
-    "mezzanine floor": "1st Mezzanine",
 }
 
 # build basement mappings B1..B5
