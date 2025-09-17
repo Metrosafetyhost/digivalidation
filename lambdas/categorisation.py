@@ -131,9 +131,9 @@ def extract_floor(raw: str) -> str | None:
             n = int(g1 or g2)
             if 1 <= n <= 5:
                 return f"Basement {n}"
-    else:
-        # just the word "Basement"
-        return "Basement 1"
+        else:
+            # just the word "Basement"
+            return "Basement 1"
 
     # 4) "Level 7" => "7th Floor"
     m = nearest_to_location(txt, list(RE_LEVEL.finditer(txt)))
