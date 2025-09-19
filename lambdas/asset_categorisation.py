@@ -33,7 +33,7 @@ SYSTEM_PROMPT = (
     "Distinguishing_Features__c, Asset_Condition__c, Broken_Or_Needs_Replacement__c, "
     "Service_Provider_Or_Supplier__c, Other_Codes_Or_Numbers__c, How_To_Test__c, "
     "How_To_Replace__c, Parts_Needed__c, UK_Estimated_Price__c, Confidence__c. "
-    "Always provide a best-guess for every field, even if uncertain. "
+    "Always provide a best-guess for every field, even if uncertain. If there is none however, respond with N/A"
     "Base your assumptions on typical UK standards and suppliers if the photo does not show enough detail. "
     "Return realistic rough values (e.g., '120mm diameter', '£20-£40', 'Screwdriver needed'). "
     "Never leave a field blank. Confidence__c must be a number 0..1."
