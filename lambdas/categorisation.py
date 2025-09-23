@@ -184,7 +184,7 @@ def classify_asset_text(text):
     2) OBJECT CATEGORY (Object_Category__c)
     - If structured, take the text after "Type:".
     - Otherwise infer from shape/technology words:
-        LED, Square, Dial Meter, Round, Button, Key, Flick Fuse, beacon, twin.
+        LED, Square, Dial Meter, Round, Button, Key, Flick Fuse, Beacon.
     - Normalize to Title Case, e.g., "LED Square", "Bulkhead Twinspot".
     - If none found, return null.
 
