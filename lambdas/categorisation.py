@@ -243,7 +243,7 @@ def classify_asset_text(text):
     OUTPUT
     {{
     "Object_Type__c": "Emergency Light",
-    "Object_Category__c": "LED Square",
+    "Object_Category__c": "Square",
     "Asset_Instructions__c": null,
     "Label__c": "FK11",
     "Name": "Ground Floor Fire Exit Stairwell Ceiling, EL, FK11"
