@@ -32,7 +32,10 @@ SYSTEM_PROMPT = (
     "Manufacturer_AI__c, What_Is_It__c, SerialNumber, Colour__c, Rough_Dimensions__c, "
     "Distinguishing_Features__c, Asset_Condition__c, Broken_Or_Needs_Replacement__c, "
     "Service_Provider_Or_Supplier__c, Other_Codes_Or_Numbers__c, How_To_Test__c, "
-    "How_To_Replace__c, Parts_Needed__c, UK_Estimated_Price__c, Confidence__c. "
+    "How_To_Replace__c, Parts_Needed__c, UK_Estimated_Price__c, Estimated_Unit_Replacement_Cost__c, Estimated_Replacement_Parts_Price__c,"
+    "Estimated_Labour_Cost_To_Repair__c, Estimated_Labour_Cost_To_Replace__c, "
+    "Estimated_Labour_Cost_To_Repair_On_Site__c, Estimated_Time_To_Replace_On_Site__c, "
+    "Object_Type_AI__c, Object_Category_AI__c,Confidence__c. "
     "Always provide a best-guess for every field, even if uncertain. If there is none however, respond with N/A"
     "For Colour__c, return only a SINGLE most dominant or most likely colour (not multiple). "
     "Base your assumptions on typical UK standards and suppliers if the photo does not show enough detail. "
@@ -152,7 +155,14 @@ def call_openai(image_url: str) -> dict:
         "Rough_Dimensions__c": "", "Distinguishing_Features__c": "", "Asset_Condition__c": "",
         "Broken_Or_Needs_Replacement__c": "", "Service_Provider_Or_Supplier__c": "",
         "Other_Codes_Or_Numbers__c": "", "How_To_Test__c": "", "How_To_Replace__c": "",
-        "Parts_Needed__c": "", "UK_Estimated_Price__c": "", "Confidence__c": 0.0
+        "Parts_Needed__c": "", "UK_Estimated_Price__c": "", "Estimated_Unit_Replacement_Cost__c": "",
+        "Estimated_Replacement_Parts_Price__c": "",
+        "Estimated_Labour_Cost_To_Repair__c": "",
+        "Estimated_Labour_Cost_To_Replace__c": "",
+        "Estimated_Labour_Cost_To_Repair_On_Site__c": "",
+        "Estimated_Time_To_Replace_On_Site__c": "",
+        "Object_Type_AI__c": "",
+        "Object_Category_AI__c": "","Confidence__c": 0.0
     }
     for k, v in defaults.items():
         data.setdefault(k, v)
@@ -172,7 +182,14 @@ def make_error_result(msg: str) -> dict:
         "Rough_Dimensions__c": "", "Distinguishing_Features__c": "", "Asset_Condition__c": "",
         "Broken_Or_Needs_Replacement__c": "", "Service_Provider_Or_Supplier__c": "",
         "Other_Codes_Or_Numbers__c": "", "How_To_Test__c": "", "How_To_Replace__c": "",
-        "Parts_Needed__c": "", "UK_Estimated_Price__c": "", "Confidence__c": 0.0,
+        "Parts_Needed__c": "", "UK_Estimated_Price__c": "", "Estimated_Unit_Replacement_Cost__c": "",
+        "Estimated_Replacement_Parts_Price__c": "",
+        "Estimated_Labour_Cost_To_Repair__c": "",
+        "Estimated_Labour_Cost_To_Replace__c": "",
+        "Estimated_Labour_Cost_To_Repair_On_Site__c": "",
+        "Estimated_Time_To_Replace_On_Site__c": "",
+        "Object_Type_AI__c": "",
+        "Object_Category_AI__c": "","Confidence__c": 0.0,
         "_error": msg
     }
     return base
