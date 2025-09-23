@@ -160,30 +160,102 @@ def extract_floor(raw: str) -> str | None:
 
 def classify_asset_text(text):
 
-    prompt = (
-        "Please categorise the following asset description into these Salesforce fields:\n"
-        "• Object_Type__c: everything up to the first ' - Location', if nothing, return null\n"
-        "• Object_Category__c: the text after 'Type:'\n"
-        "• Asset_Instructions__c: the text after 'Test:'\n"
-        "• Label__c: the reference code in Asset_Instructions__c (e.g. 'FF1')'\n"
-        "• Name: combine:\n"
-        "    1) the Location text (after 'Location:' up to the full stop),\n"
-        "    2) the object identifier (uppercase acronym of Object_Type__c, e.g. 'Emergency Light' → 'EML') Note this always has to be three letters (if o words, first two letters of first word, and first letter of Second. If three words, first letter of each word),\n"
-        "    3) the Label__c\n"
-        "  separated by commas.\n\n"
-        f"Input: {text}\n\n"
-        "Output as a single JSON object, using these exact keys:\n"
-        "{\n"
-        '  "Object_Type__c": "…",\n'
-        '  "Object_Category__c": "…",\n'
-        '  "Asset_Instructions__c": "…",\n'
-        '  "Label__c": "…",\n'
-        '  "Name": "…"\n' 
-        "}\n\n"
-    )
+    prompt = f"""
+    You are classifying facility safety assets for Metro Safety. The input may be well structured
+    (e.g., "Emergency Light - Location: 7th Floor ... Type: ... Test: ...") OR free text with no labels.
+    Your job is to extract or sensibly infer the following Salesforce fields and output ONLY a single JSON object.
+
+    Return EXACTLY these keys:
+    - "Object_Type__c"
+    - "Object_Category__c"
+    - "Asset_Instructions__c"
+    - "Label__c"
+    - "Name"
+
+    ## How to interpret inputs
+
+    1) OBJECT TYPE (Object_Type__c)
+    - If structured, it's the text before " - Location".
+    - If unstructured, infer from keywords/synonyms:
+        emergency light|em light|EL|exit sign|fire extinguisher|FE|call point|MCP|manual call point|
+        smoke detector|heat detector|sounder|beacon|sprinkler|riser|hose reel|fire door|alarm panel. etc
+    - Use the clean, human-readable form, e.g., "Emergency Light", "Manual Call Point", "Fire Extinguisher".
+
+    2) OBJECT CATEGORY (Object_Category__c)
+    - If structured, take the text after "Type:".
+    - Otherwise infer from shape/technology words:
+        LED, Square, Dial Meter, Round, Button, Key, Flick Fuse, beacon, twin.
+    - Normalize to Title Case, e.g., "LED Square", "Bulkhead Twinspot".
+    - If none found, return null.
+
+    3) ASSET INSTRUCTIONS (Asset_Instructions__c)
+    - If structured, take the text after "Test:".
+    - Otherwise, capture any instruction-like phrase with verbs such as: test, activate, isolate, reset, silence.
+    - If nothing meaningful, return null.
+
+    4) LABEL (Label__c)
+    - Prefer a short code present anywhere in the text, typically one of:
+        - FF\\d+, FK\\d+, EL\\d+, EM\\d+, CP\\d+, MCP\\d+, SD\\d+, HD\\d+, SB\\d+, R\\d+
+        - Or more general pattern: [A-Z]{{1,3}}\\d{{1,3}}
+    - Return as UPPERCASE (e.g., "FF1", "FK11"). If not found, return null.
+
+    5) NAME (Name)
+    - Build as: "<Location Guess>, <Object Type Acronym>, <Label>"
+    - Location Guess:
+        * If "Location:" is present, use the text after it up to the next period/full-stop if present;
+            else up to the end of the location phrase.
+        * Otherwise, infer a concise location phrase from the text (e.g., "Ground Floor Fire Exit Stairwell").
+        * Normalize floors: "GF"/"ground"/"g" -> "Ground Floor"; "7th" -> "7th Floor"; "B1" -> "Basement 1"; etc.
+    - Object Type Acronym:
+        * 1 word -> first 2 letters (e.g., "Emergency" -> "EM")
+        * 2 words -> first letter of each (e.g., "Emergency Light" -> "EL")
+        * 3+ words -> first letter of each (e.g., "Manual Call Point" -> "MCP")
+    - Label:
+        * Use Label__c if present else omit that trailing part.
+    - Examples:
+        * Location="7th Floor, Kitchen Store Cupboard", Object_Type="Emergency Light", Label="FF1"
+            -> "7th Floor, Kitchen Store Cupboard, EL, FF1"
+        * If Label is null, end without it: "Ground Floor Stairwell, EL"
+
+    IMPORTANT RULES
+    - Be helpful but conservative: infer when strong cues exist; otherwise return null.
+    - Use Title Case for Object_Category__c; keep Object_Type__c in normal case (e.g., "Emergency Light").
+    - Uppercase Label__c.
+    - Output must be STRICT JSON with ONLY the 5 fields, no extra text.
+
+    ## Examples
+
+    INPUT (structured)
+    Emergency Light - Location: 7th Floor, Crawford and Co office space kitchen store cupboard. Type: LED Square. Test: Activate FF1
+
+    OUTPUT
+    {{
+    "Object_Type__c": "Emergency Light",
+    "Object_Category__c": "LED Square",
+    "Asset_Instructions__c": "Activate FF1",
+    "Label__c": "FF1",
+    "Name": "7th Floor, Crawford and Co office space kitchen store cupboard, EL, FF1"
+    }}
+
+    INPUT (unstructured)
+    Ground floor fire exit stairwell ceiling emergency light square FK11
+
+    OUTPUT
+    {{
+    "Object_Type__c": "Emergency Light",
+    "Object_Category__c": "LED Square",
+    "Asset_Instructions__c": null,
+    "Label__c": "FK11",
+    "Name": "Ground Floor Fire Exit Stairwell Ceiling, EL, FK11"
+    }}
+
+    Now classify this input:
+
+    {text}
+    """
     payload = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens":        1000,
+        "max_tokens":        2000,
         "temperature":       0.0,
         "messages": [
             { "role": "user", "content": prompt }
