@@ -1,3 +1,18 @@
+# ONLY llama-parse + pillow + small runtime deps
+pip3 install --no-deps --target layer/python \
+  llama-parse==0.5.11 \
+  pillow==10.4.0
+
+pip3 install --target layer/python \
+  "pydantic>=2,<3" \
+  typing_extensions \
+  "httpx<0.28" \
+  httpcore \
+  anyio \
+  sniffio \
+  certifi \
+  idna \
+  h11
 version = 1
 revision = 1
 requires-python = ">=3.13"

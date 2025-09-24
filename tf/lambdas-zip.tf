@@ -72,6 +72,7 @@ module "lambdas_zip" {
       handler     = "process"
       timeout     = 120
       memory_size = 1024
+      runtime     = "python3.12" 
       arch        = "x86_64"
       lambda_environment = {
         # Secrets Manager *dynamic reference* to the JSON key
