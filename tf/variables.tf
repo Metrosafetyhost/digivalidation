@@ -82,10 +82,3 @@ variable "llama_enabled_lambdas" {
   default     = ["llamaparse"] # add more if needed
 }
 
-# The secret value you'll pass at apply-time (never commit this)
-variable "llama_cloud_api_key" {
-  type        = string
-  description = "LlamaParse API key (LLAMA_CLOUD_API_KEY)"
-  sensitive   = true
-}
-
