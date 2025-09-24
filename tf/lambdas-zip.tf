@@ -1,9 +1,8 @@
 module "lambdas_zip" {
-  source = "./modules/lambdas-zip"
-
-  namespace  = var.namespace
-  repo_name  = var.repo_name
-  env        = var.env
+  source    = "./modules/lambdas-zip"
+  namespace = var.namespace
+  repo_name = var.repo_name
+  env       = var.env
 
   lambda_names = [
     "asset_categorisation",
@@ -19,9 +18,10 @@ module "lambdas_zip" {
     "hsa_checklist_proofing",
     "salesforce_input",
     "emails",
+    "llamaparse",
   ]
 
-  # IMPORTANT: these must be the zip *file names* that exist in your build dir
+  # these are the Python files that get zipped
   lambda_file_names = [
     "asset_categorisation.py",
     "checklist.py",
@@ -36,6 +36,7 @@ module "lambdas_zip" {
     "hsa_checklist_proofing.py",
     "salesforce_input.py",
     "emails.py",
+    "llamaparse.py",
   ]
 
   runtime       = "python3.13"
@@ -43,24 +44,22 @@ module "lambdas_zip" {
   s3_zip_bucket = module.lambda_zips_bucket.this_s3_bucket_id
   build_dir     = var.build_dir
 
-  # Model name is harmless on non-AI lambdas
   default_environment = {
     OPENAI_MODEL = "gpt-4o-mini"
   }
 
-  # NEW: give EVERY lambda the two layers (your deps + OpenAI)
+  # Layers
   lambda_layer_arns = [
-    module.lambda_layer.lambda_layer_arn,  # your existing deps layer (bs4, requests, etc.)
-    var.openai_layer_arn                   # OpenAI Python layer
+    module.lambda_layer.lambda_layer_arn,     # your shared deps
+    var.openai_layer_arn,                     # OpenAI layer (keep if others use it)
+    aws_lambda_layer_version.llamaindex.arn   #LlamaIndex/LlamaParse deps
   ]
 
   force_lambda_code_deploy = true
 
-  # Handlers (+ any per-lambda env). Use the real entrypoints your files expose.
   lambda_config = {
-    # Only this one actually needs the OpenAI secret
     asset_categorisation = {
-      handler            = "process"    # matches asset_categorisation.py
+      handler            = "process"
       memory_size        = 512
       timeout            = 240
       lambda_environment = {
@@ -68,7 +67,18 @@ module "lambdas_zip" {
       }
     }
 
-    # All the others keep their current handler names (you said they use "process")
+    # LlamaParse lambda
+    llamaparse = {
+      handler            = "process"
+      timeout            = 120
+      memory_size        = 1024
+      lambda_environment = {
+        # Secrets Manager *dynamic reference* to the JSON key
+        LLAMA_CLOUD_API_KEY = "{{resolve:secretsmanager:${aws_secretsmanager_secret.llama.arn}:SecretString:LLAMA_CLOUD_API_KEY}}"
+      }
+    }
+
+    # All other lambdas 
     basic_event            = { handler = "process", timeout = 240, memory_size = 512 }
     bedrock                = { handler = "process", timeout = 240, memory_size = 512 }
     categorisation         = { handler = "process", timeout = 240, memory_size = 512 }
@@ -81,6 +91,5 @@ module "lambdas_zip" {
     hsa_checklist_proofing = { handler = "process", timeout = 240, memory_size = 512 }
     salesforce_input       = { handler = "process", timeout = 240, memory_size = 512 }
     emails                 = { handler = "process", timeout = 240, memory_size = 512 }
-
   }
 }

@@ -75,3 +75,17 @@ variable "openai_layer_arn" {
   default = "arn:aws:lambda:eu-west-2:837329614132:layer:openai-py-313-arm64:1"
 }
 
+# Which lambdas are allowed to read the Llama secret
+variable "llama_enabled_lambdas" {
+  type        = list(string)
+  description = "Lambda names that can read the Llama (LlamaParse) secret"
+  default     = ["llamaparse"]  # add more if needed
+}
+
+# The secret value you'll pass at apply-time (never commit this)
+variable "llama_cloud_api_key" {
+  type        = string
+  description = "LlamaParse API key (LLAMA_CLOUD_API_KEY)"
+  sensitive   = true
+}
+
