@@ -71,7 +71,7 @@ resource "aws_lambda_function" "lambda" {
   role          = local.effective_lambda_roles[each.key]
   s3_bucket     = var.s3_zip_bucket
   s3_key        = aws_s3_object.lambda_zip[each.key].key
-  layers = length(var.lambda_layer_arns) > 0 ? var.lambda_layer_arns : (var.lambda_layer_arn != "" ? [var.lambda_layer_arn] : [])
+  layers        = length(var.lambda_layer_arns) > 0 ? var.lambda_layer_arns : (var.lambda_layer_arn != "" ? [var.lambda_layer_arn] : [])
 
   memory_size = lookup(var.lambda_config, each.key, {
     handler            = "process"

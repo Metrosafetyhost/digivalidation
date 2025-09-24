@@ -6,7 +6,7 @@ resource "aws_secretsmanager_secret" "llama" {
 
 # Current secret value (as JSON so we can use dynamic reference by key)
 resource "aws_secretsmanager_secret_version" "llama_current" {
-  secret_id     = aws_secretsmanager_secret.llama.id
+  secret_id = aws_secretsmanager_secret.llama.id
   secret_string = jsonencode({
     LLAMA_CLOUD_API_KEY = var.llama_cloud_api_key
   })

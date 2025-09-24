@@ -50,18 +50,18 @@ module "lambdas_zip" {
 
   # Layers
   lambda_layer_arns = [
-    module.lambda_layer.lambda_layer_arn,     # your shared deps
-    var.openai_layer_arn,                     # OpenAI layer (keep if others use it)
-    aws_lambda_layer_version.llamaindex.arn   #LlamaIndex/LlamaParse deps
+    module.lambda_layer.lambda_layer_arn,   # your shared deps
+    var.openai_layer_arn,                   # OpenAI layer (keep if others use it)
+    aws_lambda_layer_version.llamaindex.arn #LlamaIndex/LlamaParse deps
   ]
 
   force_lambda_code_deploy = true
 
   lambda_config = {
     asset_categorisation = {
-      handler            = "process"
-      memory_size        = 512
-      timeout            = 240
+      handler     = "process"
+      memory_size = 512
+      timeout     = 240
       lambda_environment = {
         OPENAI_SECRET_ARN = aws_secretsmanager_secret.openai.arn
       }
@@ -69,9 +69,9 @@ module "lambdas_zip" {
 
     # LlamaParse lambda
     llamaparse = {
-      handler            = "process"
-      timeout            = 120
-      memory_size        = 1024
+      handler     = "process"
+      timeout     = 120
+      memory_size = 1024
       lambda_environment = {
         # Secrets Manager *dynamic reference* to the JSON key
         LLAMA_CLOUD_API_KEY = "{{resolve:secretsmanager:${aws_secretsmanager_secret.llama.arn}:SecretString:LLAMA_CLOUD_API_KEY}}"

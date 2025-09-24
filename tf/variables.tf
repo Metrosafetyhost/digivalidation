@@ -79,7 +79,7 @@ variable "openai_layer_arn" {
 variable "llama_enabled_lambdas" {
   type        = list(string)
   description = "Lambda names that can read the Llama (LlamaParse) secret"
-  default     = ["llamaparse"]  # add more if needed
+  default     = ["llamaparse"] # add more if needed
 }
 
 # The secret value you'll pass at apply-time (never commit this)

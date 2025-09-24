@@ -215,14 +215,14 @@ resource "aws_s3_object" "create_folders" {
   for_each = toset(var.s3_folder_structure)
 
   bucket = aws_s3_bucket.this.id
-  key    = "${each.value}/"  # creats empty folders
+  key    = "${each.value}/" # creats empty folders
 }
 
 resource "aws_s3_bucket" "textract_output" {
   bucket = "textract-output-digival"
 
   tags = merge(var.common_tags, {
-    Name    = "Textract Output Bucket",
+    Name     = "Textract Output Bucket",
     git_file = "s3/main.tf"
   })
 }

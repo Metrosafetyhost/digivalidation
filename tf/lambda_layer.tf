@@ -1,5 +1,5 @@
 resource "aws_iam_role" "lambda_role" {
-  name               = "bedrock_lambda_execution_role"
+  name = "bedrock_lambda_execution_role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -134,13 +134,13 @@ EOF
 #############################
 
 resource "aws_iam_policy" "lambda_textract_policy" {
-  name   = "LambdaTextractPolicy"
+  name = "LambdaTextractPolicy"
   policy = jsonencode({
-    Version   = "2012-10-17",
+    Version = "2012-10-17",
     Statement = [
       {
-        Effect   = "Allow",
-        Action   = [
+        Effect = "Allow",
+        Action = [
           "textract:AnalyzeDocument",
           "textract:StartDocumentAnalysis",
           "textract:GetDocumentAnalysis"
@@ -206,7 +206,7 @@ resource "aws_iam_role" "textract_service_role" {
 }
 
 resource "aws_iam_policy" "textract_sns_policy" {
-  name   = "TextractSNSPublishPolicy"
+  name = "TextractSNSPublishPolicy"
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
@@ -228,13 +228,13 @@ resource "aws_iam_policy" "bedrock_lambda_s3_policy" {
   name        = "bedrock-lambda-s3-policy"
   description = "Allows Lambda to put objects in the textract-output-digival bucket under the processed/ prefix."
   policy = jsonencode({
-    "Version": "2012-10-17",
-    "Statement": [
+    "Version" : "2012-10-17",
+    "Statement" : [
       {
-        "Sid": "AllowLambdaPutObject",
-        "Effect": "Allow",
-        "Action": "s3:PutObject",
-        "Resource": "arn:aws:s3:::textract-output-digival/processed/*"
+        "Sid" : "AllowLambdaPutObject",
+        "Effect" : "Allow",
+        "Action" : "s3:PutObject",
+        "Resource" : "arn:aws:s3:::textract-output-digival/processed/*"
       }
     ]
   })
@@ -243,7 +243,7 @@ resource "aws_iam_policy" "bedrock_lambda_s3_policy" {
 resource "aws_iam_policy_attachment" "bedrock_lambda_s3_policy_attachment" {
   name       = "bedrock-lambda-s3-policy-attachment"
   policy_arn = aws_iam_policy.bedrock_lambda_s3_policy.arn
-  roles      = [ "bedrock-lambda-checklist" ]
+  roles      = ["bedrock-lambda-checklist"]
 }
 
 
@@ -302,8 +302,8 @@ data "aws_iam_policy_document" "proofing_s3_read" {
     actions = ["s3:GetObject", "s3:ListBucket"]
     resources = [
       "arn:aws:s3:::textract-output-digival",
-      "arn:aws:s3:::textract-output-digival/*"    
-]
+      "arn:aws:s3:::textract-output-digival/*"
+    ]
   }
 }
 
@@ -448,10 +448,10 @@ resource "aws_iam_role_policy" "salesforce_input_s3_marker" {
         Resource = "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*/.textract_ran"
       },
 
-       # allow DeleteObject so your code can remove expired markers
+      # allow DeleteObject so your code can remove expired markers
       {
-        Effect = "Allow"
-        Action = [ "s3:DeleteObject" ]
+        Effect   = "Allow"
+        Action   = ["s3:DeleteObject"]
         Resource = "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*/.textract_ran"
       }
     ]
@@ -622,8 +622,8 @@ resource "aws_iam_policy" "hsa_changes_csv_read" {
     Version = "2012-10-17",
     Statement = [
       {
-        Effect = "Allow",
-        Action = ["s3:ListBucket"],
+        Effect   = "Allow",
+        Action   = ["s3:ListBucket"],
         Resource = "arn:aws:s3:::metrosafety-bedrock-output-data-dev-bedrock-lambda",
         Condition = {
           StringLike = { "s3:prefix" : "changes/*" }
@@ -680,8 +680,8 @@ locals {
   finalize_function_name = "bedrock-lambda-emails"
 
   # Buckets you use in code
-  csv_bucket   = "metrosafety-bedrock-output-data-dev-bedrock-lambda"  # BUCKET_NAME
-  pdf_bucket   = "metrosafetyprodfiles"                                 # PDF_BUCKET
+  csv_bucket = "metrosafety-bedrock-output-data-dev-bedrock-lambda" # BUCKET_NAME
+  pdf_bucket = "metrosafetyprodfiles"                               # PDF_BUCKET
 
   # Model you call from salesforce_input.py
   bedrock_model_arn = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0"
@@ -703,7 +703,7 @@ data "aws_lambda_function" "finalize" {
 
 # MUST be after data "aws_lambda_function" blocks
 locals {
-  process_exec_role_name  = replace(
+  process_exec_role_name = replace(
     data.aws_lambda_function.process.role,
     "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/",
     ""
@@ -750,8 +750,8 @@ resource "aws_iam_role" "eventbridge_scheduler_invoke_lambda" {
 # Allow Scheduler to invoke ONLY your finalize lambda
 data "aws_iam_policy_document" "scheduler_invoke_finalize" {
   statement {
-    sid     = "InvokeFinalize"
-    actions = ["lambda:InvokeFunction"]
+    sid       = "InvokeFinalize"
+    actions   = ["lambda:InvokeFunction"]
     resources = [data.aws_lambda_function.finalize.arn]
   }
 }
@@ -824,20 +824,20 @@ data "aws_iam_policy_document" "process_policy" {
 
   # S3: read/write your CSV bucket (logs + changes)
   statement {
-    sid     = "CsvBucketRW"
-    actions = ["s3:PutObject", "s3:GetObject", "s3:HeadObject"]
+    sid       = "CsvBucketRW"
+    actions   = ["s3:PutObject", "s3:GetObject", "s3:HeadObject"]
     resources = ["arn:aws:s3:::${local.csv_bucket}/*"]
   }
   statement {
-    sid     = "CsvBucketList"
-    actions = ["s3:ListBucket"]
+    sid       = "CsvBucketList"
+    actions   = ["s3:ListBucket"]
     resources = ["arn:aws:s3:::${local.csv_bucket}"]
   }
 
   # S3: WorkOrders marker in PDF bucket (.textract_ran) and list prefix
   statement {
-    sid     = "PdfBucketListWorkOrders"
-    actions = ["s3:ListBucket"]
+    sid       = "PdfBucketListWorkOrders"
+    actions   = ["s3:ListBucket"]
     resources = ["arn:aws:s3:::${local.pdf_bucket}"]
     condition {
       test     = "StringLike"
@@ -846,8 +846,8 @@ data "aws_iam_policy_document" "process_policy" {
     }
   }
   statement {
-    sid     = "PdfBucketMarkerRW"
-    actions = ["s3:PutObject", "s3:PutObjectTagging", "s3:HeadObject", "s3:DeleteObject"]
+    sid       = "PdfBucketMarkerRW"
+    actions   = ["s3:PutObject", "s3:PutObjectTagging", "s3:HeadObject", "s3:DeleteObject"]
     resources = ["arn:aws:s3:::${local.pdf_bucket}/WorkOrders/*/.textract_ran"]
   }
 }
@@ -872,14 +872,14 @@ resource "aws_iam_role_policy_attachment" "process_attach" {
 ############################################
 data "aws_iam_policy_document" "finalize_policy" {
   statement {
-    sid     = "HeartbeatGet"
-    actions = ["dynamodb:GetItem"]
+    sid       = "HeartbeatGet"
+    actions   = ["dynamodb:GetItem"]
     resources = [aws_dynamodb_table.proofing_heartbeats.arn]
   }
 
   statement {
-    sid     = "S3ReadCSV"
-    actions = ["s3:HeadObject", "s3:GetObject"]
+    sid       = "S3ReadCSV"
+    actions   = ["s3:HeadObject", "s3:GetObject"]
     resources = ["arn:aws:s3:::${local.csv_bucket}/*"]
   }
 
@@ -890,13 +890,13 @@ data "aws_iam_policy_document" "finalize_policy" {
   }
 
   statement {
-    sid     = "SendEmail"
-    actions = ["ses:SendEmail", "ses:SendRawEmail"]
+    sid       = "SendEmail"
+    actions   = ["ses:SendEmail", "ses:SendRawEmail"]
     resources = ["*"]
   }
 
   statement {
-    sid = "UpdateDeleteSchedules"
+    sid     = "UpdateDeleteSchedules"
     actions = ["scheduler:UpdateSchedule", "scheduler:DeleteSchedule", "scheduler:GetSchedule"]
     resources = [
       "arn:aws:scheduler:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:schedule/default/finalize-*"
@@ -924,16 +924,16 @@ resource "aws_iam_role_policy_attachment" "finalize_attach" {
 # Read access to the whole metrosafetyprod bucket for asset_categorisation
 data "aws_iam_policy_document" "lambda_s3_read_metrosafetyprod" {
   statement {
-    sid     = "AllowListBucket"
-    effect  = "Allow"
-    actions = ["s3:ListBucket"]
+    sid       = "AllowListBucket"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
     resources = ["arn:aws:s3:::metrosafetyprod"]
   }
 
   statement {
-    sid     = "AllowGetObject"
-    effect  = "Allow"
-    actions = ["s3:GetObject"]
+    sid       = "AllowGetObject"
+    effect    = "Allow"
+    actions   = ["s3:GetObject"]
     resources = ["arn:aws:s3:::metrosafetyprod/*"]
   }
 }
