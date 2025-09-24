@@ -2,6 +2,8 @@
 data "aws_iam_role" "llama_lambda_roles" {
   for_each = toset(var.llama_enabled_lambdas)
   name     = "${module.lambdas_zip.namespace}-${each.key}"
+
+  depends_on = [module.lambdas_zip]
 }
 
 # Grant GetSecretValue on the LLAMA secret to those roles
