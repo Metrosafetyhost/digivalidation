@@ -72,6 +72,7 @@ module "lambdas_zip" {
       handler     = "process"
       timeout     = 120
       memory_size = 1024
+      arch        = "x86_64"
       lambda_environment = {
         # Secrets Manager *dynamic reference* to the JSON key
         LLAMA_CLOUD_API_KEY = "{{resolve:secretsmanager:${aws_secretsmanager_secret.llama.arn}:SecretString:LLAMA_CLOUD_API_KEY}}"
