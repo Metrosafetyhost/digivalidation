@@ -52,7 +52,8 @@ module "lambdas_zip" {
   lambda_layer_arns = [
     module.lambda_layer.lambda_layer_arn,   # your shared deps
     var.openai_layer_arn,                   # OpenAI layer (keep if others use it)
-    aws_lambda_layer_version.llamaindex.arn #LlamaIndex/LlamaParse deps
+    aws_lambda_layer_version.llamaindex.arn, #LlamaIndex/LlamaParse deps
+    "arn:aws:lambda:eu-west-2:770693421928:layer:Klayers-p313-pillow:1"
   ]
 
   force_lambda_code_deploy = true
