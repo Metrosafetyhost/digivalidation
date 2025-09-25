@@ -83,6 +83,7 @@ variable "lambda_config" {
     lambda_environment = optional(map(string), {})
     runtime            = optional(string)
     arch               = optional(string)
+    lambda_layers      = optional(list(string), [])
   }))
   default = {}
 }
