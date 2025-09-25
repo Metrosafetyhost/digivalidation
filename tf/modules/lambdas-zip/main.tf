@@ -70,6 +70,8 @@ resource "aws_lambda_function" "lambda" {
   runtime       = try(var.lambda_config[each.key].runtime, var.runtime)
   architectures = [try(var.lambda_config[each.key].arch, var.arch)]
 
+  
+
 
   role          = local.effective_lambda_roles[each.key]
   s3_bucket     = var.s3_zip_bucket
