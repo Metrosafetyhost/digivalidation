@@ -5,6 +5,8 @@ resource "aws_lambda_layer_version" "llamaindex" {
   compatible_runtimes      = ["python3.12"]
   compatible_architectures = ["x86_64"]
 
+  source_code_hash = filebase64sha256("../llama-layer.zip")
+
   # force a new layer version whenever you upload a new zip
   description = "llama layer build ${timestamp()}"
 }
