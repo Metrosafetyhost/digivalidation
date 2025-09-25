@@ -60,10 +60,18 @@ resource "aws_s3_object" "lambda_zip" {
 resource "aws_lambda_function" "lambda" {
   for_each      = local.lambda_map
   function_name = "${var.namespace}-${each.key}"
-  handler = "${each.key}.${try(var.lambda_config[each.key].handler, "process")}"
+  handler = "${each.key}.${
+  length(trimspace(try(var.lambda_config[each.key].handler, ""))) > 0
+  ? trimspace(var.lambda_config[each.key].handler)
+  : var.handler
+  }"
 
   # honor per-lambda overrides if present
-  runtime       = coalesce(try(var.lambda_config[each.key].runtime, null), var.runtime, "python3.12")
+  runtime = (
+  length(trimspace(try(var.lambda_config[each.key].runtime, ""))) > 0
+    ? trimspace(var.lambda_config[each.key].runtime)
+    : (length(trimspace(var.runtime)) > 0 ? trimspace(var.runtime) : "python3.12")
+  )
   architectures = [coalesce(try(var.lambda_config[each.key].arch, null), var.arch, "arm64")]
   role          = local.effective_lambda_roles[each.key]
   s3_bucket     = var.s3_zip_bucket
