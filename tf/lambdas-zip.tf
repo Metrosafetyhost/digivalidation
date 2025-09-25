@@ -50,8 +50,8 @@ module "lambdas_zip" {
 
   # Layers
   lambda_layer_arns = [
-    module.lambda_layer.lambda_layer_arn,    # your shared deps
-    var.openai_layer_arn,                    # OpenAI layer (keep if others use it)
+    module.lambda_layer.lambda_layer_arn,   # your shared deps
+    var.openai_layer_arn,                   # OpenAI layer (keep if others use it)
     aws_lambda_layer_version.llamaindex.arn, #LlamaIndex/LlamaParse deps
   ]
 
