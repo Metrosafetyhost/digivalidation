@@ -66,8 +66,10 @@ resource "aws_lambda_function" "lambda" {
     timeout            = 240
     lambda_environment = {}
   }).handler}"
-  runtime       = var.runtime
-  architectures = [var.arch]
+  # honor per-lambda overrides if present
+  runtime       = lookup(lookup(var.lambda_config, each.key, {}), "runtime", var.runtime)
+  architectures = [lookup(lookup(var.lambda_config, each.key, {}), "arch", var.arch)]
+
   role          = local.effective_lambda_roles[each.key]
   s3_bucket     = var.s3_zip_bucket
   s3_key        = aws_s3_object.lambda_zip[each.key].key
