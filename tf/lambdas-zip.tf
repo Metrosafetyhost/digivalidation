@@ -50,8 +50,8 @@ module "lambdas_zip" {
 
   # Layers
   lambda_layer_arns = [
-    module.lambda_layer.lambda_layer_arn,   # your shared deps
-    var.openai_layer_arn,                   # OpenAI layer (keep if others use it)
+    module.lambda_layer.lambda_layer_arn,    # your shared deps
+    var.openai_layer_arn,                    # OpenAI layer (keep if others use it)
     aws_lambda_layer_version.llamaindex.arn, #LlamaIndex/LlamaParse deps
   ]
 
@@ -72,7 +72,7 @@ module "lambdas_zip" {
       handler     = "process"
       timeout     = 120
       memory_size = 1024
-      runtime     = "python3.12" 
+      runtime     = "python3.12"
       arch        = "x86_64"
       lambda_environment = {
         # Secrets Manager *dynamic reference* to the JSON key
