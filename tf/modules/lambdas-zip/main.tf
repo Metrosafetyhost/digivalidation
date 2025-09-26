@@ -60,7 +60,14 @@ resource "aws_s3_object" "lambda_zip" {
 resource "aws_lambda_function" "lambda" {
   for_each      = local.lambda_map
   function_name = "${var.namespace}-${each.key}"
-  handler = length(trimspace(try(var.lambda_config[each.key].handler, ""))) > 0 ? "${each.key}.${trimspace(var.lambda_config[each.key].handler)}" : "${each.key}.${var.handler}"
+  package_type = "Zip"
+  handler = format(
+  "%s.%s",
+  each.key,
+  length(trimspace(try(var.lambda_config[each.key].handler, ""))) > 0
+    ? trimspace(var.lambda_config[each.key].handler)
+    : (length(trimspace(var.handler)) > 0 ? trimspace(var.handler) : "process")
+  )
 
   # honor per-lambda overrides if present
   runtime = length(trimspace(try(var.lambda_config[each.key].runtime, ""))) > 0 ? trimspace(var.lambda_config[each.key].runtime) : (length(trimspace(var.runtime)) > 0 ? trimspace(var.runtime) : "python3.12")
@@ -76,6 +83,16 @@ resource "aws_lambda_function" "lambda" {
   memory_size = try(var.lambda_config[each.key].memory_size, 512)
   timeout     = try(var.lambda_config[each.key].timeout, 240)
 
+  lifecycle {
+  precondition {
+    condition     = length(trimspace(self.handler)) > 0
+    error_message = "handler is empty for function ${each.key}"
+  }
+  precondition {
+    condition     = length(trimspace(self.runtime)) > 0
+    error_message = "runtime is empty for function ${each.key}"
+  }
+}
 
   source_code_hash = aws_s3_object.lambda_zip[each.key].metadata["commit"] == data.external.git.result["sha"] ? (
     var.force_lambda_code_deploy ? aws_s3_object.lambda_zip[each.key].metadata["hash"] : null
@@ -90,8 +107,38 @@ resource "aws_lambda_function" "lambda" {
 
   tags = merge(local.common_tags, {
     git_file = "modules/lambdas-zip/main.tf"
-  })
+  }
+  )
 }
+
+output "debug_handlers" {
+  value = {
+    for k in keys(local.lambda_map) :
+    k => format(
+      "%s.%s",
+      k,
+      length(trimspace(try(var.lambda_config[k].handler, ""))) > 0
+        ? trimspace(var.lambda_config[k].handler)
+        : (length(trimspace(var.handler)) > 0 ? trimspace(var.handler) : "process")
+    )
+  }
+}
+
+output "debug_runtimes" {
+  value = {
+    for k in keys(local.lambda_map) :
+    k => (
+      length(trimspace(try(var.lambda_config[k].runtime, ""))) > 0
+        ? trimspace(var.lambda_config[k].runtime)
+        : (length(trimspace(var.runtime)) > 0 ? trimspace(var.runtime) : "python3.12")
+    )
+  }
+}
+
+output "debug_handlers"  { value = module.lambdas_zip.debug_handlers }
+output "debug_runtimes"  { value = module.lambdas_zip.debug_runtimes }
+
+
 
 resource "aws_lambda_permission" "lambda" {
   for_each = { for lambda_name, config in var.lambda_event_sources : lambda_name => config if config.source_type != "" }
