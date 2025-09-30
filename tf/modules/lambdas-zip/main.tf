@@ -115,11 +115,11 @@ resource "aws_lambda_function" "lambda" {
   timeout     = try(var.lambda_config[each.key].timeout, 240)
 
   lifecycle {
-  precondition {
+  postcondition {
     condition     = length(trimspace(self.handler)) > 0
     error_message = "handler is empty for function ${each.key}"
   }
-  precondition {
+  postcondition {
     condition     = length(trimspace(self.runtime)) > 0
     error_message = "runtime is empty for function ${each.key}"
   }
