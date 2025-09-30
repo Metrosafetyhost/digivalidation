@@ -108,11 +108,12 @@ resource "aws_s3_object" "lambda_zip" {
 resource "aws_lambda_function" "lambda" {
   for_each      = local.lambda_map
   function_name = "${var.namespace}-${each.key}"
-
   package_type  = "Zip"
 
-  handler       = local.computed_handler[each.key]
-  runtime       = local.resolved_runtime[each.key]
+  # >>> TEMP for sanity: force one known-good pair <<<
+  handler = each.key == "basic_event" ? "basic_event.process" : local.computed_handler[each.key]
+  runtime = each.key == "basic_event" ? "python3.12"         : local.resolved_runtime[each.key]
+
 
   architectures = [coalesce(try(var.lambda_config[each.key].arch, null), var.arch, "arm64")]
 
@@ -370,4 +371,3 @@ resource "aws_iam_policy" "lambda_logging" {
 #   source_code_hash    = filesha256(local.layer_zip)
 #   depends_on          = [null_resource.build_openai_layer]
 # }
-
