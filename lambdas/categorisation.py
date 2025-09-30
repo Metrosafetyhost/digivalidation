@@ -177,9 +177,9 @@ def classify_asset_text(text):
     1) OBJECT TYPE (Object_Type__c)
     - If structured, it's the text before " - Location".
     - If unstructured, infer from keywords/synonyms:
-        emergency light|em light|EL|exit sign|fire extinguisher|FE|call point|MCP|manual call point|
+        emergency light|em light|EL|exit sign|fire extinguisher|FE|Call Point|
         smoke detector|heat detector|sounder|beacon|sprinkler|riser|hose reel|fire door|alarm panel. etc
-    - Use the clean, human-readable form, e.g., "Emergency Light", "Manual Call Point", "Fire Extinguisher".
+    - Use the clean, human-readable form, e.g., "Emergency Light", "Fire Extinguisher".
 
     2) OBJECT CATEGORY (Object_Category__c)
     - If structured, take the text after "Type:".
@@ -200,26 +200,26 @@ def classify_asset_text(text):
     - Return as UPPERCASE (e.g., "FF1", "FK11"). If not found, return null.
 
     5) NAME (Name)
-    - If the capture clearly indicates testing/procedures/instructions (i.e., it contains words like
-      "instruction", "instructions", "testing", "test valve", "procedure", or "testing instructions"):
-        * Set Name to exactly: "Testing Instructions - [Object Type]".
-        * Infer [Object Type] from the text immediately preceding "Instructions" / "Testing Instructions"
-          if present (examples: "Distribution board - Instructions: …" → "Testing Instructions - Distribution board";
-          "Alarm Gong Isolation Valve. Testing Instructions: …" → "Testing Instructions - Alarm Gong Isolation Valve").
-        * If an object type cannot be determined from the text, set Name to "TEMPORARY - NAME NOT FOUND".
-    - Otherwise, build as: "<Location Guess>, <Object Type Acronym>, <Label>"
-      • Location Guess:
-        * If structured: use the text after "Location:" (stop before "Type:" or "Test:" if present),
-          else up to the end of the location phrase.
-        * Otherwise, infer a concise location phrase from the text (e.g., "Ground Floor Fire Exit Stairwell").
-        * Normalize floors: "GF"/"ground"/"g" -> "Ground Floor"; "7th" -> "7th Floor"; "B1" -> "Basement 1"; etc.
-      • Object Type Acronym:
-        * 1 word -> first 2 letters (e.g., "Emergency" -> "EM")
-        * 2 words -> first letter of each (e.g., "Emergency Light" -> "EL")
-        * 3+ words -> first letter of each (e.g., "Manual Call Point" -> "MCP")
-      • Label:
-        * Use Label__c if present else omit that trailing part.
-    - IMPORTANT: Never leave Name blank. If no criteria is found to create a name, but the asset would otherwise be updated,
+    - STRICT RULES — DO NOT INFER OR GUESS OBJECT TYPES.
+    - If the capture clearly indicates testing/procedures/instructions (contains any of:
+      "instruction", "instructions", "testing", "procedure", "testing instructions"):
+        * Only set Name to exactly "Testing Procedured - [Object Type]" when an explicit object type
+          is present IMMEDIATELY near the trigger phrase in one of these patterns:
+            A) "<Object Type> - Instructions:"
+            B) "<Object Type>. Testing Procedures:"
+            C) "<Object Type>: Procedures"
+            D) "<Object Type> Testing Instructions"
+          Examples:
+            "Distribution board - Instructions: …" → "Testing Procedures - Distribution board"
+            "Alarm Gong Isolation Valve. Testing Instructions: …" → "Testing Procedures - Alarm Gong Isolation Valve"
+        * If NO explicit object type appears in those exact positions/patterns (e.g., text starts
+          with "Testing Procedure: …" and never names the object before/after it), then set:
+            Name = "TEMPORARY - NAME NOT FOUND"
+        * DO NOT infer the object type from verbs or general context (e.g., do NOT guess from words like
+          "open valve", "reset panel", "stairwell", "pump", "floor", "location", or categories).
+    - If the capture is NOT testing-related, build as: "<Location Guess>, <Object Type Acronym>, <Label>".
+      (Follow your existing rules for these three parts.)
+    - IMPORTANT: Never leave Name blank. If you cannot construct a valid name by the rules above,
       set Name to "TEMPORARY - NAME NOT FOUND".
 
     IMPORTANT RULES
