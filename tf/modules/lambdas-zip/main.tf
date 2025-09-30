@@ -16,7 +16,7 @@ locals {
 }
 
 moved {
-  from = aws_lambda_function.lambda
+  from = aws_lambda_function.functions
   to   = aws_lambda_function.lambda
 }
 
