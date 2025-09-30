@@ -1,22 +1,25 @@
 # Select the correct IAM role: override if provided, otherwise use the default role
 locals {
   lambda_map = zipmap(var.lambda_names, var.lambda_file_names)
+
+  # Normalize external role ARN: null/empty/whitespace -> ""
+  external_role_arn = try(trimspace(var.lambda_role_arn), "")
+
+  # Prefer external role when provided; else module-created role
   effective_lambda_roles = {
     for lambda in var.lambda_names :
-    lambda => (
-      var.lambda_role_arn != null && length(trimspace(var.lambda_role_arn)) > 0
-      ? trimspace(var.lambda_role_arn)
+    lambda => (length(local.external_role_arn) > 0
+      ? local.external_role_arn
       : aws_iam_role.lambda[lambda].arn
     )
   }
 }
 
 locals {
-  # Only attach policies to module-created roles (when no external role is provided)
-  event_sources_sns   = var.lambda_role_arn == null ? { for k, v in var.lambda_event_sources : k => v if v.source_type == "sns" } : {}
-  event_sources_apigw = var.lambda_role_arn == null ? { for k, v in var.lambda_event_sources : k => v if v.source_type == "apigateway" } : {}
-  event_sources_sqs   = var.lambda_role_arn == null ? { for k, v in var.lambda_event_sources : k => v if v.source_type == "sqs" } : {}
-  attach_logs_roles   = var.lambda_role_arn == null ? local.lambda_map : {}
+  event_sources_sns   = length(local.external_role_arn) == 0 ? { for k, v in var.lambda_event_sources : k => v if v.source_type == "sns" } : {}
+  event_sources_apigw = length(local.external_role_arn) == 0 ? { for k, v in var.lambda_event_sources : k => v if v.source_type == "apigateway" } : {}
+  event_sources_sqs   = length(local.external_role_arn) == 0 ? { for k, v in var.lambda_event_sources : k => v if v.source_type == "sqs" } : {}
+  attach_logs_roles   = length(local.external_role_arn) == 0 ? local.lambda_map : {}
 }
 
 data "external" "git" {
@@ -36,7 +39,7 @@ data "aws_iam_policy_document" "lambda" {
 
 # IAM Role for each Lambda (if not provided)
 resource "aws_iam_role" "lambda" {
-  for_each           = var.lambda_role_arn == null ? local.lambda_map : {}
+  for_each           = length(local.external_role_arn) == 0 ? local.lambda_map : {}
   assume_role_policy = data.aws_iam_policy_document.lambda.json
   name               = "${var.namespace}-${each.key}"
 
@@ -47,7 +50,7 @@ resource "aws_iam_role" "lambda" {
 
 # Default Execution Role Attachment (Basic Lambda Execution)
 resource "aws_iam_role_policy_attachment" "lambda_execute" {
-  for_each   = var.lambda_role_arn == null ? local.lambda_map : {}
+  for_each   = length(local.external_role_arn) == 0 ? local.lambda_map : {}
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
   role       = aws_iam_role.lambda[each.key].name
 }
@@ -217,7 +220,7 @@ resource "aws_iam_role_policy_attachment" "sqs_lambda" {
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_logs" {
-  for_each  = local.attach_logs_roles
+  for_each   = local.attach_logs_roles
   role       = aws_iam_role.lambda[each.key].name
   policy_arn = aws_iam_policy.lambda_logging[each.key].arn
 }
