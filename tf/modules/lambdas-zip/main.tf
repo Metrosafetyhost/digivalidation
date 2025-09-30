@@ -17,7 +17,7 @@ locals {
 
 moved {
   from = aws_lambda_function.lambda
-  to   = aws_lambda_function.functions
+  to   = aws_lambda_function.lambda
 }
 
 locals {
@@ -112,7 +112,7 @@ resource "aws_s3_object" "lambda_zip" {
 }
 
 # Lambda Function Deployment
-resource "aws_lambda_function" "functions" {
+resource "aws_lambda_function" "lambda" {
   for_each      = local.lambda_map
   function_name = "${var.namespace}-${each.key}"
   package_type  = "Zip"
@@ -211,7 +211,7 @@ resource "aws_lambda_permission" "lambda" {
 
   action        = "lambda:InvokeFunction"
   principal     = "${each.value.source_type}.amazonaws.com"
-  function_name = aws_lambda_function.functions[each.key].function_name
+  function_name = aws_lambda_function.lambda[each.key].function_name
   source_arn    = each.value.source_arn
 }
 
@@ -219,7 +219,7 @@ resource "aws_lambda_event_source_mapping" "lambda" {
   for_each = { for lambda_name, config in var.lambda_event_sources : lambda_name => config if config.source_type == "sqs" }
 
   batch_size       = 1
-  function_name    = aws_lambda_function.functions[each.key].arn
+  function_name    = aws_lambda_function.lambda[each.key].arn
   event_source_arn = each.value.source_arn
   enabled          = true
 }
@@ -229,7 +229,7 @@ resource "aws_sns_topic_subscription" "lambda" {
 
   topic_arn = each.value.source_arn
   protocol  = "lambda"
-  endpoint  = aws_lambda_function.functions[each.key].arn
+  endpoint  = aws_lambda_function.lambda[each.key].arn
 }
 
 # Only attach policies to module-created roles when we are creating them
@@ -267,7 +267,7 @@ resource "aws_iam_role_policy_attachment" "lambda_logs" {
 #   }
 #   action    = "lambda:InvokeFunction"
 #   principal = "${each.value.type}.amazonaws.com"
-#   function_name = lookup(aws_lambda_function.functions, split(".", each.key)[0], {
+#   function_name = lookup(aws_lambda_function.lambda, split(".", each.key)[0], {
 #     function_name = ""
 #   }).function_name
 #   source_arn = each.value.source_arn
@@ -281,7 +281,7 @@ resource "aws_iam_role_policy_attachment" "lambda_logs" {
 #   }
 #   topic_arn = each.value.source_arn
 #   protocol  = "lambda"
-#   endpoint  = aws_lambda_function.functions[each.key].arn
+#   endpoint  = aws_lambda_function.lambda[each.key].arn
 # }
 
 # resource "aws_iam_role_policy_attachment" "sns_lambda" {
