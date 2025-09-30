@@ -200,22 +200,27 @@ def classify_asset_text(text):
     - Return as UPPERCASE (e.g., "FF1", "FK11"). If not found, return null.
 
     5) NAME (Name)
-    - Build as: "<Location Guess>, <Object Type Acronym>, <Label>"
-    - Location Guess:
-        * If "Location:" is present, use the text after it up to the next period/full-stop if present;
-            else up to the end of the location phrase.
+    - If the capture clearly indicates testing/procedures/instructions (i.e., it contains words like
+      "instruction", "instructions", "testing", "test valve", "procedure", or "testing instructions"):
+        * Set Name to exactly: "Testing Instructions - [Object Type]".
+        * Infer [Object Type] from the text immediately preceding "Instructions" / "Testing Instructions"
+          if present (examples: "Distribution board - Instructions: …" → "Testing Instructions - Distribution board";
+          "Alarm Gong Isolation Valve. Testing Instructions: …" → "Testing Instructions - Alarm Gong Isolation Valve").
+        * If an object type cannot be determined from the text, set Name to "TEMPORARY - NAME NOT FOUND".
+    - Otherwise, build as: "<Location Guess>, <Object Type Acronym>, <Label>"
+      • Location Guess:
+        * If structured: use the text after "Location:" (stop before "Type:" or "Test:" if present),
+          else up to the end of the location phrase.
         * Otherwise, infer a concise location phrase from the text (e.g., "Ground Floor Fire Exit Stairwell").
         * Normalize floors: "GF"/"ground"/"g" -> "Ground Floor"; "7th" -> "7th Floor"; "B1" -> "Basement 1"; etc.
-    - Object Type Acronym:
+      • Object Type Acronym:
         * 1 word -> first 2 letters (e.g., "Emergency" -> "EM")
         * 2 words -> first letter of each (e.g., "Emergency Light" -> "EL")
         * 3+ words -> first letter of each (e.g., "Manual Call Point" -> "MCP")
-    - Label:
+      • Label:
         * Use Label__c if present else omit that trailing part.
-    - Examples:
-        * Location="7th Floor, Kitchen Store Cupboard", Object_Type="Emergency Light", Label="FF1"
-            -> "7th Floor, Kitchen Store Cupboard, EL, FF1"
-        * If Label is null, end without it: "Ground Floor Stairwell, EL"
+    - IMPORTANT: Never leave Name blank. If no criteria is found to create a name, but the asset would otherwise be updated,
+      set Name to "TEMPORARY - NAME NOT FOUND".
 
     IMPORTANT RULES
     - Be helpful but conservative: infer when strong cues exist; otherwise return null.
