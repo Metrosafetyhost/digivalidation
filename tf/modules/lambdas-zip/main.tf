@@ -23,39 +23,47 @@ locals {
 }
 
 locals {
-  _cfg      = var.lambda_config
-  _def_hdl  = try(trimspace(var.handler), "")
-  _def_rt   = try(trimspace(var.runtime), "")
+  # map of configs, but {} if missing to avoid unknowns
+  lambda_cfg = {
+    for k in keys(local.lambda_map) :
+    k => lookup(var.lambda_config, k, {})
+  }
 
-  # Per-lambda resolved handler NAME ONLY (no "<lambda>." prefix)
+  # safe per-lambda overrides ("" if not present)
+  handler_override = {
+    for k in keys(local.lambda_map) :
+    k => trimspace(try(lookup(local.lambda_cfg[k], "handler", ""), ""))
+  }
+  runtime_override = {
+    for k in keys(local.lambda_map) :
+    k => trimspace(try(lookup(local.lambda_cfg[k], "runtime", ""), ""))
+  }
+
+  # final resolved pieces (never unknown)
   resolved_handler_name = {
     for k in keys(local.lambda_map) :
     k => coalesce(
-      # explicit per-lambda handler if non-empty
-      try(length(trimspace(local._cfg[k].handler)) > 0 ? trimspace(local._cfg[k].handler) : null, null),
-      # module default if non-empty
-      length(local._def_hdl) > 0 ? local._def_hdl : null,
-      # ultimate fallback
+      length(local.handler_override[k]) > 0 ? local.handler_override[k] : null,
+      length(trimspace(var.handler)) > 0 ? trimspace(var.handler) : null,
       "process"
     )
   }
 
-  # Final handler string ("<lambda>.<function>")
+  resolved_runtime = {
+    for k in keys(local.lambda_map) :
+    k => coalesce(
+      length(local.runtime_override[k]) > 0 ? local.runtime_override[k] : null,
+      length(trimspace(var.runtime)) > 0 ? trimspace(var.runtime) : null,
+      "python3.12"
+    )
+  }
+
   computed_handler = {
     for k in keys(local.lambda_map) :
     k => "${k}.${local.resolved_handler_name[k]}"
   }
-
-  # Per-lambda resolved runtime
-  resolved_runtime = {
-    for k in keys(local.lambda_map) :
-    k => coalesce(
-      try(length(trimspace(local._cfg[k].runtime)) > 0 ? trimspace(local._cfg[k].runtime) : null, null),
-      length(local._def_rt) > 0 ? local._def_rt : null,
-      "python3.12"
-    )
-  }
 }
+
 
 
 data "external" "git" {
@@ -113,7 +121,7 @@ resource "aws_lambda_function" "lambda" {
   package_type  = "Zip"
 
   # TEMP: force known-good values so provider can’t claim they’re missing
-  handler = "${each.key}.process"
+  handler = local.computed_handler[each.key]
   runtime = local.resolved_runtime[each.key]
 
   # keep the rest the same…
