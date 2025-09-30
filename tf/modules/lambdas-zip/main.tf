@@ -23,22 +23,30 @@ locals {
 }
 
 locals {
-  # convenience
   _cfg      = var.lambda_config
   _def_hdl  = try(trimspace(var.handler), "")
   _def_rt   = try(trimspace(var.runtime), "")
 
-  # per-lambda resolved handler name (function only, no "<name>." yet)
+  # Per-lambda resolved handler NAME ONLY (no "<lambda>." prefix)
   resolved_handler_name = {
     for k in keys(local.lambda_map) :
     k => coalesce(
+      # explicit per-lambda handler if non-empty
       try(length(trimspace(local._cfg[k].handler)) > 0 ? trimspace(local._cfg[k].handler) : null, null),
+      # module default if non-empty
       length(local._def_hdl) > 0 ? local._def_hdl : null,
+      # ultimate fallback
       "process"
     )
   }
 
-  # per-lambda resolved runtime
+  # Final handler string ("<lambda>.<function>")
+  computed_handler = {
+    for k in keys(local.lambda_map) :
+    k => "${k}.${local.resolved_handler_name[k]}"
+  }
+
+  # Per-lambda resolved runtime
   resolved_runtime = {
     for k in keys(local.lambda_map) :
     k => coalesce(
@@ -46,12 +54,6 @@ locals {
       length(local._def_rt) > 0 ? local._def_rt : null,
       "python3.12"
     )
-  }
-
-  # final handler strings AWS expects (e.g., "my_lambda.process")
-  computed_handler = {
-    for k in keys(local.lambda_map) :
-    k => format("%s.%s", k, local.resolved_handler_name[k])
   }
 }
 
@@ -110,8 +112,9 @@ resource "aws_lambda_function" "lambda" {
   function_name = "${var.namespace}-${each.key}"
   package_type  = "Zip"
 
-  handler = try(local.computed_handler[each.key], "${each.key}.process")
-  runtime = try(local.resolved_runtime[each.key], "python3.12")
+  handler = local.computed_handler[each.key]
+  runtime = local.resolved_runtime[each.key]
+
 
 
   architectures = [coalesce(try(var.lambda_config[each.key].arch, null), var.arch, "arm64")]
