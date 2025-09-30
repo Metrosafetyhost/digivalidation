@@ -1,7 +1,7 @@
 # Output the Lambda function ARNs
 output "lambda_arns" {
   description = "A map of Lambda function names to their ARNs"
-  value       = { for key, lambda in aws_lambda_function.lambda : key => lambda.arn }
+  value = { for key, fn in aws_lambda_function.functions : key => fn.arn }
 }
 
 # Output the S3 paths for Lambda ZIPs
