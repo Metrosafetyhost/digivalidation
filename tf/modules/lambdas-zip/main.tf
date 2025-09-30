@@ -1,3 +1,4 @@
+
 # Select the correct IAM role: override if provided, otherwise use the default role
 locals {
   lambda_map = zipmap(var.lambda_names, var.lambda_file_names)
@@ -60,18 +61,31 @@ resource "aws_s3_object" "lambda_zip" {
 resource "aws_lambda_function" "lambda" {
   for_each      = local.lambda_map
   function_name = "${var.namespace}-${each.key}"
-  handler = "${each.key}.${try(var.lambda_config[each.key].handler, "process")}"
-
-  # honor per-lambda overrides if present
-  runtime       = coalesce(try(var.lambda_config[each.key].runtime, null), var.runtime, "python3.12")
-  architectures = [coalesce(try(var.lambda_config[each.key].arch, null), var.arch, "arm64")]
+  handler = "${each.key}.${lookup(var.lambda_config, each.key, {
+    handler            = "process"
+    memory_size        = 512
+    timeout            = 240
+    lambda_environment = {}
+  }).handler}"
+  runtime       = var.runtime
+  architectures = [var.arch]
   role          = local.effective_lambda_roles[each.key]
   s3_bucket     = var.s3_zip_bucket
   s3_key        = aws_s3_object.lambda_zip[each.key].key
   layers        = length(var.lambda_layer_arns) > 0 ? var.lambda_layer_arns : (var.lambda_layer_arn != "" ? [var.lambda_layer_arn] : [])
 
-  memory_size = try(var.lambda_config[each.key].memory_size, 512)
-  timeout     = try(var.lambda_config[each.key].timeout, 240)
+  memory_size = lookup(var.lambda_config, each.key, {
+    handler            = "process"
+    memory_size        = 512
+    timeout            = 240
+    lambda_environment = {}
+  }).memory_size
+  timeout = lookup(var.lambda_config, each.key, {
+    handler            = "process"
+    memory_size        = 512
+    timeout            = 240
+    lambda_environment = {}
+  }).timeout
 
 
   source_code_hash = aws_s3_object.lambda_zip[each.key].metadata["commit"] == data.external.git.result["sha"] ? (
@@ -79,10 +93,12 @@ resource "aws_lambda_function" "lambda" {
   ) : aws_s3_object.lambda_zip[each.key].metadata["hash"]
 
   environment {
-  variables = merge(
-    var.default_environment,
-    try(var.lambda_config[each.key].lambda_environment, {})
-  )
+    variables = merge(var.default_environment, lookup(var.lambda_config, each.key, {
+      handler            = "process"
+      memory_size        = 512
+      timeout            = 240
+      lambda_environment = {}
+    }).lambda_environment)
   }
 
   tags = merge(local.common_tags, {
