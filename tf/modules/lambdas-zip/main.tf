@@ -23,33 +23,6 @@ locals {
 }
 
 locals {
-  _cfg     = var.lambda_config
-  _def_hdl = try(trimspace(var.handler), "")
-  _def_rt  = try(trimspace(var.runtime), "")
-
-  resolved_runtime = {
-    for k in keys(local.lambda_map) :
-    k => coalesce(
-      try(length(trimspace(local._cfg[k].runtime)) > 0 ? trimspace(local._cfg[k].runtime) : null, null),
-      length(local._def_rt) > 0 ? local._def_rt : null,
-      "python3.12"
-    )
-  }
-
-  computed_handler = {
-    for k in keys(local.lambda_map) :
-    k => format("%s.%s", k,
-      coalesce(
-        try(length(trimspace(local._cfg[k].handler)) > 0 ? trimspace(local._cfg[k].handler) : null, null),
-        length(local._def_hdl) > 0 ? local._def_hdl : null,
-        "process"
-      )
-    )
-  }
-}
-
-
-locals {
   # convenience
   _cfg      = var.lambda_config
   _def_hdl  = try(trimspace(var.handler), "")
@@ -131,18 +104,14 @@ resource "aws_s3_object" "lambda_zip" {
   }
 }
 
-output "debug_computed_handler"     { value = local.computed_handler }
-output "debug_resolved_runtime"     { value = local.resolved_runtime }
-
 # Lambda Function Deployment
 resource "aws_lambda_function" "lambda" {
   for_each      = local.lambda_map
   function_name = "${var.namespace}-${each.key}"
   package_type  = "Zip"
 
-  # >>> TEMP for sanity: force one known-good pair <<<
-  handler = each.key == "basic_event" ? "basic_event.process" : local.computed_handler[each.key]
-  runtime = each.key == "basic_event" ? "python3.12"         : local.resolved_runtime[each.key]
+  handler = try(local.computed_handler[each.key], "${each.key}.process")
+  runtime = try(local.resolved_runtime[each.key], "python3.12")
 
 
   architectures = [coalesce(try(var.lambda_config[each.key].arch, null), var.arch, "arm64")]
