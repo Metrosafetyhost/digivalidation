@@ -39,7 +39,7 @@ module "lambdas_zip" {
     "llamaparse.py",
   ]
 
-  runtime       = "python3.12"
+  runtime       = "python3.13"
   arch          = "arm64"
   s3_zip_bucket = module.lambda_zips_bucket.this_s3_bucket_id
   build_dir     = var.build_dir
