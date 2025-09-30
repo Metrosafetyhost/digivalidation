@@ -2,70 +2,11 @@
 locals {
   lambda_map = zipmap(var.lambda_names, var.lambda_file_names)
 
-  # Normalize external role ARN: null/empty/whitespace -> ""
-  external_role_arn = try(trimspace(var.lambda_role_arn), "")
-
-  # Prefer external role when provided; else module-created role
   effective_lambda_roles = {
     for lambda in var.lambda_names :
-    lambda => (length(local.external_role_arn) > 0
-      ? local.external_role_arn
-      : aws_iam_role.lambda[lambda].arn
-    )
+    lambda => coalesce(var.lambda_role_arn, aws_iam_role.lambda[lambda].arn)
   }
 }
-
-locals {
-  event_sources_sns   = length(local.external_role_arn) == 0 ? { for k, v in var.lambda_event_sources : k => v if v.source_type == "sns" } : {}
-  event_sources_apigw = length(local.external_role_arn) == 0 ? { for k, v in var.lambda_event_sources : k => v if v.source_type == "apigateway" } : {}
-  event_sources_sqs   = length(local.external_role_arn) == 0 ? { for k, v in var.lambda_event_sources : k => v if v.source_type == "sqs" } : {}
-  attach_logs_roles   = length(local.external_role_arn) == 0 ? local.lambda_map : {}
-}
-
-locals {
-  # defaults (can be empty strings)
-  _def_hdl = trimspace(try(var.handler, ""))
-  _def_rt  = trimspace(try(var.runtime, ""))
-
-  # safe per-lambda overrides (always end up as strings, maybe "")
-  handler_override = {
-    for k in keys(local.lambda_map) :
-    k => trimspace(
-      try(lookup(lookup(var.lambda_config, k, {}), "handler", ""), "")
-    )
-  }
-  runtime_override = {
-    for k in keys(local.lambda_map) :
-    k => trimspace(
-      try(lookup(lookup(var.lambda_config, k, {}), "runtime", ""), "")
-    )
-  }
-
-  # final resolved pieces (never unknown/empty)
-  resolved_handler_name = {
-    for k in keys(local.lambda_map) :
-    k => coalesce(
-      length(local.handler_override[k]) > 0 ? local.handler_override[k] : null,
-      length(local._def_hdl) > 0 ? local._def_hdl : null,
-      "process"
-    )
-  }
-  resolved_runtime = {
-    for k in keys(local.lambda_map) :
-    k => coalesce(
-      length(local.runtime_override[k]) > 0 ? local.runtime_override[k] : null,
-      length(local._def_rt) > 0 ? local._def_rt : null,
-      "python3.12"
-    )
-  }
-
-  computed_handler = {
-    for k in keys(local.lambda_map) :
-    k => "${k}.${local.resolved_handler_name[k]}"
-  }
-}
-
-
 
 data "external" "git" {
   program = ["git", "log", "--pretty=format:{ \"sha\": \"%H\" }", "-1", "HEAD"]
@@ -84,7 +25,7 @@ data "aws_iam_policy_document" "lambda" {
 
 # IAM Role for each Lambda (if not provided)
 resource "aws_iam_role" "lambda" {
-  for_each           = length(local.external_role_arn) == 0 ? local.lambda_map : {}
+  for_each           = var.lambda_role_arn == null ? local.lambda_map : {}
   assume_role_policy = data.aws_iam_policy_document.lambda.json
   name               = "${var.namespace}-${each.key}"
 
@@ -95,7 +36,7 @@ resource "aws_iam_role" "lambda" {
 
 # Default Execution Role Attachment (Basic Lambda Execution)
 resource "aws_iam_role_policy_attachment" "lambda_execute" {
-  for_each   = length(local.external_role_arn) == 0 ? local.lambda_map : {}
+  for_each   = var.lambda_role_arn == null ? local.lambda_map : {}
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
   role       = aws_iam_role.lambda[each.key].name
 }
@@ -119,43 +60,19 @@ resource "aws_s3_object" "lambda_zip" {
 resource "aws_lambda_function" "lambda" {
   for_each      = local.lambda_map
   function_name = "${var.namespace}-${each.key}"
-  package_type  = "Zip"
+  handler = "${each.key}.${try(var.lambda_config[each.key].handler, "process")}"
 
-  # TEMP: force known-good values so provider can’t claim they’re missing
-  handler = local.computed_handler[each.key]
-  runtime = local.resolved_runtime[each.key]
-
-  # keep the rest the same…
-  role      = local.effective_lambda_roles[each.key]
-  s3_bucket = var.s3_zip_bucket
-  s3_key    = aws_s3_object.lambda_zip[each.key].key
-
-
+  # honor per-lambda overrides if present
+  runtime       = coalesce(try(var.lambda_config[each.key].runtime, null), var.runtime, "python3.12")
   architectures = [coalesce(try(var.lambda_config[each.key].arch, null), var.arch, "arm64")]
+  role          = local.effective_lambda_roles[each.key]
+  s3_bucket     = var.s3_zip_bucket
+  s3_key        = aws_s3_object.lambda_zip[each.key].key
+  layers        = length(var.lambda_layer_arns) > 0 ? var.lambda_layer_arns : (var.lambda_layer_arn != "" ? [var.lambda_layer_arn] : [])
 
-  layers = coalesce(
-    try(length(var.lambda_config[each.key].lambda_layers) > 0 ? var.lambda_config[each.key].lambda_layers : null, null),
-    length(var.lambda_layer_arns) > 0 ? var.lambda_layer_arns : null,
-    var.lambda_layer_arn != "" ? [var.lambda_layer_arn] : null,
-    []
-  )
+  memory_size = try(var.lambda_config[each.key].memory_size, 512)
+  timeout     = try(var.lambda_config[each.key].timeout, 240)
 
-  memory_size   = try(var.lambda_config[each.key].memory_size, 512)
-  timeout       = try(var.lambda_config[each.key].timeout, 240)
-
-  # (postconditions optional; you can remove them)
-  # lifecycle {
-  #   postcondition {
-  #     condition     = length(trimspace(self.handler)) > 0
-  #     error_message = "handler is empty for function ${each.key}"
-  #   }
-  #   postcondition {
-  #     condition     = length(trimspace(self.runtime)) > 0
-  #     error_message = "runtime is empty for function ${each.key}"
-  #   }
-  # }
-
-  # ...rest unchanged...
 
   source_code_hash = aws_s3_object.lambda_zip[each.key].metadata["commit"] == data.external.git.result["sha"] ? (
     var.force_lambda_code_deploy ? aws_s3_object.lambda_zip[each.key].metadata["hash"] : null
@@ -170,47 +87,8 @@ resource "aws_lambda_function" "lambda" {
 
   tags = merge(local.common_tags, {
     git_file = "modules/lambdas-zip/main.tf"
-  }
-  )
+  })
 }
-
-output "debug_computed_handler" {
-  value = local.computed_handler
-}
-
-output "debug_resolved_runtime" {
-  value = local.resolved_runtime
-}
-
-
-# output "debug_handlers" {
-#   value = {
-#     for k in keys(local.lambda_map) :
-#     k => format(
-#       "%s.%s",
-#       k,
-#       length(trimspace(try(var.lambda_config[k].handler, ""))) > 0
-#         ? trimspace(var.lambda_config[k].handler)
-#         : (length(trimspace(var.handler)) > 0 ? trimspace(var.handler) : "process")
-#     )
-#   }
-# }
-
-# output "debug_runtimes" {
-#   value = {
-#     for k in keys(local.lambda_map) :
-#     k => (
-#       length(trimspace(try(var.lambda_config[k].runtime, ""))) > 0
-#         ? trimspace(var.lambda_config[k].runtime)
-#         : (length(trimspace(var.runtime)) > 0 ? trimspace(var.runtime) : "python3.12")
-#     )
-#   }
-# }
-
-# output "debug_handlers"  { value = module.lambdas_zip.debug_handlers }
-# output "debug_runtimes"  { value = module.lambdas_zip.debug_runtimes }
-
-
 
 resource "aws_lambda_permission" "lambda" {
   for_each = { for lambda_name, config in var.lambda_event_sources : lambda_name => config if config.source_type != "" }
@@ -238,31 +116,26 @@ resource "aws_sns_topic_subscription" "lambda" {
   endpoint  = aws_lambda_function.lambda[each.key].arn
 }
 
-# Only attach policies to module-created roles when we are creating them
 resource "aws_iam_role_policy_attachment" "sns_lambda" {
-  for_each   = local.event_sources_sns
+  for_each = { for lambda_name, config in var.lambda_event_sources : lambda_name => config if config.source_type == "sns" }
+
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
   role       = aws_iam_role.lambda[each.key].name
 }
 
 resource "aws_iam_role_policy_attachment" "api_lambda" {
-  for_each   = local.event_sources_apigw
+  for_each = { for lambda_name, config in var.lambda_event_sources : lambda_name => config if config.source_type == "apigateway" }
+
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
   role       = aws_iam_role.lambda[each.key].name
 }
 
 resource "aws_iam_role_policy_attachment" "sqs_lambda" {
-  for_each   = local.event_sources_sqs
+  for_each = { for lambda_name, config in var.lambda_event_sources : lambda_name => config if config.source_type == "sqs" }
+
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole"
   role       = aws_iam_role.lambda[each.key].name
 }
-
-resource "aws_iam_role_policy_attachment" "lambda_logs" {
-  for_each   = local.attach_logs_roles
-  role       = aws_iam_role.lambda[each.key].name
-  policy_arn = aws_iam_policy.lambda_logging[each.key].arn
-}
-
 
 # # Source Event Mapping Permissions to Source ARN
 # resource "aws_lambda_permission" "lambda" {
@@ -345,6 +218,12 @@ resource "aws_iam_policy" "lambda_logging" {
   name        = "${var.namespace}-${each.key}-logging"
   description = "IAM policy for CloudWatch logging from a Lambda"
   policy      = data.aws_iam_policy_document.lambda_logging.json
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_logs" {
+  for_each   = local.lambda_map
+  role       = aws_iam_role.lambda[each.key].name
+  policy_arn = aws_iam_policy.lambda_logging[each.key].arn
 }
 
 # # --- locals: paths & names ---
