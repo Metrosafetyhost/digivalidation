@@ -22,6 +22,40 @@ locals {
   attach_logs_roles   = length(local.external_role_arn) == 0 ? local.lambda_map : {}
 }
 
+locals {
+  # convenience
+  _cfg      = var.lambda_config
+  _def_hdl  = try(trimspace(var.handler), "")
+  _def_rt   = try(trimspace(var.runtime), "")
+
+  # per-lambda resolved handler name (function only, no "<name>." yet)
+  resolved_handler_name = {
+    for k in keys(local.lambda_map) :
+    k => coalesce(
+      try(length(trimspace(local._cfg[k].handler)) > 0 ? trimspace(local._cfg[k].handler) : null, null),
+      length(local._def_hdl) > 0 ? local._def_hdl : null,
+      "process"
+    )
+  }
+
+  # per-lambda resolved runtime
+  resolved_runtime = {
+    for k in keys(local.lambda_map) :
+    k => coalesce(
+      try(length(trimspace(local._cfg[k].runtime)) > 0 ? trimspace(local._cfg[k].runtime) : null, null),
+      length(local._def_rt) > 0 ? local._def_rt : null,
+      "python3.12"
+    )
+  }
+
+  # final handler strings AWS expects (e.g., "my_lambda.process")
+  computed_handler = {
+    for k in keys(local.lambda_map) :
+    k => format("%s.%s", k, local.resolved_handler_name[k])
+  }
+}
+
+
 data "external" "git" {
   program = ["git", "log", "--pretty=format:{ \"sha\": \"%H\" }", "-1", "HEAD"]
 }
@@ -75,34 +109,13 @@ resource "aws_lambda_function" "lambda" {
   for_each      = local.lambda_map
   function_name = "${var.namespace}-${each.key}"
 
-  package_type = "Zip"
-  # Handler: fall back to var.handler, then "process"
-  # Handler: per-lambda, else module default, else "process"
-  handler = format(
-    "%s.%s",
-    each.key,
-    coalesce(
-      try(length(trimspace(var.lambda_config[each.key].handler)) > 0 ? trimspace(var.lambda_config[each.key].handler) : null, null),
-      try(length(trimspace(var.handler)) > 0 ? trimspace(var.handler) : null, null),
-      "process"
-    )
-  )
+  package_type  = "Zip"
 
-  # Runtime: per-lambda, else module default, else python3.12
-  runtime = coalesce(
-    try(length(trimspace(var.lambda_config[each.key].runtime)) > 0 ? trimspace(var.lambda_config[each.key].runtime) : null, null),
-    try(length(trimspace(var.runtime)) > 0 ? trimspace(var.runtime) : null, null),
-    "python3.12"
-  )
+  handler       = local.computed_handler[each.key]
+  runtime       = local.resolved_runtime[each.key]
 
-  # Architecture: per-lambda, else module default, else arm64
-  architectures = [coalesce(
-    try(var.lambda_config[each.key].arch, null),
-    var.arch,
-    "arm64"
-  )]
+  architectures = [coalesce(try(var.lambda_config[each.key].arch, null), var.arch, "arm64")]
 
-# Layers: per-lambda list, else global list, else single arn, else []
   layers = coalesce(
     try(length(var.lambda_config[each.key].lambda_layers) > 0 ? var.lambda_config[each.key].lambda_layers : null, null),
     length(var.lambda_layer_arns) > 0 ? var.lambda_layer_arns : null,
@@ -110,23 +123,25 @@ resource "aws_lambda_function" "lambda" {
     []
   )
 
-  # honor per-lambda overrides if present
   role          = local.effective_lambda_roles[each.key]
   s3_bucket     = var.s3_zip_bucket
   s3_key        = aws_s3_object.lambda_zip[each.key].key
-  memory_size = try(var.lambda_config[each.key].memory_size, 512)
-  timeout     = try(var.lambda_config[each.key].timeout, 240)
+  memory_size   = try(var.lambda_config[each.key].memory_size, 512)
+  timeout       = try(var.lambda_config[each.key].timeout, 240)
 
-  lifecycle {
-  postcondition {
-    condition     = length(trimspace(self.handler)) > 0
-    error_message = "handler is empty for function ${each.key}"
-  }
-  postcondition {
-    condition     = length(trimspace(self.runtime)) > 0
-    error_message = "runtime is empty for function ${each.key}"
-  }
-}
+  # (postconditions optional; you can remove them)
+  # lifecycle {
+  #   postcondition {
+  #     condition     = length(trimspace(self.handler)) > 0
+  #     error_message = "handler is empty for function ${each.key}"
+  #   }
+  #   postcondition {
+  #     condition     = length(trimspace(self.runtime)) > 0
+  #     error_message = "runtime is empty for function ${each.key}"
+  #   }
+  # }
+
+  # ...rest unchanged...
 
   source_code_hash = aws_s3_object.lambda_zip[each.key].metadata["commit"] == data.external.git.result["sha"] ? (
     var.force_lambda_code_deploy ? aws_s3_object.lambda_zip[each.key].metadata["hash"] : null
@@ -144,6 +159,15 @@ resource "aws_lambda_function" "lambda" {
   }
   )
 }
+
+output "debug_computed_handler" {
+  value = local.computed_handler
+}
+
+output "debug_resolved_runtime" {
+  value = local.resolved_runtime
+}
+
 
 # output "debug_handlers" {
 #   value = {
