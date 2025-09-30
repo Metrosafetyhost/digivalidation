@@ -15,11 +15,6 @@ locals {
   }
 }
 
-moved {
-  from = aws_lambda_function.functions
-  to   = aws_lambda_function.lambda
-}
-
 locals {
   event_sources_sns   = length(local.external_role_arn) == 0 ? { for k, v in var.lambda_event_sources : k => v if v.source_type == "sns" } : {}
   event_sources_apigw = length(local.external_role_arn) == 0 ? { for k, v in var.lambda_event_sources : k => v if v.source_type == "apigateway" } : {}
@@ -117,9 +112,14 @@ resource "aws_lambda_function" "lambda" {
   function_name = "${var.namespace}-${each.key}"
   package_type  = "Zip"
 
-  handler = local.computed_handler[each.key]
+  # TEMP: force known-good values so provider can’t claim they’re missing
+  handler = "${each.key}.process"
   runtime = "python3.12"
 
+  # keep the rest the same…
+  role      = local.effective_lambda_roles[each.key]
+  s3_bucket = var.s3_zip_bucket
+  s3_key    = aws_s3_object.lambda_zip[each.key].key
 
 
   architectures = [coalesce(try(var.lambda_config[each.key].arch, null), var.arch, "arm64")]
@@ -131,9 +131,6 @@ resource "aws_lambda_function" "lambda" {
     []
   )
 
-  role          = local.effective_lambda_roles[each.key]
-  s3_bucket     = var.s3_zip_bucket
-  s3_key        = aws_s3_object.lambda_zip[each.key].key
   memory_size   = try(var.lambda_config[each.key].memory_size, 512)
   timeout       = try(var.lambda_config[each.key].timeout, 240)
 
