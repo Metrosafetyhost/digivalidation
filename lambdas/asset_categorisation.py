@@ -43,6 +43,15 @@ SYSTEM_PROMPT = (
     "Base your assumptions on typical UK standards and suppliers if the photo does not show enough detail. "
     "Return realistic rough values (e.g., '120mm diameter', '£20-£40', 'Screwdriver needed'). "
     "Never leave a field blank. Confidence__c must be a number 0..1."
+
+    "- If the capture indicates testing/procedures/instructions (words like 'Instructions', "
+    "'Testing', 'Procedure', 'Testing Instructions'), then set What_Is_It__c to: "
+    "'Testing Instructions - [Object Type]'. "
+    "Infer [Object Type] from the text immediately preceding 'Instructions' or 'Testing Instructions' if present "
+    "(e.g., 'Distribution board - Instructions: …' → 'Testing Instructions - Distribution board'; "
+    "'Alarm Gong Isolation Valve. Testing Instructions: …' → 'Testing Instructions - Alarm Gong Isolation Valve'). "
+    "- Avoid leaving What_Is_It__c blank under any circumstances. If no criteria is found to create a name, "
+    "but the asset would otherwise be updated, set What_Is_It__c to 'TEMPORARY - NAME NOT FOUND'. "
 )
 
 USER_INSTRUCTION = "Extract the fields from this image and return ONLY compact JSON."
