@@ -81,8 +81,8 @@ variable "lambda_config" {
     timeout            = optional(number, 6)
     handler            = optional(string, "process")
     lambda_environment = optional(map(string), {})
-    runtime            = optional(string)
-    arch               = optional(string)
+    # runtime            = optional(string)
+    # arch               = optional(string)
     # lambda_layers      = optional(list(string), [])
   }))
   default = {}
