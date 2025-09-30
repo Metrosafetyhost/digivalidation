@@ -23,37 +23,38 @@ locals {
 }
 
 locals {
-  # map of configs, but {} if missing to avoid unknowns
-  lambda_cfg = {
-    for k in keys(local.lambda_map) :
-    k => lookup(var.lambda_config, k, {})
-  }
+  # defaults (can be empty strings)
+  _def_hdl = trimspace(try(var.handler, ""))
+  _def_rt  = trimspace(try(var.runtime, ""))
 
-  # safe per-lambda overrides ("" if not present)
+  # safe per-lambda overrides (always end up as strings, maybe "")
   handler_override = {
     for k in keys(local.lambda_map) :
-    k => trimspace(try(lookup(local.lambda_cfg[k], "handler", ""), ""))
+    k => trimspace(
+      try(lookup(lookup(var.lambda_config, k, {}), "handler", ""), "")
+    )
   }
   runtime_override = {
     for k in keys(local.lambda_map) :
-    k => trimspace(try(lookup(local.lambda_cfg[k], "runtime", ""), ""))
+    k => trimspace(
+      try(lookup(lookup(var.lambda_config, k, {}), "runtime", ""), "")
+    )
   }
 
-  # final resolved pieces (never unknown)
+  # final resolved pieces (never unknown/empty)
   resolved_handler_name = {
     for k in keys(local.lambda_map) :
     k => coalesce(
       length(local.handler_override[k]) > 0 ? local.handler_override[k] : null,
-      length(trimspace(var.handler)) > 0 ? trimspace(var.handler) : null,
+      length(local._def_hdl) > 0 ? local._def_hdl : null,
       "process"
     )
   }
-
   resolved_runtime = {
     for k in keys(local.lambda_map) :
     k => coalesce(
       length(local.runtime_override[k]) > 0 ? local.runtime_override[k] : null,
-      length(trimspace(var.runtime)) > 0 ? trimspace(var.runtime) : null,
+      length(local._def_rt) > 0 ? local._def_rt : null,
       "python3.12"
     )
   }
