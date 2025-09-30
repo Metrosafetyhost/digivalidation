@@ -113,7 +113,7 @@ resource "aws_lambda_function" "lambda" {
   package_type  = "Zip"
 
   # TEMP: force known-good values so provider can’t claim they’re missing
-  handler = "${each.key}.process"
+  handler = local.computed_handler[each.key]
   runtime = "python3.12"
 
   # keep the rest the same…
