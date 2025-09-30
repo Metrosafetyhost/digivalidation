@@ -118,7 +118,7 @@ resource "aws_lambda_function" "functions" {
   package_type  = "Zip"
 
   handler = local.computed_handler[each.key]
-  runtime = local.resolved_runtime[each.key]
+  runtime = "python3.12"
 
 
 
