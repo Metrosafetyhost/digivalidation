@@ -52,7 +52,7 @@ module "lambdas_zip" {
   lambda_layer_arns = [
     module.lambda_layer.lambda_layer_arn, # your shared deps
     var.openai_layer_arn,                 # OpenAI layer (keep if others use it)
-    aws_lambda_layer_version.llamaindex.arn,
+    //aws_lambda_layer_version.llamaindex.arn,
   ]
 
   force_lambda_code_deploy = true
@@ -74,7 +74,6 @@ module "lambdas_zip" {
       memory_size   = 1024
       runtime       = "python3.12"
       arch          = "x86_64"
-
       lambda_environment = {
         # Secrets Manager *dynamic reference* to the JSON key
         LLAMA_CLOUD_API_KEY = "{{resolve:secretsmanager:${aws_secretsmanager_secret.llama.arn}:SecretString:LLAMA_CLOUD_API_KEY}}"
