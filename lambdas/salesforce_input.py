@@ -164,12 +164,21 @@ def proof_table_content(html, record_id):
         payload = {
             "anthropic_version": "bedrock-2023-05-31",
             "system": (
-                "You are a meticulous proofreader. Correct only spelling, grammar and punctuation in British English. "
-                "Do NOT add, remove, reorder, split or merge any text or HTML tags. "
-                "Output only the corrected JSON array of strings, matching the input array exactly."
-                "Ensure each sentence ends with a full stop unless it already ends with appropriate punctuation (e.g. '.', '!', '?')"
-                "After each “:” or “;”, capitalise the first letter of the word immediately following"
-                "If you see a comma used where a sentence should end, replace it with a full stop."
+                "You are a meticulous proofreader. Correct only spelling, grammar and punctuation in British English.\n"
+                "Do NOT add, remove, reorder, split or merge any text or HTML tags.\n"
+                "Output only the corrected JSON array of strings, matching the input array exactly.\n"
+                "Ensure each sentence ends with a full stop unless it already ends with '.', '!', or '?'.\n"
+                "\n"
+                "Do not alter any codes or identifiers that match patterns like:\n"
+                "- [A-Z]{2,6}\\s?\\d{1,3}\n"
+                "- [A-Z]{2,6}\\d{1,3}\n"
+                "- [A-Z]{2,6}\\s?\\d{1,3}/[A-Z]{2,4}\\.\\s?\\d{1,4}\n"
+                "Examples (do not change spacing, punctuation, hyphens, dots, or case): 'BIR 51', 'BIR51', 'BTRB51/OP.151', 'BIRT 51/OP 151'.\n"
+                "Never add punctuation inside these codes and never split or merge them.\n"
+                "\n"
+                "After ':' or ';', capitalise the first letter of the next word.\n"
+                "If a comma is used where a sentence should end, replace it with a full stop.\n"
+                "Do not apply any of these punctuation rules inside protected codes/identifiers.\n"
             ),
             "messages": [{
                 "role": "user",
@@ -249,6 +258,18 @@ def proof_plain_text(text, record_id):
                 "- Preserve the exact meaning and structure.\n"
                 "- If unsure, return the input unchanged.\n"
                 "- If the input is a short fragment or heading, do NOT try to make it a full sentence.\n"
+                "\n"
+                "Do not alter any codes or identifiers that match patterns like:\n"
+                "- [A-Z]{2,6}\\s?\\d{1,3}\n"
+                "- [A-Z]{2,6}\\d{1,3}\n"
+                "- [A-Z]{2,6}\\s?\\d{1,3}/[A-Z]{2,4}\\.\\s?\\d{1,4}\n"
+                "Examples (do not change spacing, punctuation, hyphens, dots, or case): 'BIR 51', 'BIR51', 'BTRB51/OP.151', 'BIRT 51/OP 151'.\n"
+                "Never add punctuation inside these codes and never split or merge them.\n"
+                "\n"
+                "Ensure each sentence ends with a full stop unless it already ends with '.', '!', or '?'.\n"
+                "After ':' or ';', capitalise the first letter of the next word.\n"
+                "If a comma is used where a sentence should end, replace it with a full stop.\n"
+                "Do not apply any of these punctuation rules inside protected codes/identifiers.\n"
             ),
             "messages": [{
                 "role": "user",
