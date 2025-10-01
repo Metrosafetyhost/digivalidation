@@ -81,9 +81,6 @@ variable "lambda_config" {
     timeout            = optional(number, 6)
     handler            = optional(string, "process")
     lambda_environment = optional(map(string), {})
-    # runtime            = optional(string)
-    # arch               = optional(string)
-    # lambda_layers      = optional(list(string), [])
   }))
   default = {}
 }
@@ -128,7 +125,7 @@ variable "log_retention" {
   default     = 30
 }
 
-# NEW: allow passing multiple layers to ALL lambdas
+# allow passing multiple layers to ALL lambdas
 variable "lambda_layer_arns" {
   type    = list(string)
   default = []

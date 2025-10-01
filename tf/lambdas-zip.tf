@@ -18,7 +18,6 @@ module "lambdas_zip" {
     "hsa_checklist_proofing",
     "salesforce_input",
     "emails",
-    "llamaparse",
   ]
 
   # these are the Python files that get zipped
@@ -36,7 +35,6 @@ module "lambdas_zip" {
     "hsa_checklist_proofing.py",
     "salesforce_input.py",
     "emails.py",
-    "llamaparse.py",
   ]
 
   runtime       = "python3.13"
@@ -52,7 +50,6 @@ module "lambdas_zip" {
   lambda_layer_arns = [
     module.lambda_layer.lambda_layer_arn, # your shared deps
     var.openai_layer_arn,                 # OpenAI layer (keep if others use it)
-    aws_lambda_layer_version.llamaindex.arn,
   ]
 
   force_lambda_code_deploy = true
@@ -64,19 +61,6 @@ module "lambdas_zip" {
       timeout     = 240
       lambda_environment = {
         OPENAI_SECRET_ARN = aws_secretsmanager_secret.openai.arn
-      }
-    }
-
-    # LlamaParse lambda
-    llamaparse = {
-      handler       = "process"
-      timeout       = 120
-      memory_size   = 1024
-      runtime       = "python3.12"
-      arch          = "x86_64"
-      lambda_environment = {
-        # Secrets Manager *dynamic reference* to the JSON key
-        LLAMA_CLOUD_API_KEY = "{{resolve:secretsmanager:${aws_secretsmanager_secret.llama.arn}:SecretString:LLAMA_CLOUD_API_KEY}}"
       }
     }
 
