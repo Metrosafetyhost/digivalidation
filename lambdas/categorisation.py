@@ -17,7 +17,9 @@ s3      = boto3.client(
 )
 MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 
-# Exact Salesforce picklist (trim to what you actually have)
+# ------------------------------------------------------------
+# Exact Salesforce picklist (your existing floor logic)
+# ------------------------------------------------------------
 CANONICAL_FLOORS_SET = set(
     ["Ground Floor", "Lower Ground", "Under Ground", "External Wall", "Roof", "Grd Mezzanine", "Basement", ] +
     [f"Basement {n}" for n in range(1,6)] +
@@ -31,17 +33,15 @@ def to_picklist_or_none(v: str | None) -> str | None:
     v = (v or "").strip()
     return v if v in CANONICAL_FLOORS_SET else None
 
-
 CANONICAL_FLOORS = {
-    # exact tokens -> canonical picklist value
     "ground floor": "Ground Floor",
     "gf": "Ground Floor",
     "grd": "Ground Floor",
     "g/f": "Ground Floor",
 
     "lower ground": "Lower Ground",
-    "lg": "Lower Ground",
     "l.g.": "Lower Ground",
+    "lg": "Lower Ground",
     "lgf": "Lower Ground",
 
     "mezzanine floor": "1st Mezzanine",
@@ -55,10 +55,7 @@ CANONICAL_FLOORS = {
     "ground floor mezzanine": "Grd Mezzanine",
 
     "basement": "Basement 1"
-
-
 }
-
 # build basement mappings B1..B5
 for n in range(1, 6):
     CANONICAL_FLOORS[f"basement {n}"] = f"Basement {n}"
@@ -69,14 +66,8 @@ CANONICAL_FLOORS["basement mezzanine b1"] = "Basement Mezzanine B1"
 CANONICAL_FLOORS["basement mezzanine b2"] = "Basement Mezzanine B2"
 CANONICAL_FLOORS["basement mezzanine b3"] = "Basement Mezzanine B3"
 
-ORDINALS = {  # for 1..50
-    1: "1st Floor", 2: "2nd Floor", 3: "3rd Floor",
-    **{n: f"{n}th Floor" for n in range(4, 51)}
-}
-MEZZ_ORDINALS = {
-    1: "1st Mezzanine", 2: "2nd Mezzanine", 3: "3rd Mezzanine",
-    **{n: f"{n}th Mezzanine" for n in range(4, 51)}
-}
+ORDINALS = { 1: "1st Floor", 2: "2nd Floor", 3: "3rd Floor", **{n: f"{n}th Floor" for n in range(4, 51)} }
+MEZZ_ORDINALS = { 1: "1st Mezzanine", 2: "2nd Mezzanine", 3: "3rd Mezzanine", **{n: f"{n}th Mezzanine" for n in range(4, 51)} }
 
 # compile regexes once
 RE_LEVEL = re.compile(r"\b(?:level|lvl|lv)\s*(\d{1,2})\b", re.I)
@@ -85,8 +76,6 @@ RE_MEZZ_NUM = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:mezz|mezzanine)\b", 
 RE_BASEMENT_MEZZ = re.compile(r"\bbasement\s+mezz(?:anine)?\s*(b[1-3])\b", re.I)
 RE_B_MEZZ = re.compile(r"\bb\s*(\d{1,2})\s*mezz(?:anine)?\b", re.I)
 
-
-# to bias toward the "Location:" line
 def nearest_to_location(text, matches):
     if not matches: return None
     loc_idx = text.lower().find("location")
@@ -158,8 +147,219 @@ def extract_floor(raw: str) -> str | None:
 
     return None
 
-def classify_asset_text(text):
+# ------------------------------------------------------------
+# CLOSED-WORLD ENUMS (Object Types & Categories) + guardrail
+#   1) Bind your dictionary to OBJECT_MAP (it was raw at file end)
+#   2) Sanitise, build enums JSON for the prompt
+#   3) Validate model output against OBJECT_MAP
+# ------------------------------------------------------------
+OBJECT_MAP: dict[str, list[str]] = {
+  "Access": [],
+  "Activation Point": ["Button (Test)", "Check LED", "Distribution Board", "Fish Key", "Fish Key (Own)", "Fish Key (Single Tooth)", "Fish Key (Thin)", "Fish Key Bank", "Fish Key Switch", "Flick Fuse", "Flick Switch", "Fuse (Ceramic)", "Fuse (Pull)", "Key (Flat)", "Switch (Push)", "Switch (Rocker)", "Switch (Test)", "Testing Panel", "Unlisted"],
+  "Alarm Gong": [],
+  "Aquamist": [],
+  "Assembly Point": [],
+  "Beacon": [],
+  "Boiler": [],
+  "BSRA": [],
+  "Building": [],
+  "Building Generator": [],
+  "Burns Kit": [],
+  "Call Point": ["Button (Test)", "Flick Fuse", "Key (Allen)", "Key (Apollo)", "Key (Cylindrical)", "Key (Fork)", "Key (GFE)", "Key (KAC)", "Key (Long)", "Key (Newlec)", "Key (Old Flag)", "Key (Pin)", "Key (Raffiki)", "Key (Side)", "Key (STI)", "Key (Sycall)", "Key (TOK)", "Key (Triangle)", "Key (UP)", "Key (White Flag)", "Unlisted"],
+  "Calorifier": [],
+  "CTTV": [],
+  "Damper": [],
+  "Diesel Storage Tank": [],
+  "Disabled Emergency Refugee Point": [],
+  "Door Released Switch": [],
+  "Dry Riser": [],
+  "Electric Meter": ["Dial Meter", "Digital Meter", "Prepayment Meter", "Smart Meter", "Standard Meter", "Variable-rate Meter"],
+  "Emergency Light": ["Bulb", "Check LED", "Cone", "Coved", "Decorative", "Flood Lamp", "Flood Light", "Fluorescent Tube", "Fluro Square", "Halogen", "Hanging", "Hexagon", "LED Spot Light", "Oblong", "Round", "Running Man", "Semi Circular", "Spot Light", "Square", "Strip Light", "Strip Tubes", "Twin Spots", "Unlisted"],
+  "Emergency Stop Activation Switch": [],
+  "Emergency Stop Beacon": [],
+  "Emergency Stop Button": [],
+  "Emergency Stop Reset Button": [],
+  "Emergency Stop Reset Key": [],
+  "Evacuation Plan": [],
+  "External Wall": [],
+  "Extinguisher": [],
+  "Eye Wash Kit": [],
+  "Fire Alarm Panel": ["Key (TOK)", "Key Panel (1001)", "Key Panel (134)", "Key Panel (801)", "Key Panel (827)", "Key Panel (901)", "Key Panel (Black Plastic Flag)", "Key Panel (Plastic RED)", "Key Panel (Plastic Tok)", "Key Panel (TOK 001)", "Key Panel (TOK 003)", "Key Panel (TOK 007)", "Unlisted"],
+  "Fire Blanket": [],
+  "Fire Door - Communal": [],
+  "Fire Door - Door and a Half": [],
+  "Fire Door - Double": [],
+  "Fire Door - Flat Front": [],
+  "Fire Door - Single": [],
+  "Fire Shutter": [],
+  "First Aid Kit": [],
+  "Floor": [
+    "10th Floor", "10th Mezzanine", "11th Floor", "11th Mezzanine",
+    "12th Floor", "12th Mezzanine", "13th Floor", "13th Mezzanine",
+    "14th Floor", "14th Mezzanin", "15th Floor", "15th Mezzanine",
+    "16th Floor", "16th Mezzanine", "17th Floor", "17th Mezzanine",
+    "18th Floor", "18th Mezzanine", "19th Floor", "19th Mezzanine",
+    "1st Floor", "1st Mezzanine", "20th Floor", "20th Mezzanine",
+    "21st Floor", "21st Mezzanine", "22nd Floor", "22nd Mezzanine",
+    "23rd Floor", "23rd Mezzanine", "24th Floor", "24th Mezzanine",
+    "25th Floor", "25th Mezzanine", "26th Floor", "26th Mezzanine",
+    "27th Floor", "27th Mezzanine", "28th Floor", "28th Mezzanine",
+    "29th Floor", "29th Mezzanine", "2nd Floor", "2nd Mezzanine",
+    "30th Floor", "30th Mezzanine", "31st Floor", "31st Mezzanine",
+    "32nd Floor", "32nd Mezzanine", "33rd Floor", "33rd Mezzanine",
+    "34th Floor", "34th Mezzanine", "35th Floor", "35th Mezzanine",
+    "36th Floor", "36th Mezzanine", "37th Floor", "37th Mezzanine",
+    "38th Floor", "38th Mezzanine", "39th Floor", "39th Mezzanine",
+    "3rd Floor", "3rd Mezzanine", "40th Floor", "40th Mezzanine",
+    "41st Floor", "41st Mezzanine", "42nd Floor", "42nd Mezzanine",
+    "43rd Floor", "43rd Mezzanine", "44th Floor", "44th Mezzanine",
+    "45th Floor", "45th Mezzanine", "46th Floor", "46th Mezzanine",
+    "47th Floor", "47th Mezzanine", "48th Floor", "48th Mezzanine",
+    "49th Floor", "49th Mezzanine", "4th Floor", "4th Mezzanine",
+    "50th Floor", "50th Mezzanine", "5th Floor", "5th Mezzanine",
+    "6th Floor", "6th Mezzanine", "7th Floor", "7th Mezzanine",
+    "8th Floor", "8th Mezzanine", "9th Floor", "9th Mezzanine",
+    "B1 Mezzanine", "B2 Mezzanine", "B3 Mezzanine",
+    "Basement 1", "Basement 2", "Basement 3", "Basement 4", "Basement 5",
+    "Grd Mezzanine", "Ground Floor"
+  ],
+  "Flow Switch": [],
+  "Foam Inlet": [],
+  "Gas Meter": ["Dial Meter", "Digital Meter", "Prepayment Meter", "Smart Meter", "Standard Meter", "Variable-rate Meter"],
+  "Heat / Smoke Detector": [],
+  "Heat Detector": [],
+  "Hose Reel": [],
+  "Hydrant": [],
+  "Installation Valve": ["Dry", "Wet"],
+  "Isolation Switch": [],
+  "Jet Fan": ["Key (Fork)", "Smoke Generator"],
+  "Key Safe": ["Combination", "Key"],
+  "Large Step Ladder": [],
+  "Led Fluro": [],
+  "Lightning Conductor": [],
+  "Logbook": ["Customers", "Metro"],
+  "Logbook Cabinet": [],
+  "Magnetic Door Release": [],
+  "Meter": ["Dial Meter", "Digital Meter", "Electric Meter", "Electric Multi Read Meter", "Gas Meter", "Gas Multi Read Meter", "Prepayment Meter", "Smart Meter", "Standard Meter", "Variable-rate Meter", "Water Meter"],
+  "Mobile Elevated Work Platform": [],
+  "Monitoring Appliance": [],
+  "Multi-Heat": [],
+  "Optical Smoke": [],
+  "Pressure Gauge": [],
+  "Pump Test Valve": [],
+  "Refuge Alarm": [],
+  "Refuge Point Alarm Panel": [],
+  "Region": [
+    "Administration Office", "Annexe", "Attic", "Auditorium", "Bank",
+    "Bathroom", "Bike Store", "Bin Room", "Bin Store", "Boardroom",
+    "Boiler Room", "Cafe", "Caretakers Office", "Car Park", "Cellar",
+    "Changing Room", "Cleaner Storage", "Computer Room", "Conference Room", "Corridor",
+    "Corridor (LH)", "Corridor (RH)", "Corridor (Service)", "Courtyard", "Cupboard",
+    "Dance Hall", "Dining Room", "Electrical Intake Room", "Electrical Riser", "Electrical Room",
+    "Entrance", "Entrance Gates", "Entrance Lobby", "External Area", "External Plant Area",
+    "External Plant Room", "External Walkway", "Extractor Room", "Fire Escape Stairs", "Fire Exit",
+    "Fire Exit Lobby", "Flat Lobby", "Function Room", "Gas Intake room", "Gas Room",
+    "Generator Room", "Gym", "Hall", "Kitchen", "Landing",
+    "Laundry Room", "Lift Lobby", "Lift Machine Room", "Lift Motor Room", "Loading Bay",
+    "Lobby", "Locker Room", "Lounge Room", "Meeting Room", "Meter Room",
+    "Office (Other)", "Office Lobby", "Operations Room", "Photocopying Room", "Plant Room",
+    "Playroom", "Pump House", "Pump Room", "Reception Area", "Refuse Area",
+    "Riser", "Rooftop Area", "Room (Other)", "Seating Area", "Security Office",
+    "Server Room", "Shop", "Shop Floor", "Shower Room", "Sprinkler Pump Room",
+    "Staff Area", "Staffroom", "Stair Landing", "Stairs", "Stock Room",
+    "Storage Area", "Store Room", "Studio", "Suite", "Tank Room",
+    "Toilet (Disabled)", "Toilet (Female)", "Toilet (Lobby)", "Toilet (Male)", "Toilet (Unisex)",
+    "Training Room", "Unlisted", "Utility Room", "Waiting Area", "Walkway",
+    "Wall", "Wall (LHS)", "Wall (RHS)", "Warehouse", "Water Storage Space"
+  ],
+  "Relay Loop Module": [],
+  "Remote Monitoring Panel": ["Key (TOK)"],
+  "Roof Asset": ["Lift Motor Room", "Stairs Tank Room", "CCTV", "Cell Phone Tower", "Cooling Tower", "Crane / Lifting Equipment", "Exhaust", "Eye Bolt", "Fall Arrest System", "Fan Room", "Ladder", "Lightning Rod / Conductor", "Solar Panel"],
+  "Security Alarm": [],
+  "Security Alarm Panel": [],
+  "Security Sensor": [],
+  "Shower": [],
+  "Shutter": [],
+  "Small Step Ladder": [],
+  "Small Step Podium": [],
+  "Smoke Activation Point": ["Button (Test)", "Fish Key", "Fuse (Push)", "Key (Fork)", "Key (Side)", "Switch (Test)", "Unlisted"],
+  "Smoke Control Panel": [],
+  "Smoke Detector (Automatic)": [],
+  "Smoke Detector (Domestic)": [],
+  "Smoke Extractor": [],
+  "Smoke Hatch": [],
+  "Smoke Head of Shaft Vent": [],
+  "Smoke Head of Stair Vent": [],
+  "Smoke Shaft Door": [],
+  "Smoke Vent": [],
+  "Smoke Vent Door": [],
+  "Smoke Vent Louvre": [],
+  "Smoke Vent Panel": [],
+  "Smoke Vent Reset Button": [],
+  "Smoke Vent Reset Switch": ["Button", "Switch"],
+  "Smoke Window": [],
+  "Sounder": [],
+  "Sprinkler Control Panel (Diesel)": [],
+  "Sprinkler Control Panel (Electrical)": [],
+  "Sprinkler Control Panel (Jockey)": [],
+  "Sprinkler Pump (Diesel)": [],
+  "Sprinkler Pump (Electric)": [],
+  "Sprinkler Pump (Jockey)": [],
+  "Sprinkler Pump Controller": [],
+  "Surface Water Sump Pump": [],
+  "Tap - Boiling": [],
+  "Tap - Fountain": [],
+  "Tap - Mixer": [],
+  "Tap - Push Button": [],
+  "Tap - Single": [],
+  "Tenant List": [],
+  "Testing Procedures": [],
+  "Towns Main Water Supply": [],
+  "Water Closet": [],
+  "Water Heater": [],
+  "Water Meter": ["Dial Meter", "Digital Meter", "Prepayment Meter", "Smart Meter", "Standard Meter", "Variable-rate Meter"],
+  "Water Storage Tank": [],
+  "Wet Riser": [],
+  "Wet Riser Pump (Electric)": ["Hi Pressure (for High Rise Blocks)", "Low Pressure (for High Rise Blocks)", "Standard" ],
+  "Wet Riser Pump (Jockey)": ["Hi Pressure (for High Rise Blocks)", "Low Pressure (for High Rise Blocks)", "Standard"],
+  "Zone Map": []
+}
 
+OBJECT_TYPES = list(OBJECT_MAP.keys())
+ENUMS_JSON = json.dumps({"OBJECT_TYPES": OBJECT_TYPES, "CATEGORIES_BY_TYPE": OBJECT_MAP}, ensure_ascii=False)
+
+def validate_extraction(result: dict) -> dict:
+    """Clamp Object_Type__c/Object_Category__c to the closed lists; uppercase Label__c."""
+    safe = {
+        "Object_Type__c": None,
+        "Object_Category__c": None,
+        "Asset_Instructions__c": None,
+        "Label__c": None,
+        "Name": None
+    }
+    if not isinstance(result, dict):
+        return safe
+    out = {**safe, **result}
+
+    t = out.get("Object_Type__c")
+    c = out.get("Object_Category__c")
+
+    if t not in OBJECT_MAP:
+        out["Object_Type__c"] = None
+        out["Object_Category__c"] = None
+    else:
+        allowed = set(OBJECT_MAP.get(t, []))
+        if not allowed or c not in allowed:
+            out["Object_Category__c"] = None
+
+    if isinstance(out.get("Label__c"), str):
+        out["Label__c"] = out["Label__c"].upper()
+
+    return out
+
+# Your existing AI function, with a tiny prompt add-on + validator call
+
+def classify_asset_text(text):
     prompt = f"""
     You are classifying facility safety assets for Metro Safety. The input may be well structured
     (e.g., "Emergency Light - Location: 7th Floor ... Type: ... Test: ...") OR free text with no labels.
@@ -172,14 +372,22 @@ def classify_asset_text(text):
     - "Label__c"
     - "Name"
 
+    ## HARD CONSTRAINTS (do not violate)
+    - Valid object types are ONLY those in OBJECT_TYPES.
+    - For a chosen type, valid categories are ONLY those in CATEGORIES_BY_TYPE[type].
+    - If the text does not clearly specify a category, set Object_Category__c to null. Do not guess.
+    - If the text does not clearly specify a type, set Object_Type__c to null and also set Object_Category__c to null.
+    - Uppercase Label__c. Never leave Name null.
+
+    ## ENUMS (closed world for choices)
+    {ENUMS_JSON}
+
     ## How to interpret inputs
 
     1) OBJECT TYPE (Object_Type__c)
     - If structured, it's the text before " - Location".
-    - If unstructured, infer from keywords/synonyms:
-        emergency light|em light|EL|exit sign|fire extinguisher|FE|Call Point|
-        smoke detector|heat detector|sounder|beacon|sprinkler|riser|hose reel|fire door|alarm panel. etc
-    - Use the clean, human-readable form, e.g., "Emergency Light", "Fire Extinguisher".
+    - If unstructured, infer from keywords/synonyms (conservatively).
+    - Use the clean, human-readable form, e.g., "Emergency Light".
 
     2) OBJECT CATEGORY (Object_Category__c)
     - If structured, take the text after "Type:".
@@ -190,7 +398,7 @@ def classify_asset_text(text):
 
     3) ASSET INSTRUCTIONS (Asset_Instructions__c)
     - If structured, take the text after "Test:".
-    - Otherwise, capture any instruction-like phrase with verbs such as: test, activate, isolate, reset, silence.
+    - Otherwise, capture any instruction-like phrase with verbs such as; test, activate, isolate, reset.
     - If nothing meaningful, return null.
 
     4) LABEL (Label__c)
@@ -235,23 +443,23 @@ def classify_asset_text(text):
 
     OUTPUT
     {{
-    "Object_Type__c": "Emergency Light",
-    "Object_Category__c": "LED Square",
-    "Asset_Instructions__c": "Activate FF1",
-    "Label__c": "FF1",
-    "Name": "7th Floor, Crawford and Co office space kitchen store cupboard, EL, FF1"
+      "Object_Type__c": "Emergency Light",
+      "Object_Category__c": "LED Square",
+      "Asset_Instructions__c": "Activate FF1",
+      "Label__c": "FF1",
+      "Name": "7th Floor, Crawford and Co office space kitchen store cupboard, EL, FF1"
     }}
 
     INPUT (unstructured)
-    Ground floor fire exit stairwell ceiling emergency light square FK11
+    2nd floor corridor by flat 12 & 13 ceiling emergency light round FK2
 
     OUTPUT
     {{
-    "Object_Type__c": "Emergency Light",
-    "Object_Category__c": "Square",
-    "Asset_Instructions__c": null,
-    "Label__c": "FK11",
-    "Name": "Ground Floor Fire Exit Stairwell Ceiling, EL, FK11"
+      "Object_Type__c": "Emergency Light",
+      "Object_Category__c": "Round",
+      "Asset_Instructions__c": null,
+      "Label__c": "FK2",
+      "Name": "2nd Floor Corridor by Flat 12 & 13 Ceiling, EL, FK2"
     }}
 
     Now classify this input:
@@ -279,9 +487,11 @@ def classify_asset_text(text):
     # parse the JSON blob out of Bedrock’s response
     try:
         data = json.loads(raw)
-        # Claude returns its assistant text in data["content"]
         text_out = "".join(part.get("text", "") for part in data.get("content", []))
-        return json.loads(text_out)
+        out = json.loads(text_out)
+        # Enforce closed-world enums
+        out = validate_extraction(out)
+        return out
     except Exception as e:
         logger.error("Failed to parse classification response: %s", e)
         raise
@@ -300,7 +510,7 @@ def process(event, context):
 
     # 2) Extract inputs for Claude, but also pick up description/contentVersionId for later use
     samples = []
-    metadata = []   # <-- NEW: capture, but don't use yet
+    metadata = []
     for obj in body:
         base = (obj.get("input") or "")
         desc = obj.get("description")
@@ -311,31 +521,28 @@ def process(event, context):
     logger.info(">> process: assembled samples for model: %s", samples)
     logger.info(">> process: collected metadata (unused for now): %s", metadata)
 
-    # 3) Classify each sample (Claude sees ONLY the input text)
+    # 3) Classify each sample
     results = []
     for txt in samples:
         try:
             out = classify_asset_text(txt)
-            # Deterministic first
+
+            # Floor canonicalisation (unchanged)
             floor = extract_floor(txt)
             floor = to_picklist_or_none(floor)
-
             logger.info("Floor extracted: %s | from text: %s", floor, txt[:200])
 
-            # Ensure we only return a valid picklist value (or null)
-            out["Floor__c"] = floor  # None -> JSON null; Apex will set blank
-            results.append(out)   # unchanged contract
+            out["Floor__c"] = floor  # append floor as before
+            results.append(out)
         except Exception as ex:
             logger.warning("process: classification error for input '%s': %s", txt, ex, exc_info=True)
             results.append({"error": str(ex), "input": txt})
 
     logger.info("<< process: returning results: %s", results)
 
-    # 4) Return bare JSON array (same as before, no new fields returned)
+    # 4) Return bare JSON array
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "application/json"},
         "body": json.dumps(results)
     }
-
-
