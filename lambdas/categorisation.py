@@ -329,7 +329,7 @@ OBJECT_TYPES = list(OBJECT_MAP.keys())
 ENUMS_JSON = json.dumps({"OBJECT_TYPES": OBJECT_TYPES, "CATEGORIES_BY_TYPE": OBJECT_MAP}, ensure_ascii=False)
 
 def validate_extraction(result: dict) -> dict:
-    """Clamp Object_Type__c/Object_Category__c to the closed lists; uppercase Label__c."""
+    """Clamp Object_Type__c/Object_Category__c to the closed lists; smart-normalise Label__c."""
     safe = {
         "Object_Type__c": None,
         "Object_Category__c": None,
@@ -352,12 +352,26 @@ def validate_extraction(result: dict) -> dict:
         if not allowed or c not in allowed:
             out["Object_Category__c"] = None
 
-    if isinstance(out.get("Label__c"), str):
-        out["Label__c"] = out["Label__c"].upper()
+    # only uppercase when it's a short code token like FF1, MCP12, etc.
+    lbl = out.get("Label__c")
+    if isinstance(lbl, str):
+        lbl_stripped = lbl.strip()
+        if re.fullmatch(r"[A-Za-z]{1,3}\d{1,3}", lbl_stripped):
+            out["Label__c"] = lbl_stripped.upper()
+        else:
+            out["Label__c"] = lbl_stripped  # preserve case for sentences like "Step 7: ..."
 
     return out
 
-# Your existing AI function, with a tiny prompt add-on + validator call
+# Extract "Step <number>: <text>" or "Step <number> - <text>" anywhere in the capture.
+RE_STEP_LINE = re.compile(r"(?:^|\b)(Step\s*\d+\s*[:\-]\s*.*)", re.IGNORECASE)
+
+def extract_first_step_line(text: str):
+    if not text:
+        return None
+    m = RE_STEP_LINE.search(text)
+    return m.group(1).strip() if m else None
+
 
 def classify_asset_text(text):
     prompt = f"""
@@ -402,10 +416,12 @@ def classify_asset_text(text):
     - If nothing meaningful, return null.
 
     4) LABEL (Label__c)
-    - Prefer a short code present anywhere in the text, typically one of:
-        - FF\\d+, FK\\d+, EL\\d+, EM\\d+, CP\\d+, MCP\\d+, SD\\d+, HD\\d+, SB\\d+, R\\d+
-        - Or more general pattern: [A-Z]{{1,3}}\\d{{1,3}}
-    - Return as UPPERCASE (e.g., "FF1", "FK11"). If not found, return null.
+    - If the capture contains a line that begins with “Step <number>” (e.g., “Step 7: Open the test valve slowly …”),
+    set Label__c to the FULL step line. Do not truncate or shorten it.
+    - Otherwise, prefer a short code present anywhere in the text, typically one of:
+    FF\d+, FK\d+, EL\d+, EM\d+, CP\d+, MCP\d+, SD\d+, HD\d+, SB\d+, R\d+,
+    or more generally [A-Z]{1,3}\d{1,3}.
+    - Return Label__c as-is for sentences; uppercase short codes (e.g., "FF1", "FK11"). If not found, return null.
 
     5) NAME (Name)
     - STRICT RULES — DO NOT INFER OR GUESS OBJECT TYPES.
