@@ -416,7 +416,7 @@ def classify_asset_text(text):
     - If nothing meaningful, return null.
 
     4) LABEL (Label__c)
-    - If the capture contains a line that begins with “Step <number>” (e.g., “Step 7: Open the test valve slowly …”),
+    - If the capture contains a line that begins, ends or has “Step <number>” within (e.g., “Step 7: Open the test valve slowly …” : "Installation Valve Test Valve - Part of testing Instructions Part 10." ),
     set Label__c to the FULL step line. Do not truncate or shorten it.
     - Otherwise, prefer a short code present anywhere in the text, typically one of:
     FF\d+, FK\d+, EL\d+, EM\d+, CP\d+, MCP\d+, SD\d+, HD\d+, SB\d+, R\d+,
