@@ -389,9 +389,9 @@ def classify_asset_text(text):
     ## HARD CONSTRAINTS (do not violate)
     - Valid object types are ONLY those in OBJECT_TYPES.
     - For a chosen type, valid categories are ONLY those in CATEGORIES_BY_TYPE[type].
-    - If the text does not clearly specify a category, set Object_Category__c to null. Do not guess.
-    - If the text does not clearly specify a type, set Object_Type__c to null and also set Object_Category__c to null.
-    - Uppercase Label__c. Never leave Name null.
+    - If the text does not clearly specify a category, set Object_Category__c to an empty string. Do not guess.
+    - If the text does not clearly specify a type, set Object_Type__c to an dmepty string and also set Object_Category__c to an empty string.
+    - Uppercase Label__c. Never leave Name blank.
 
     ## ENUMS (closed world for choices)
     {ENUMS_JSON}
@@ -399,21 +399,24 @@ def classify_asset_text(text):
     ## How to interpret inputs
 
     1) OBJECT TYPE (Object_Type__c)
+    - PRECEDENCE: If the “Testing Procedures header override” in Step 5 applies, set Object_Type__c = "Testing Procedures" (and do not use any other object type).
+    - If the override does NOT apply:
     - If structured, it's the text before " - Location".
-    - If unstructured, infer from keywords/synonyms (conservatively).
+    - If unstructured, infer from keywords/synonyms (conservatively) but only choose from OBJECT_TYPES.
     - Use the clean, human-readable form, e.g., "Emergency Light".
+
 
     2) OBJECT CATEGORY (Object_Category__c)
     - If structured, take the text after "Type:".
     - Otherwise infer from shape/technology words:
         LED, Square, Dial Meter, Round, Button, Key, Flick Fuse, Beacon.
     - Normalize to Title Case, e.g., "LED Square", "Bulkhead Twinspot".
-    - If none found, return null.
+    - If none found, return an emptry string.
 
     3) ASSET INSTRUCTIONS (Asset_Instructions__c)
     - If structured, take the text after "Test:".
     - Otherwise, capture any instruction-like phrase with verbs such as; test, activate, isolate, reset.
-    - If nothing meaningful, return null.
+    - If nothing meaningful, return nothing at all .
 
     4) LABEL (Label__c)
     - If the capture contains a line that begins, ends or has “Step <number>” within (e.g., “Step 7: Open the test valve slowly …” : "Installation Valve Test Valve - Part of testing Instructions Part 10." ),
@@ -421,33 +424,44 @@ def classify_asset_text(text):
     - Otherwise, prefer a short code present anywhere in the text, typically one of:
     FF\d+, FK\d+, EL\d+, EM\d+, CP\d+, MCP\d+, SD\d+, HD\d+, SB\d+, R\d+,
     or more generally [A-Z]{1,3}\d{1,3}.
-    - Return Label__c as-is for sentences; uppercase short codes (e.g., "FF1", "FK11"). If not found, return null.
+    - Return Label__c as-is for sentences; uppercase short codes (e.g., "FF1", "FK11"). If not found, return nothing at all .
 
-    5) NAME (Name)
-    - STRICT RULES — DO NOT INFER OR GUESS OBJECT TYPES.
-    - If the capture clearly indicates testing/procedures/instructions (contains any of:
-      "instruction", "instructions", "testing", "procedure", "testing instructions"):
-        * Only set Name to exactly "Testing Procedured - [Object Type]" when an explicit object type
-          is present IMMEDIATELY near the trigger phrase in one of these patterns:
-            A) "<Object Type> - Instructions:"
-            B) "<Object Type>. Testing Procedures:"
-            C) "<Object Type>: Procedures"
-            D) "<Object Type> Testing Instructions"
-          Examples:
-            "Distribution board - Instructions: …" → "Testing Procedures - Distribution board"
-            "Alarm Gong Isolation Valve. Testing Instructions: …" → "Testing Procedures - Alarm Gong Isolation Valve"
-        * If NO explicit object type appears in those exact positions/patterns (e.g., text starts
-          with "Testing Procedure: …" and never names the object before/after it), then set:
-            Name = "TEMPORARY - NAME NOT FOUND"
-        * DO NOT infer the object type from verbs or general context (e.g., do NOT guess from words like
-          "open valve", "reset panel", "stairwell", "pump", "floor", "location", or categories).
-    - If the capture is NOT testing-related, build as: "<Location Guess>, <Object Type Acronym>, <Label>".
-      (Follow your existing rules for these three parts.)
-    - IMPORTANT: Never leave Name blank. If you cannot construct a valid name by the rules above,
-      set Name to "TEMPORARY - NAME NOT FOUND".
+    5) NAME (Name)  — and the “Testing Procedures” override
+
+    A) When to apply the Testing Procedures HEADER override
+    - Apply this override ONLY if the input begins with an object phrase and is immediately followed by a testing header phrase in the opening title/header segment (i.e., before any normal fields like “Label:”, “Type:”, “Location:”).
+    - Qualifying header markers include (case-insensitive), with typical delimiters like "-", ":", ";", or ".":
+    "Testing Instructions", "Testing Instruction", "Testing Procedures", "Testing Procedure", "Instructions", "Procedure".
+    - Treat it as a header if the testing phrase appears within the first ~10 characters after the object name and clearly functions as part of the title/header, not mid-paragraph or after fields.
+
+    If the HEADER override applies:
+    - Set Object_Type__c = "Testing Procedures".
+    - Set Object_Category__c = "".
+    - Set Name = "Testing Procedures - <Object>", where <Object> is the object named in the opening phrase (e.g., "Electric Pump", "Jockey Pump", "Installation Valve").
+    - For both Label__c and Asset_Instructions__c, if a “Step <number>:” sentence exists (e.g., “Step 7: …”), use the FIRST such step line verbatim for BOTH fields. If no step line exists, use the first clear imperative testing sentence for both; otherwise "".
+
+    Examples (override applies):
+    - "Electric Pump activation test valve - Testing Instructions; Step 7: Open the test valve slowly …"
+    => Object_Type__c: "Testing Procedures"; Name: "Testing Procedures - Electric Pump"
+    - "Diesel Pump – Testing Procedures: Step 3: Verify auto start from jockey pump pressure switch…"
+    => Object_Type__c: "Testing Procedures"; Name: "Testing Procedures - Diesel Pump": Label__c - Step 7
+
+    B) Normal description (NO override)
+    - If “testing instructions/procedures” appears later in a normal/freeform description (e.g., after "Label:", "Type:", "Location:", or mid-paragraph), DO NOT use the override.
+    - Keep Object_Type__c as the actual asset (e.g., "Installation Valve", "Electric Pump"), chosen from OBJECT_TYPES.
+    - Set Object_Category__c from an explicit subtype (e.g., "Wet System"); otherwise "".
+    - Label__c: If a “Step <number>: …” line exists anywhere, use the FULL step line. Otherwise prefer a short code (e.g., FF\d+, EL\d+, etc., or [A-Z]{1,3}\d{1,3}); return null if none.
+    - Asset_Instructions__c: Use the first explicit test step sentence if present; otherwise the first clear imperative testing sentence; otherwise "".
+    - Name: Build using your existing non-testing format (e.g., "<Location Guess>, <Object Type Acronym>, <Label>").
+
+    Tie-breakers
+    - Only apply the HEADER override when the testing phrase is clearly part of the opening header as defined above. If unsure, treat as normal description (no override).
+    - Never invent an object type. If no valid object type is evident and the override doesn’t apply, set Object_Type__c = "" and Object_Category__c = "".
+    - Never leave Name null; if you cannot construct a valid Name by the above rules, set Name = "TEMPORARY - NAME NOT FOUND".
+
 
     IMPORTANT RULES
-    - Be helpful but conservative: infer when strong cues exist; otherwise return null.
+    - Be helpful but conservative: infer when strong cues exist; otherwise return nothing at all.
     - Use Title Case for Object_Category__c; keep Object_Type__c in normal case (e.g., "Emergency Light").
     - Uppercase Label__c.
     - Output must be STRICT JSON with ONLY the 5 fields, no extra text.
@@ -473,7 +487,7 @@ def classify_asset_text(text):
     {{
       "Object_Type__c": "Emergency Light",
       "Object_Category__c": "Round",
-      "Asset_Instructions__c": null,
+      "Asset_Instructions__c": "",
       "Label__c": "FK2",
       "Name": "2nd Floor Corridor by Flat 12 & 13 Ceiling, EL, FK2"
     }}
