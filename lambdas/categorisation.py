@@ -419,12 +419,15 @@ def classify_asset_text(text):
     - If nothing meaningful, return nothing at all .
 
     4) LABEL (Label__c)
-    - If the capture contains a line that begins, ends or has “Step <number>” within (e.g., “Step 7: Open the test valve slowly …” : "Installation Valve Test Valve - Part of testing Instructions Part 10." ),
-    set Label__c to the FULL step line. Do not truncate or shorten it.
-    - Otherwise, prefer a short code present anywhere in the text, typically one of:
-    FF\d+, FK\d+, EL\d+, EM\d+, CP\d+, MCP\d+, SD\d+, HD\d+, SB\d+, R\d+,
-    or more generally [A-Z]{1,3}\d{1,3}.
-    - Return Label__c as-is for sentences; uppercase short codes (e.g., "FF1", "FK11"). If not found, return nothing at all .
+    - Priority order:
+    1) If an explicit label is provided via a “Label:” field, use that exact value.
+    2) ELSE if the text contains any “Step <number>” token (e.g., “Step 10: …”, “Step 10 - …”, or “... Step 10 ...”),
+        set Label__c to exactly "Step <number>" (JUST the word “Step” and the number, no following text).
+        Examples: “Step 7: Open the valve …” → Label__c = "Step 7"; “... proceed to Step 3 ...” → Label__c = "Step 3".
+    3) ELSE prefer a short asset code anywhere in the text, typically one of:
+        FF\d+, FK\d+, EL\d+, EM\d+, CP\d+, MCP\d+, SD\d+, HD\d+, SB\d+, R\d+, or generally [A-Z]{1,3}\d{1,3}.
+    - Return Label__c as-is for sentence-like labels; uppercase only the short code tokens (e.g., "FF1", "FK11").
+    - If none of the above are found, set Label__c to an empty string "".
 
     5) NAME (Name)  — and the “Testing Procedures” override
 
