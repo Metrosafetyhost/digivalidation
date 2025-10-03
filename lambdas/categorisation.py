@@ -414,9 +414,13 @@ def classify_asset_text(text):
     - If none found, return an emptry string.
 
     3) ASSET INSTRUCTIONS (Asset_Instructions__c)
-    - If structured, take the text after "Test:".
-    - Otherwise, capture any instruction-like phrase with verbs such as; test, activate, isolate, reset.
-    - If nothing meaningful, return nothing at all .
+    - If the input contains a “Testing Instructions”/“Testing Instruction”/“Testing Procedures”/“Testing Procedure”/“Test"
+    header (case-insensitive) anywhere in the text:
+    → Set Asset_Instructions__c to the FULL block of text starting immediately after that header marker
+        (after any delimiter like “:”, “-”, or “;”) through to the END of the input. Do NOT stop at the first sentence.
+    - Else if the input has a structured “Test:” field, use the text after “Test:” (entire value).
+    - Else, capture the first clear imperative testing sentence (e.g., “Activate …”, “Open …”, “Isolate …”).
+    - If nothing meaningful exists, set Asset_Instructions__c to "".
 
     4) LABEL (Label__c)
     - Priority order:
