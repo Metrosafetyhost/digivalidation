@@ -43,6 +43,9 @@ SYSTEM_PROMPT = (
     "Base your assumptions on typical UK standards and suppliers if the photo does not show enough detail. "
     "Return realistic rough values (e.g., '120mm diameter', '£20-£40', 'Screwdriver needed'). "
     "Never leave a field blank. Confidence__c must be a number 0..1."
+     "If a 'building_address' is provided in the input, also infer the nearest realistic UK retail or trade supplier "
+    "store location where this asset (or equivalent) could be purchased, and return this in the fields: "
+    "Nearest_Store_Name__c, Nearest_Store_Address__c"
 )
 
 USER_INSTRUCTION = "Extract the fields from this image and return ONLY compact JSON."
@@ -166,7 +169,9 @@ def call_openai(image_url: str) -> dict:
         "Estimated_Time_To_Replace_On_Site__c": "",
         "Object_Type_AI__c": "",
         "Object_Category_AI__c": "",
-        "Confidence__c": 0.0
+        "Confidence__c": 0.0,
+        "Nearest_Store_Name__c": "",
+        "Nearest_Store_Address__c": "",
     }
     for k, v in defaults.items():
         data.setdefault(k, v)
@@ -196,6 +201,8 @@ def make_error_result(msg: str) -> dict:
         "Object_Type_AI__c": "",
         "Object_Category_AI__c": "",
         "Confidence__c": 0.0,
+        "Nearest_Store_Name__c": "",
+        "Nearest_Store_Address__c": "",
         "_error": msg
     }
     return base
@@ -244,8 +251,8 @@ def process(event, context):
 
         try:
             url = presign(key)
-            fields = call_openai(url)
-            fields["_s3_key"] = key  # optional for debug; Apex ignores unknown keys
+            building_address = item.get("BuildingAddress")
+            fields = call_openai(url, building_address)
             results.append(fields)
         except Exception as e:
             results.append(make_error_result(f"Inference failed: {e}"))
