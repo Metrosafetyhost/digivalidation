@@ -228,6 +228,8 @@ def parse_incoming(event):
 # Handler
 # ---------------------------
 def process(event, context):
+    print("=== Incoming Event ===")
+    print(json.dumps(event, indent=2))
     try:
         items = parse_incoming(event)
     except Exception as e:
