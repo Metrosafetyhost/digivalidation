@@ -42,8 +42,8 @@ SYSTEM_PROMPT = (
     "For Colour__c, return only a SINGLE most dominant or most likely colour (not multiple). "
     "Base your assumptions on typical UK standards and suppliers if the photo does not show enough detail. "
     "Return realistic rough values (e.g., '120mm diameter', '£20-£40', 'Screwdriver needed'). "
-    "Never leave a field blank. Confidence__c must be a number 0..1."
-     "If a 'building_address' is provided in the input, also infer the nearest realistic UK retail or trade supplier "
+    "Never leave a field blank. Confidence__c must be a number 0..1. "
+    "If a 'building_address' is provided in the input, also infer the nearest realistic UK retail or trade supplier "
     "store location where this asset (or equivalent) could be purchased, and return this in the fields: "
     "Nearest_Store_Name__c, Nearest_Store_Address__c"
 )
@@ -124,16 +124,14 @@ def normalize_asset_condition(text: str) -> str:
     # Fallback: choose a safe middle ground if the model is vague
     return "C2 - Minor Defects Only"
 
-def call_openai(image_url: str) -> dict:
-    """
-    Call an OpenAI vision-capable model with an image URL and parse JSON out.
-    """
+def call_openai(image_url: str, building_address: str) -> dict:
     resp = oai.chat.completions.create(
         model=MODEL,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": [
                 {"type": "text", "text": USER_INSTRUCTION},
+                {"type": "text", "text": f"Building address: {building_address}"},
                 {"type": "image_url", "image_url": {"url": image_url}},
             ]}
         ],
