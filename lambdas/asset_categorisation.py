@@ -43,9 +43,11 @@ SYSTEM_PROMPT = (
     "Base your assumptions on typical UK standards and suppliers if the photo does not show enough detail. "
     "Return realistic rough values (e.g., '120mm diameter', '£20-£40', 'Screwdriver needed'). "
     "Never leave a field blank. Confidence__c must be a number 0..1. "
-    "If a 'building_address' is provided in the input, also infer the nearest realistic UK retail or trade supplier "
-    "store location where this asset (or equivalent) could be purchased, and return this in the fields: "
-    "Nearest_Store_Name__c" "And "" Nearest_Store_Address__c" "Note, please provide a value for both !"
+    "If a 'building_address' is provided in the input, identify the nearest realistic UK retail or trade supplier "
+    "store location where this asset (or equivalent) could be purchased. "
+    "Return BOTH the brand name AND a plausible full branch address in the fields: "
+    "Nearest_Store_Name__c and Nearest_Store_Address__c. "
+    "The address should be as complete as possible — including street name, city, and postcode — and should be a real or typical UK store location."
 )
 
 USER_INSTRUCTION = "Extract the fields from this image and return ONLY compact JSON."
