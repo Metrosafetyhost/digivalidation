@@ -45,7 +45,7 @@ SYSTEM_PROMPT = (
     "Never leave a field blank. Confidence__c must be a number 0..1. "
     "If a 'building_address' is provided in the input, also infer the nearest realistic UK retail or trade supplier "
     "store location where this asset (or equivalent) could be purchased, and return this in the fields: "
-    "Nearest_Store_Name__c, Nearest_Store_Address__c"
+    "Nearest_Store_Name__c" "And "" Nearest_Store_Address__c" "Note, please provide a value for both !"
 )
 
 USER_INSTRUCTION = "Extract the fields from this image and return ONLY compact JSON."
