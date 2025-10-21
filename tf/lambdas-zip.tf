@@ -68,7 +68,7 @@ module "lambdas_zip" {
     basic_event            = { handler = "process", timeout = 240, memory_size = 512 }
     bedrock                = { handler = "process", timeout = 240, memory_size = 512 }
     categorisation         = { handler = "process", timeout = 240, memory_size = 512 }
-    checklist              = { handler = "process", timeout = 240, memory_size = 512 }
+    checklist              = { handler = "process", timeout = 900, memory_size = 512 }
     checklist_proofing     = { handler = "process", timeout = 240, memory_size = 512 }
     config                 = { handler = "process", timeout = 240, memory_size = 512 }
     db                     = { handler = "process", timeout = 240, memory_size = 512 }
