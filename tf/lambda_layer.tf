@@ -948,3 +948,90 @@ resource "aws_iam_role_policy_attachment" "attach_s3_read_metrosafetyprod_to_ass
   role       = data.aws_iam_role.asset_categorisation_role.name
   policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprod.arn
 }
+
+
+# Nova Water perms
+
+resource "aws_iam_role" "bedrock_lambda_nova_water" {
+  name = "bedrock-lambda-nova_water"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect    = "Allow",
+      Principal = { Service = "lambda.amazonaws.com" },
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+# CloudWatch logs
+resource "aws_iam_role_policy_attachment" "nova_water_basic_exec" {
+  role       = aws_iam_role.bedrock_lambda_nova_water.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_policy" "nova_water_bedrock_policy" {
+  name        = "NovaWaterBedrockInvoke"
+  description = "Allow Lambda to use Bedrock Nova via Converse in eu-west-2"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Sid    = "ConverseNova",
+        Effect = "Allow",
+        Action = [
+          "bedrock:Converse",
+          "bedrock:ConverseStream",
+          "bedrock:InvokeModel",                      # keep for backwards-compat
+          "bedrock:InvokeModelWithResponseStream"     # keep for backwards-compat
+        ],
+        Resource = [
+          "arn:aws:bedrock:eu-west-2::foundation-model/amazon.nova-lite-v1:0",
+          "arn:aws:bedrock:eu-west-2::foundation-model/amazon.nova-pro-v1:0"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "nova_water_bedrock_attach" {
+  role       = aws_iam_role.bedrock_lambda_nova_water.name
+  policy_arn = aws_iam_policy.nova_water_bedrock_policy.arn
+}
+
+# Read the WorkOrders/ prefix only (list limited by prefix, read objects under it)
+resource "aws_iam_policy" "nova_water_s3_read" {
+  name        = "NovaWaterS3ReadWorkOrders"
+  description = "Allow Lambda to read PDFs under metrosafetyprodfiles/WorkOrders/"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Sid    = "ListWorkOrdersPrefix",
+        Effect = "Allow",
+        Action = ["s3:ListBucket"],
+        Resource = "arn:aws:s3:::metrosafetyprodfiles",
+        Condition = {
+          StringLike = { "s3:prefix" : "WorkOrders/*" }
+        }
+      },
+      {
+        Sid    = "GetWorkOrdersObjects",
+        Effect = "Allow",
+        Action = [
+          "s3:GetObject",
+          "s3:HeadObject"
+        ],
+        Resource = "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "nova_water_s3_read_attach" {
+  role       = aws_iam_role.bedrock_lambda_nova_water.name
+  policy_arn = aws_iam_policy.nova_water_s3_read.arn
+}
