@@ -977,7 +977,7 @@ resource "aws_iam_policy" "nova_water_bedrock_policy" {
 }
 
 resource "aws_iam_role_policy_attachment" "nova_water_bedrock_attach" {
-  role       = "bedrock-lambda-nova_water"
+  role       = module.lambdas_zip.aws_iam_role.lambda["nova_water"].name
   policy_arn = aws_iam_policy.nova_water_bedrock_policy.arn
 }
 # Read the WorkOrders/ prefix only (list limited by prefix, read objects under it)
@@ -1011,6 +1011,6 @@ resource "aws_iam_policy" "nova_water_s3_read" {
 }
 
 resource "aws_iam_role_policy_attachment" "nova_water_s3_read_attach" {
-  role       = "bedrock-lambda-nova_water"
+  role       = module.lambdas_zip.aws_iam_role.lambda["nova_water"].name
   policy_arn = aws_iam_policy.nova_water_s3_read.arn
 }
