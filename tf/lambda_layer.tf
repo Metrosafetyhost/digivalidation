@@ -951,26 +951,6 @@ resource "aws_iam_role_policy_attachment" "attach_s3_read_metrosafetyprod_to_ass
 
 
 # Nova Water perms
-
-resource "aws_iam_role" "bedrock_lambda_nova_water" {
-  name = "bedrock-lambda-nova_water"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Effect    = "Allow",
-      Principal = { Service = "lambda.amazonaws.com" },
-      Action    = "sts:AssumeRole"
-    }]
-  })
-}
-
-# CloudWatch logs
-resource "aws_iam_role_policy_attachment" "nova_water_basic_exec" {
-  role       = aws_iam_role.bedrock_lambda_nova_water.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
 resource "aws_iam_policy" "nova_water_bedrock_policy" {
   name        = "NovaWaterBedrockInvoke"
   description = "Allow Lambda to use Bedrock Nova via Converse in eu-west-2"
@@ -997,10 +977,9 @@ resource "aws_iam_policy" "nova_water_bedrock_policy" {
 }
 
 resource "aws_iam_role_policy_attachment" "nova_water_bedrock_attach" {
-  role       = aws_iam_role.bedrock_lambda_nova_water.name
+  role       = "bedrock-lambda-nova_water"
   policy_arn = aws_iam_policy.nova_water_bedrock_policy.arn
 }
-
 # Read the WorkOrders/ prefix only (list limited by prefix, read objects under it)
 resource "aws_iam_policy" "nova_water_s3_read" {
   name        = "NovaWaterS3ReadWorkOrders"
@@ -1032,6 +1011,6 @@ resource "aws_iam_policy" "nova_water_s3_read" {
 }
 
 resource "aws_iam_role_policy_attachment" "nova_water_s3_read_attach" {
-  role       = aws_iam_role.bedrock_lambda_nova_water.name
+  role       = "bedrock-lambda-nova_water"
   policy_arn = aws_iam_policy.nova_water_s3_read.arn
 }
