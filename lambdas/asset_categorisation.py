@@ -37,8 +37,8 @@ SYSTEM_PROMPT = (
     "Estimated_Labour_Cost_To_Repair__c, Estimated_Labour_Cost_To_Replace__c, "
     "Estimated_Labour_Cost_To_Repair_On_Site__c, Estimated_Time_To_Replace_On_Site__c, "
     "Object_Type_AI__c, Object_Category_AI__c, Confidence__c, "
-    # "Nearest_Store_Name__c, Nearest_Store_Address__c, "
-    # "Drive_Time__c, Price_Including_Drive_Time__c, Opening_Hours__c. "
+    "Nearest_Store_Name__c, Nearest_Store_Address__c, "
+    "Drive_Time__c, Price_Including_Drive_Time__c, Opening_Hours__c. "
     "Always provide a best-guess for every field, even if uncertain. If there is none however, respond with N/A. "
     "For Colour__c, return only a SINGLE most dominant or most likely colour (not multiple). "
     "Base your assumptions on typical UK standards and suppliers if the photo does not show enough detail. "
@@ -49,14 +49,14 @@ SYSTEM_PROMPT = (
     "For Object_Category_AI__c, you MUST pick exactly one allowed subtype for the chosen key; if the key has no subtypes "
     "or none fit, use 'N/A'. "
     "Do not invent labels outside OBJECT_MAP; match strings exactly (case and spacing).\n"
-    # "If a 'building_address' is provided in the input, identify the nearest realistic UK retail or trade supplier "
-    # "store location where this asset (or equivalent) could be purchased. "
-    # "Return BOTH the brand name AND a plausible full branch address in the fields: "
-    # "Nearest_Store_Name__c and Nearest_Store_Address__c. "
-    # "Also include the estimated round-trip drive time in minutes in Drive_Time__c, "
-    # "the estimated total price including travel in Price_Including_Drive_Time__c, "
-    # "and the store opening hours in Opening_Hours__c. "
-    # "The address should be as complete as possible — including street name, city, and postcode — and should be a real or typical UK store location."
+    "If a 'building_address' is provided in the input, identify the nearest realistic UK retail or trade supplier "
+    "store location where this asset (or equivalent) could be purchased. "
+    "Return BOTH the brand name AND a plausible full branch address in the fields: "
+    "Nearest_Store_Name__c and Nearest_Store_Address__c. "
+    "Also include the estimated round-trip drive time in minutes in Drive_Time__c, "
+    "the estimated total price including travel in Price_Including_Drive_Time__c, "
+    "and the store opening hours in Opening_Hours__c. "
+    "The address should be as complete as possible — including street name, city, and postcode — and should be a real or typical UK store location."
 )
 
 USER_INSTRUCTION = "Extract the fields from this image and return ONLY compact JSON."
@@ -352,11 +352,11 @@ def call_openai(image_url: str, building_address: str) -> dict:
         "Object_Type_AI__c": "",
         "Object_Category_AI__c": "",
         "Confidence__c": 0.0,
-        # "Nearest_Store_Name__c": "",
-        # "Nearest_Store_Address__c": "",
-        # "Drive_Time__c": "",
-        # "Price_Including_Drive_Time__c": "",
-        # "Opening_Hours__c": "",
+        "Nearest_Store_Name__c": "",
+        "Nearest_Store_Address__c": "",
+        "Drive_Time__c": "",
+        "Price_Including_Drive_Time__c": "",
+        "Opening_Hours__c": "",
     }
     for k, v in defaults.items():
         data.setdefault(k, v)
@@ -386,11 +386,11 @@ def make_error_result(msg: str) -> dict:
         "Object_Type_AI__c": "",
         "Object_Category_AI__c": "",
         "Confidence__c": 0.0,
-        # "Nearest_Store_Name__c": "",
-        # "Nearest_Store_Address__c": "",
-        # "Drive_Time__c": "",
-        # "Price_Including_Drive_Time__c": "",
-        # "Opening_Hours__c": "",
+        "Nearest_Store_Name__c": "",
+        "Nearest_Store_Address__c": "",
+        "Drive_Time__c": "",
+        "Price_Including_Drive_Time__c": "",
+        "Opening_Hours__c": "",
         "_error": msg
     }
     return base

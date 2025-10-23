@@ -50,7 +50,7 @@ def process(event, context):
         {
             "document": {
                 "format": "pdf",
-                "name": nova_safe_name(key),  # ✅ now compliant
+                "name": nova_safe_name(key),
                 "source": {"s3Location": {"uri": f"s3://{bucket}/{key}"}}
             }
         },
