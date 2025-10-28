@@ -79,6 +79,6 @@ module "lambdas_zip" {
     hsa_checklist_proofing = { handler = "process", timeout = 240, memory_size = 512 }
     salesforce_input       = { handler = "process", timeout = 240, memory_size = 512 }
     emails                 = { handler = "process", timeout = 240, memory_size = 512 }
-    nova_water             = { handler = "process", timeout = 240, memory_size = 512 }
+    nova_water             = { handler = "process", timeout = 900, memory_size = 512 }
   }
 }
