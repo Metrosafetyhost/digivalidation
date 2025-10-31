@@ -332,7 +332,7 @@ def validate_extraction(result: dict) -> dict:
     """Clamp Object_Type__c/Object_Category__c to the closed lists; smart-normalise Label__c."""
     safe = {
         "Object_Type__c": None,
-        "Object_Category__c": None,
+        "Object_Category__c": "",
         "Asset_Instructions__c": None,
         "Label__c": None,
         "Name": None
@@ -346,11 +346,19 @@ def validate_extraction(result: dict) -> dict:
 
     if t not in OBJECT_MAP:
         out["Object_Type__c"] = None
-        out["Object_Category__c"] = None
+        out["Object_Category__c"] = ""
     else:
-        allowed = set(OBJECT_MAP.get(t, []))
-        if not allowed or c not in allowed:
-            out["Object_Category__c"] = None
+        allowed = OBJECT_MAP.get(t, [])
+        if not allowed:
+            # This type has no categories; force empty string (not None)
+            out["Object_Category__c"] = ""
+        else:
+            # Type has a closed set of categories
+            if c not in allowed:
+                out["Object_Category__c"] = ""
+            else:
+                # normalise category to exactly the canonical string
+                out["Object_Category__c"] = c
 
     # only uppercase when it's a short code token like FF1, MCP12, etc.
     lbl = out.get("Label__c")
@@ -374,6 +382,17 @@ def extract_first_step_line(text: str):
 
 
 def classify_asset_text(text):
+
+    _t = (text or "").lower()
+    if "bsra" in _t and ("complete" in _t or "completed" in _t):
+        return {
+            "Object_Type__c": "BSRA",
+            "Object_Category__c": "",
+            "Asset_Instructions__c": "BSRA completed",
+            "Label__c": "",
+            "Name": "BSRA"
+        }
+    
     prompt = f"""
     You are classifying facility safety assets for Metro Safety. The input may be well structured
     (e.g., "Emergency Light - Location: 7th Floor ... Type: ... Test: ...") OR free text with no labels.
@@ -390,7 +409,7 @@ def classify_asset_text(text):
     - Valid object types are ONLY those in OBJECT_TYPES.
     - For a chosen type, valid categories are ONLY those in CATEGORIES_BY_TYPE[type].
     - If the text does not clearly specify a category, set Object_Category__c to an empty string. Do not guess.
-    - If the text does not clearly specify a type, set Object_Type__c to an dmepty string and also set Object_Category__c to an empty string.
+    - If the text does not clearly specify a type, set Object_Type__c to an empty string and also set Object_Category__c to an empty string.
     - Uppercase Label__c. Never leave Name blank.
 
     ## ENUMS (closed world for choices)
