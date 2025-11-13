@@ -130,25 +130,25 @@ resource "aws_lambda_permission" "apigw_lambda_asset_categorisation" {
   source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
 }
 
-# Integration for Water Risk Case Ingest Lambda
-resource "aws_apigatewayv2_integration" "water_risk_case_ingest_integration" {
-  api_id           = aws_apigatewayv2_api.lambda_api.id
-  integration_type = "AWS_PROXY"
-  integration_uri  = "arn:aws:lambda:eu-west-2:837329614132:function:waterRiskCaseIngest"
-}
+# # Integration for Water Risk Case Ingest Lambda
+# resource "aws_apigatewayv2_integration" "water_risk_case_ingest_integration" {
+#   api_id           = aws_apigatewayv2_api.lambda_api.id
+#   integration_type = "AWS_PROXY"
+#   integration_uri  = "arn:aws:lambda:eu-west-2:837329614132:function:waterRiskCaseIngest"
+# }
 
-# Route for POST /water_risk_case_ingest
-resource "aws_apigatewayv2_route" "water_risk_case_ingest_route" {
-  api_id    = aws_apigatewayv2_api.lambda_api.id
-  route_key = "POST /water_risk_case_ingest"
-  target    = "integrations/${aws_apigatewayv2_integration.water_risk_case_ingest_integration.id}"
-}
+# # Route for POST /water_risk_case_ingest
+# resource "aws_apigatewayv2_route" "water_risk_case_ingest_route" {
+#   api_id    = aws_apigatewayv2_api.lambda_api.id
+#   route_key = "POST /water_risk_case_ingest"
+#   target    = "integrations/${aws_apigatewayv2_integration.water_risk_case_ingest_integration.id}"
+# }
 
-# Permission to allow API Gateway to invoke the Water Risk Case Ingest Lambda
-resource "aws_lambda_permission" "apigw_lambda_water_risk_case_ingest" {
-  statement_id  = "AllowExecutionFromAPIGatewayWaterRiskCaseIngest"
-  action        = "lambda:InvokeFunction"
-  function_name = "waterRiskCaseIngest" # Lambda name, not ARN
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
-}
+# # Permission to allow API Gateway to invoke the Water Risk Case Ingest Lambda
+# resource "aws_lambda_permission" "apigw_lambda_water_risk_case_ingest" {
+#   statement_id  = "AllowExecutionFromAPIGatewayWaterRiskCaseIngest"
+#   action        = "lambda:InvokeFunction"
+#   function_name = "waterRiskCaseIngest" # Lambda name, not ARN
+#   principal     = "apigateway.amazonaws.com"
+#   source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
+# }
