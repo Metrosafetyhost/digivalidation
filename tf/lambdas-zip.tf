@@ -19,6 +19,7 @@ module "lambdas_zip" {
     "salesforce_input",
     "emails",
     "nova_water",
+    "waterRiskCaseIngest",
   ]
 
   # these are the Python files that get zipped
@@ -36,7 +37,8 @@ module "lambdas_zip" {
     "hsa_checklist_proofing.py",
     "salesforce_input.py",
     "emails.py",
-    "nova_water.py"
+    "nova_water.py",
+    "waterRiskCaseIngest.py",
   ]
 
   runtime       = "python3.13"
@@ -80,5 +82,6 @@ module "lambdas_zip" {
     salesforce_input       = { handler = "process", timeout = 240, memory_size = 512 }
     emails                 = { handler = "process", timeout = 240, memory_size = 512 }
     nova_water             = { handler = "process", timeout = 900, memory_size = 512 }
+    waterRiskCaseIngest    = { handler = "process", timeout = 900, memory_size = 512 }
   }
 }
