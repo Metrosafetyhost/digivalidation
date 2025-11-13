@@ -18,7 +18,7 @@ s3      = boto3.client(
 MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 
 # ------------------------------------------------------------
-# Exact Salesforce picklist (your existing floor logic)
+# Exact Salesforce picklist
 # ------------------------------------------------------------
 CANONICAL_FLOORS_SET = set(
     ["Ground Floor", "Lower Ground", "Under Ground", "External Wall", "Roof", "Grd Mezzanine", "Basement", ] +

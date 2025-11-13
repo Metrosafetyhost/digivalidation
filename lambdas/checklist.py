@@ -352,7 +352,7 @@ def process(event, context):
     logger.info("About to call start_document_analysis for s3://%s/%s", bucket_name, document_key)
 
     try:
-        # ─── (1) Start Textract job ─────────────────────────────────────────────
+        # ─── Start Textract job ────────────────
         tex_resp = textract.start_document_analysis(
             DocumentLocation={
                 "S3Object": {"Bucket": bucket_name, "Name": document_key}
@@ -370,7 +370,7 @@ def process(event, context):
         secs   = group_sections(blocks, tables, fields)
         logger.info("Grouped into %d sections for %s", len(secs), document_key)
 
-        #change here 
+        
         pdf_base      = document_key.split("/")[-1].replace(".pdf", ".json")
         processed_key = f"processed/{pdf_base}"
         combined_body = {"document": document_key, "sections": secs}
