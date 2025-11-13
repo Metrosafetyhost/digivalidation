@@ -134,7 +134,7 @@ resource "aws_lambda_permission" "apigw_lambda_asset_categorisation" {
 resource "aws_apigatewayv2_integration" "water_risk_case_ingest_integration" {
   api_id           = aws_apigatewayv2_api.lambda_api.id
   integration_type = "AWS_PROXY"
-  integration_uri  = "arn:aws:lambda:eu-west-2:837329614132:function:waterRiskCaseIngest"
+  integration_uri  = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-waterRiskCaseIngest"
 }
 
 # Route for POST /water_risk_case_ingest
