@@ -39,10 +39,10 @@ SYSTEM_PROMPT = (
     "Object_Type_AI__c, Object_Category_AI__c, Confidence__c, "
     "Nearest_Store_Name__c, Nearest_Store_Address__c, "
     "Drive_Time__c, Price_Including_Drive_Time__c, Opening_Hours__c, "
-    "Premises_Situation__c, Location_Type__c, Building_Classification__c, "
-    "Floor_Construction__c, Building_Height_m__c, Storeys_Above_Ground__c, "
-    "Storeys_Below_Ground__c, Approx_Dimensions__c, Roof_Details__c, "
-    "Vehicle_Parking__c, General_Occupancy_Types__c, Fire_History_Summary__c. "
+    # "Premises_Situation__c, Location_Type__c, Building_Classification__c, "
+    # "Floor_Construction__c, Building_Height_m__c, Storeys_Above_Ground__c, "
+    # "Storeys_Below_Ground__c, Approx_Dimensions__c, Roof_Details__c, "
+    # "Vehicle_Parking__c, General_Occupancy_Types__c, Fire_History_Summary__c. "
     "Always provide a best-guess for every field, even if uncertain. If there is none however, respond with N/A. "
     "For Colour__c, return only a SINGLE most dominant or most likely colour (not multiple). "
     "Base your assumptions on typical UK standards and suppliers if the photo does not show enough detail. "
@@ -61,12 +61,12 @@ SYSTEM_PROMPT = (
     "the estimated total price including travel in Price_Including_Drive_Time__c, "
     "and typical store opening hours in Opening_Hours__c. "
 
-    "Using the building_address and any visible context in the image, also best-guess the high-level "
-    "building description fields (Premises_Situation__c, Location_Type__c, Building_Classification__c, "
-    "Floor_Construction__c, Building_Height_m__c, Storeys_Above_Ground__c, Storeys_Below_Ground__c, "
-    "Approx_Dimensions__c, Roof_Details__c, Vehicle_Parking__c, "
-    "General_Occupancy_Types__c, Fire_History_Summary__c) in the same style as UK fire risk "
-    "assessments, using 'N/A' if you cannot reasonably infer a value."
+    # "Using the building_address and any visible context in the image, also best-guess the high-level "
+    # "building description fields (Premises_Situation__c, Location_Type__c, Building_Classification__c, "
+    # "Floor_Construction__c, Building_Height_m__c, Storeys_Above_Ground__c, Storeys_Below_Ground__c, "
+    # "Approx_Dimensions__c, Roof_Details__c, Vehicle_Parking__c, "
+    # "General_Occupancy_Types__c, Fire_History_Summary__c) in the same style as UK fire risk "
+    # "assessments, using 'N/A' if you cannot reasonably infer a value."
 )
 
 USER_INSTRUCTION = "Extract the fields from this image and return ONLY compact JSON."
@@ -367,18 +367,18 @@ def call_openai(image_url: str, building_address: str) -> dict:
         "Drive_Time__c": "",
         "Price_Including_Drive_Time__c": "",
         "Opening_Hours__c": "",
-        "Premises_Situation__c": "",
-        "Location_Type__c": "",
-        "Building_Classification__c": "",
-        "Floor_Construction__c": "",
-        "Building_Height_m__c": "",
-        "Storeys_Above_Ground__c": "",
-        "Storeys_Below_Ground__c": "",
-        "Approx_Dimensions__c": "",
-        "Roof_Details__c": "",
-        "Vehicle_Parking__c": "",
-        "General_Occupancy_Types__c": "",
-        "Fire_History_Summary__c": "",
+        # "Premises_Situation__c": "",
+        # "Location_Type__c": "",
+        # "Building_Classification__c": "",
+        # "Floor_Construction__c": "",
+        # "Building_Height_m__c": "",
+        # "Storeys_Above_Ground__c": "",
+        # "Storeys_Below_Ground__c": "",
+        # "Approx_Dimensions__c": "",
+        # "Roof_Details__c": "",
+        # "Vehicle_Parking__c": "",
+        # "General_Occupancy_Types__c": "",
+        # "Fire_History_Summary__c": "",
     }
     for k, v in defaults.items():
         data.setdefault(k, v)
@@ -413,18 +413,18 @@ def make_error_result(msg: str) -> dict:
         "Drive_Time__c": "",
         "Price_Including_Drive_Time__c": "",
         "Opening_Hours__c": "",
-        "Premises_Situation__c": "",
-        "Location_Type__c": "",
-        "Building_Classification__c": "",
-        "Floor_Construction__c": "",
-        "Building_Height_m__c": "",
-        "Storeys_Above_Ground__c": "",
-        "Storeys_Below_Ground__c": "",
-        "Approx_Dimensions__c": "",
-        "Roof_Details__c": "",
-        "Vehicle_Parking__c": "",
-        "General_Occupancy_Types__c": "",
-        "Fire_History_Summary__c": "",
+        # "Premises_Situation__c": "",
+        # "Location_Type__c": "",
+        # "Building_Classification__c": "",
+        # "Floor_Construction__c": "",
+        # "Building_Height_m__c": "",
+        # "Storeys_Above_Ground__c": "",
+        # "Storeys_Below_Ground__c": "",
+        # "Approx_Dimensions__c": "",
+        # "Roof_Details__c": "",
+        # "Vehicle_Parking__c": "",
+        # "General_Occupancy_Types__c": "",
+        # "Fire_History_Summary__c": "",
         "_error": msg
     }
     return base
