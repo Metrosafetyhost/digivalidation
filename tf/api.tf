@@ -102,7 +102,6 @@ resource "aws_lambda_permission" "apigw_lambda_digivalidation" {
   statement_id  = "AllowExecutionFromAPIGatewayDigivalidation"
   action        = "lambda:InvokeFunction"
   function_name = "bedrock-lambda-digival"
-  # ← the name of your Lambda (not the ARN)
   principal  = "apigateway.amazonaws.com"
   source_arn = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
 }
