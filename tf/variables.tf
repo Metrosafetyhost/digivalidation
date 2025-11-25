@@ -67,7 +67,7 @@ variable "openai_secret_name" {
 variable "openai_enabled_lambdas" {
   type    = list(string)
   default = ["asset_categorisation",
-            "pdf_qa",
+            //"pdf_qa",
             ] # add more later as needed
 }
 
