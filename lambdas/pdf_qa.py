@@ -26,11 +26,12 @@ def process(event, context):
     try:
         payload = event if isinstance(event, dict) else json.loads(event["body"])
 
+        bucket = payload.get("bucket", S3_BUCKET)
         pdf_key = payload["pdf_s3_key"]
         question = payload["question"]
 
         # Load PDF bytes from S3
-        obj = s3.get_object(Bucket=S3_BUCKET, Key=pdf_key)
+        obj = s3.get_object(Bucket=bucket, Key=pdf_key)
         pdf_bytes = obj["Body"].read()
 
         # Encode file for OpenAI
