@@ -4,7 +4,7 @@ import base64
 import boto3
 from openai import OpenAI
 
-S3_BUCKET = os.environ.get("ASSET_BUCKET", "metrosafetyprod")
+S3_BUCKET = os.environ.get("ASSET_BUCKET", "metrosafetyprodfiles")
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
 def _load_openai_key():

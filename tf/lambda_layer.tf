@@ -1020,8 +1020,7 @@ data "aws_iam_role" "pdf_qa_role" {
   name = "bedrock-lambda-pdf_qa"
 }
 
-# Attach the existing metrosafetyprod read policy to pdf_qa
-resource "aws_iam_role_policy_attachment" "attach_s3_read_metrosafetyprod_to_pdf_qa" {
+resource "aws_iam_role_policy_attachment" "attach_s3_read_metrosafetyprodfiles_to_pdf_qa" {
   role       = data.aws_iam_role.pdf_qa_role.name
-  policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprod.arn
+  policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprodfiles.arn
 }
