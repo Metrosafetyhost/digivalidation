@@ -19,9 +19,7 @@ OPENAI_API_KEY = _load_openai_key()
 s3 = boto3.client("s3")
 oai = OpenAI(api_key=OPENAI_API_KEY)
 
-
 def process(event, context):
-
     try:
         payload = event if isinstance(event, dict) else json.loads(event["body"])
 
@@ -29,22 +27,20 @@ def process(event, context):
         pdf_key = payload["pdf_s3_key"]
         question = payload["question"]
 
-        # Load PDF
+        print(f"Loading PDF from bucket={bucket}, key={pdf_key}")
+
+        # Load PDF bytes from S3
         obj = s3.get_object(Bucket=bucket, Key=pdf_key)
         pdf_bytes = obj["Body"].read()
 
-        # ---- STEP 1: Upload to OpenAI ----
+        # 1) Upload PDF to OpenAI Files API
         file_upload = oai.files.create(
-            file={
-                "file_name": "document.pdf",
-                "data": pdf_bytes
-            },
-            purpose="assistants"
+            file=("document.pdf", pdf_bytes),
+            purpose="assistants",
         )
-
         file_id = file_upload.id
 
-        # ---- STEP 2: Chat completion referencing file_id ----
+        # 2) Use file_id in chat.completions
         response = oai.chat.completions.create(
             model=MODEL,
             messages=[
@@ -53,27 +49,27 @@ def process(event, context):
                     "content": [
                         {
                             "type": "file",
-                            "file": { "file_id": file_id }
+                            "file": {"file_id": file_id},
                         },
                         {
                             "type": "text",
-                            "text": question
-                        }
-                    ]
+                            "text": question,
+                        },
+                    ],
                 }
-            ]
+            ],
         )
 
         answer = response.choices[0].message.content
 
         return {
             "statusCode": 200,
-            "body": json.dumps({"ok": True, "answer": answer})
+            "body": json.dumps({"ok": True, "answer": answer}),
         }
 
     except Exception as e:
         print("Error:", e)
         return {
             "statusCode": 500,
-            "body": json.dumps({"ok": False, "error": str(e)})
+            "body": json.dumps({"ok": False, "error": str(e)}),
         }
