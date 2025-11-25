@@ -66,7 +66,9 @@ variable "openai_secret_name" {
 # Lambdas that should have OpenAI enabled (layer + secret access)
 variable "openai_enabled_lambdas" {
   type    = list(string)
-  default = ["asset_categorisation"] # add more later as needed
+  default = ["asset_categorisation",
+            "pdf_qa",
+            ] # add more later as needed
 }
 
 # OpenAI layer ARN (eu-west-2 ARM64 for your runtime)

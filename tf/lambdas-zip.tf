@@ -20,6 +20,7 @@ module "lambdas_zip" {
     "emails",
     "nova_water",
     "waterRiskCaseIngest",
+    "pdf_qa",
   ]
 
   # these are the Python files that get zipped
@@ -39,6 +40,7 @@ module "lambdas_zip" {
     "emails.py",
     "nova_water.py",
     "waterRiskCaseIngest.py",
+    "pdf_qa.py"
   ]
 
   runtime       = "python3.13"
@@ -63,6 +65,15 @@ module "lambdas_zip" {
       handler     = "process"
       memory_size = 512
       timeout     = 240
+      lambda_environment = {
+        OPENAI_SECRET_ARN = aws_secretsmanager_secret.openai.arn
+      }
+    }
+
+    pdf_qa = {
+      handler     = "process"
+      timeout     = 240
+      memory_size = 512
       lambda_environment = {
         OPENAI_SECRET_ARN = aws_secretsmanager_secret.openai.arn
       }
