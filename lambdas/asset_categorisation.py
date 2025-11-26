@@ -62,7 +62,7 @@ SYSTEM_PROMPT = (
     "and typical store opening hours in Opening_Hours__c. "
 
     "Using the building_address and any visible context in the image, also best-guess the high-level "
-    "building description field Drive_Distance_km__c "
+    "building description field Drive_Distance_km__c"
     # (Premises_Situation__c, Location_Type__c, Building_Classification__c, "
     # "Floor_Construction__c, Building_Height_m__c, Storeys_Above_Ground__c, Storeys_Below_Ground__c, "
     # "Approx_Dimensions__c, Roof_Details__c, Vehicle_Parking__c, "
@@ -387,7 +387,8 @@ def call_openai(image_url: str, building_address: str) -> dict:
         # "General_Occupancy_Types__c": "",
         # "Fire_History_Summary__c": "",
 
-        "Obsequio_cross_sell__c:": "",
+        "Obsequio_cross_sell__c": "",
+        "Drive_Distance_km__c": "",
     }
     for k, v in defaults.items():
         data.setdefault(k, v)
@@ -435,7 +436,8 @@ def make_error_result(msg: str) -> dict:
         # "General_Occupancy_Types__c": "",
         # "Fire_History_Summary__c": "",
 
-        "Obsequio_cross_sell__c:": "",
+        "Obsequio_cross_sell__c": "",
+        "Drive_Distance_km__c": "",
         "_error": msg
     }
     return base
