@@ -399,7 +399,7 @@ def classify_asset_text(text):
     - "Label__c"
     - "Name"
     - "What3Words__c"
-    - "Test_result__c"
+    - "TEST_RESULT__c"
 
     ## HARD CONSTRAINTS (do not violate)
     - Valid object types are ONLY those in OBJECT_TYPES.
@@ -496,7 +496,7 @@ def classify_asset_text(text):
     - If no What3words marker exists, set What3Words__c to an empty string "".
 
 
-    - TEST_RESULT__C
+    TEST_RESULT__C
       - Look for a phrase like "Todays test result" or "Today's test result" (case-insensitive).
       - If found, set TEST_RESULT__C to the text immediately after the ":" up to the end of that line or sentence.
         Examples:
@@ -504,7 +504,6 @@ def classify_asset_text(text):
         - "Today's test result: Fail"  => TEST_RESULT__C = "Fail"
       - Trim whitespace and any trailing "." or ";" from the value.
       - If no such phrase exists, set TEST_RESULT__C to an empty string "".
-
 
     IMPORTANT RULES
     - Be helpful but conservative: infer when strong cues exist; otherwise return nothing at all.
