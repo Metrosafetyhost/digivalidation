@@ -439,7 +439,12 @@ def classify_asset_text(text):
 
     4) LABEL (Label__c)
     - Priority order:
-    1) If an explicit label is provided via a “Label:” field, use that exact value.
+    - Label__c MUST NEVER contain full sentences.
+    - Label__c MUST be:
+     a) the explicit value after "Label:", OR
+     b) "Step <n>" only (not the rest of the step text), OR
+     c) a short asset code like FF1, FK2, EL5, MCP12.
+    - If none of those are present, set Label__c to "".
     2) ELSE if the text contains any “Step <number>” token (e.g., “Step 10: …”, “Step 10 - …”, or “... Step 10 ...”),
         set Label__c to exactly "Step <number>" (JUST the word “Step” and the number, no following text).
         Examples: “Step 7: Open the valve …” → Label__c = "Step 7"; “... proceed to Step 3 ...” → Label__c = "Step 3".
@@ -491,14 +496,14 @@ def classify_asset_text(text):
     - If no What3words marker exists, set What3Words__c to an empty string "".
 
 
-    - Test_result__c
+    - TEST_RESULT__C
       - Look for a phrase like "Todays test result" or "Today's test result" (case-insensitive).
-      - If found, set Test_result__c to the text immediately after the ":" up to the end of that line or sentence.
+      - If found, set TEST_RESULT__C to the text immediately after the ":" up to the end of that line or sentence.
         Examples:
-        - "Todays test result: Pass." => Test_result__c = "Pass"
-        - "Today's test result: Fail"  => Test_result__c = "Fail"
+        - "Todays test result: Pass." => TEST_RESULT__C = "Pass"
+        - "Today's test result: Fail"  => TEST_RESULT__C = "Fail"
       - Trim whitespace and any trailing "." or ";" from the value.
-      - If no such phrase exists, set Test_result__c to an empty string "".
+      - If no such phrase exists, set TEST_RESULT__C to an empty string "".
 
 
     IMPORTANT RULES
