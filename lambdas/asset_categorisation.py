@@ -43,6 +43,7 @@ SYSTEM_PROMPT = (
     "Floor_Construction__c, Building_Height_m__c, Storeys_Above_Ground__c, "
     "Storeys_Below_Ground__c, Approx_Dimensions__c, Roof_Details__c, "
     "Vehicle_Parking__c, General_Occupancy_Types__c, Fire_History_Summary__c. "
+    "Drive_Distance_km__c, Obsequio_cross_sell__c"
     "Always provide a best-guess for every field, even if uncertain. If there is none however, respond with N/A. "
     "For Colour__c, return only a SINGLE most dominant or most likely colour (not multiple). "
     "Base your assumptions on typical UK standards and suppliers if the photo does not show enough detail. "
