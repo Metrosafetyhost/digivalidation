@@ -147,12 +147,6 @@ def extract_floor(raw: str) -> str | None:
 
     return None
 
-# ------------------------------------------------------------
-# CLOSED-WORLD ENUMS (Object Types & Categories) + guardrail
-#   1) Bind your dictionary to OBJECT_MAP (it was raw at file end)
-#   2) Sanitise, build enums JSON for the prompt
-#   3) Validate model output against OBJECT_MAP
-# ------------------------------------------------------------
 OBJECT_MAP: dict[str, list[str]] = {
   "Access": [],
   "Activation Point": ["Button (Test)", "Check LED", "Distribution Board", "Fish Key", "Fish Key (Own)", "Fish Key (Single Tooth)", "Fish Key (Thin)", "Fish Key Bank", "Fish Key Switch", "Flick Fuse", "Flick Switch", "Fuse (Ceramic)", "Fuse (Pull)", "Key (Flat)", "Switch (Push)", "Switch (Rocker)", "Switch (Test)", "Testing Panel", "Unlisted"],
@@ -404,6 +398,8 @@ def classify_asset_text(text):
     - "Asset_Instructions__c"
     - "Label__c"
     - "Name"
+    - "What3Words__c"
+    - "Test_result__c"
 
     ## HARD CONSTRAINTS (do not violate)
     - Valid object types are ONLY those in OBJECT_TYPES.
@@ -485,12 +481,31 @@ def classify_asset_text(text):
     - Never invent an object type. If no valid object type is evident and the override doesn’t apply, set Object_Type__c = "" and Object_Category__c = "".
     - Never leave Name null; if you cannot construct a valid Name by the above rules, set Name = "TEMPORARY - NAME NOT FOUND".
 
+    - What3Words__c
+    - Look for a marker such as "What3words", "What3Words", or "what3words" (case-insensitive).
+    - After the marker and the ":" or "-", extract the What3words value.
+    - REMOVE any leading "///" if present.
+      - Example: "///slower.minute.first" → "slower.minute.first"
+    - If the value appears without slashes, return it exactly as found.
+    - Stop capturing at the next separator such as " - ", ".", or end of the line.
+    - If no What3words marker exists, set What3Words__c to an empty string "".
+
+
+    - Test_result__c
+      - Look for a phrase like "Todays test result" or "Today's test result" (case-insensitive).
+      - If found, set Test_result__c to the text immediately after the ":" up to the end of that line or sentence.
+        Examples:
+        - "Todays test result: Pass." => Test_result__c = "Pass"
+        - "Today's test result: Fail"  => Test_result__c = "Fail"
+      - Trim whitespace and any trailing "." or ";" from the value.
+      - If no such phrase exists, set Test_result__c to an empty string "".
+
 
     IMPORTANT RULES
     - Be helpful but conservative: infer when strong cues exist; otherwise return nothing at all.
     - Use Title Case for Object_Category__c; keep Object_Type__c in normal case (e.g., "Emergency Light").
     - Uppercase Label__c.
-    - Output must be STRICT JSON with ONLY the 5 fields, no extra text.
+    - Output must be STRICT JSON with ONLY the 7 fields, no extra text.
 
     ## Examples
 

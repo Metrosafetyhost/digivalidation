@@ -66,13 +66,41 @@ SYSTEM_PROMPT = (
     "Floor_Construction__c, Building_Height_m__c, Storeys_Above_Ground__c, Storeys_Below_Ground__c, "
     "Approx_Dimensions__c, Roof_Details__c, Vehicle_Parking__c,  Drive_Distance_km__c,"
     "General_Occupancy_Types__c, Fire_History_Summary__c) in the same style as UK fire risk "
-    "assessments, using 'N/A' if you cannot reasonably infer a value."
+    "assessments"
 
-    "Using publicly available information only, determine whether any company within the Obsequio Group could "
-    "install, replace, maintain, service, monitor, or provide IoT connectivity for the identified asset. "
-    "State which Obsequio company (or companies) could help and what specific services they are likely able to "
-    "offer for this type of asset. Provide a concise summary of the cross-sell or up-sell opportunity in the field "
-    "Obsequio_cross_sell__c."
+    "For ALL fields, if the information is missing, unclear, or not visible, you MUST provide a realistic"
+    "estimated value or range based on typical UK assets, buildings, construction practices, or dimensions."
+    "Never simply return N/A unless there is absolutely no reasonable inference that can be made."
+
+    "When providing estimates:"
+    "- Use realistic ranges (e.g., “8–12 m”, “20–40 minutes”, “£80–£120”)"
+    "- Include only the final estimated value/range in the JSON (no explanation)"
+    "- Internally reason about building type, age, materials, and UK norms, but do not expose chain-of-thought"
+    "- Ensure the estimate is plausible, concise, and formatted as a usable value"
+    "- If forced to return N/A, do so only when no reasonable inference exists"
+
+    "Confidence__c must be a number between 0 and 1 representing your overall certainty for"
+    "the classification and estimates."
+
+    "Using publicly available information only, analyse the identified asset and determine which specific "
+    "Obsequio Group company (or companies) could provide installation, replacement, maintenance, "
+    "servicing, monitoring, inspection, or IoT connectivity for this asset. "
+
+    "Your analysis must include: "
+    "1. A clear identification of the asset type. "
+    "2. The typical fire, safety, electrical, or compliance services such an asset usually needs. "
+    "3. A mapping of those needs to the known capabilities of individual Obsequio Group companies. "
+    "4. A statement of which companies can most likely: "
+    "   - install the asset "
+    "   - maintain/service it "
+    "   - upgrade/replace it "
+    "   - monitor it remotely "
+    "   - provide IoT integration "
+    "(Choose all that reasonably apply.) "
+
+    "Finally, provide a concise, sales-ready summary (<40 words) in the field "
+    "Obsequio_cross_sell__c that highlights the most relevant up-sell and cross-sell opportunities "
+    "for this specific asset type. This summary must be direct, useful, and tailored to the asset. "
 )
 
 USER_INSTRUCTION = "Extract the fields from this image and return ONLY compact JSON."
