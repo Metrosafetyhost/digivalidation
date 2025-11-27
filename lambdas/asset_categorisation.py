@@ -39,11 +39,11 @@ SYSTEM_PROMPT = (
     "Object_Type_AI__c, Object_Category_AI__c, Confidence__c, "
     "Nearest_Store_Name__c, Nearest_Store_Address__c, "
     "Drive_Time__c, Price_Including_Drive_Time__c, Opening_Hours__c, "
-    "Premises_Situation__c, Location_Type__c, Building_Classification__c, "
-    "Floor_Construction__c, Building_Height_m__c, Storeys_Above_Ground__c, "
-    "Storeys_Below_Ground__c, Approx_Dimensions__c, Roof_Details__c, "
-    "Vehicle_Parking__c, General_Occupancy_Types__c, Fire_History_Summary__c. "
-    "Drive_Distance_km__c, Obsequio_cross_sell__c"
+    # "Premises_Situation__c, Location_Type__c, Building_Classification__c, "
+    # "Floor_Construction__c, Building_Height_m__c, Storeys_Above_Ground__c, "
+    # "Storeys_Below_Ground__c, Approx_Dimensions__c, Roof_Details__c, "
+    # "Vehicle_Parking__c, General_Occupancy_Types__c, Fire_History_Summary__c. "
+    # "Drive_Distance_km__c, Obsequio_cross_sell__c"
     "Always provide a best-guess for every field, even if uncertain. If there is none however, respond with N/A. "
     "For Colour__c, return only a SINGLE most dominant or most likely colour (not multiple). "
     "Base your assumptions on typical UK standards and suppliers if the photo does not show enough detail. "
@@ -62,12 +62,12 @@ SYSTEM_PROMPT = (
     "the estimated total price including travel in Price_Including_Drive_Time__c, "
     "and typical store opening hours in Opening_Hours__c. "
 
-    "Using the building_address and any visible context in the image, also best-guess the high-level "
-    "building description fields (Premises_Situation__c, Location_Type__c, Building_Classification__c, "
-    "Floor_Construction__c, Building_Height_m__c, Storeys_Above_Ground__c, Storeys_Below_Ground__c, "
-    "Approx_Dimensions__c, Roof_Details__c, Vehicle_Parking__c,  Drive_Distance_km__c,"
-    "General_Occupancy_Types__c, Fire_History_Summary__c) in the same style as UK fire risk "
-    "assessments"
+    # "Using the building_address and any visible context in the image, also best-guess the high-level "
+    # "building description fields (Premises_Situation__c, Location_Type__c, Building_Classification__c, "
+    # "Floor_Construction__c, Building_Height_m__c, Storeys_Above_Ground__c, Storeys_Below_Ground__c, "
+    # "Approx_Dimensions__c, Roof_Details__c, Vehicle_Parking__c,  Drive_Distance_km__c,"
+    # "General_Occupancy_Types__c, Fire_History_Summary__c) in the same style as UK fire risk "
+    # "assessments"
 
     "For ALL fields, if the information is missing, unclear, or not visible, you MUST provide a realistic"
     "estimated value or range based on typical UK assets, buildings, construction practices, or dimensions."
@@ -83,25 +83,25 @@ SYSTEM_PROMPT = (
     "Confidence__c must be a number between 0 and 1 representing your overall certainty for"
     "the classification and estimates."
 
-    "Using publicly available information only, analyse the identified asset and determine which specific "
-    "Obsequio Group company (or companies) could provide installation, replacement, maintenance, "
-    "servicing, monitoring, inspection, or IoT connectivity for this asset. "
+    # "Using publicly available information only, analyse the identified asset and determine which specific "
+    # "Obsequio Group company (or companies) could provide installation, replacement, maintenance, "
+    # "servicing, monitoring, inspection, or IoT connectivity for this asset. "
 
-    "Your analysis must include: "
-    "1. A clear identification of the asset type. "
-    "2. The typical fire, safety, electrical, or compliance services such an asset usually needs. "
-    "3. A mapping of those needs to the known capabilities of individual Obsequio Group companies. "
-    "4. A statement of which companies can most likely: "
-    "   - install the asset "
-    "   - maintain/service it "
-    "   - upgrade/replace it "
-    "   - monitor it remotely "
-    "   - provide IoT integration "
-    "(Choose all that reasonably apply.) "
+    # "Your analysis must include: "
+    # "1. A clear identification of the asset type. "
+    # "2. The typical fire, safety, electrical, or compliance services such an asset usually needs. "
+    # "3. A mapping of those needs to the known capabilities of individual Obsequio Group companies. "
+    # "4. A statement of which companies can most likely: "
+    # "   - install the asset "
+    # "   - maintain/service it "
+    # "   - upgrade/replace it "
+    # "   - monitor it remotely "
+    # "   - provide IoT integration "
+    # "(Choose all that reasonably apply.) "
 
-    "Finally, provide a concise, sales-ready summary (<40 words) in the field "
-    "Obsequio_cross_sell__c that highlights the most relevant up-sell and cross-sell opportunities "
-    "for this specific asset type. This summary must be direct, useful, and tailored to the asset. "
+    # "Finally, provide a concise, sales-ready summary (<40 words) in the field "
+    # "Obsequio_cross_sell__c that highlights the most relevant up-sell and cross-sell opportunities "
+    # "for this specific asset type. This summary must be direct, useful, and tailored to the asset. "
 )
 
 USER_INSTRUCTION = "Extract the fields from this image and return ONLY compact JSON."
@@ -402,21 +402,21 @@ def call_openai(image_url: str, building_address: str) -> dict:
         "Drive_Time__c": "",
         "Price_Including_Drive_Time__c": "",
         "Opening_Hours__c": "",
-        "Premises_Situation__c": "",
-        "Location_Type__c": "",
-        "Building_Classification__c": "",
-        "Floor_Construction__c": "",
-        "Building_Height_m__c": "",
-        "Storeys_Above_Ground__c": "",
-        "Storeys_Below_Ground__c": "",
-        "Approx_Dimensions__c": "",
-        "Roof_Details__c": "",
-        "Vehicle_Parking__c": "",
-        "General_Occupancy_Types__c": "",
-        "Fire_History_Summary__c": "",
+        # "Premises_Situation__c": "",
+        # "Location_Type__c": "",
+        # "Building_Classification__c": "",
+        # "Floor_Construction__c": "",
+        # "Building_Height_m__c": "",
+        # "Storeys_Above_Ground__c": "",
+        # "Storeys_Below_Ground__c": "",
+        # "Approx_Dimensions__c": "",
+        # "Roof_Details__c": "",
+        # "Vehicle_Parking__c": "",
+        # "General_Occupancy_Types__c": "",
+        # "Fire_History_Summary__c": "",
 
-        "Obsequio_cross_sell__c": "",
-        "Drive_Distance_km__c": "",
+        # "Obsequio_cross_sell__c": "",
+        # "Drive_Distance_km__c": "",
     }
     for k, v in defaults.items():
         data.setdefault(k, v)
@@ -451,21 +451,21 @@ def make_error_result(msg: str) -> dict:
         "Drive_Time__c": "",
         "Price_Including_Drive_Time__c": "",
         "Opening_Hours__c": "",
-        "Premises_Situation__c": "",
-        "Location_Type__c": "",
-        "Building_Classification__c": "",
-        "Floor_Construction__c": "",
-        "Building_Height_m__c": "",
-        "Storeys_Above_Ground__c": "",
-        "Storeys_Below_Ground__c": "",
-        "Approx_Dimensions__c": "",
-        "Roof_Details__c": "",
-        "Vehicle_Parking__c": "",
-        "General_Occupancy_Types__c": "",
-        "Fire_History_Summary__c": "",
+        # "Premises_Situation__c": "",
+        # "Location_Type__c": "",
+        # "Building_Classification__c": "",
+        # "Floor_Construction__c": "",
+        # "Building_Height_m__c": "",
+        # "Storeys_Above_Ground__c": "",
+        # "Storeys_Below_Ground__c": "",
+        # "Approx_Dimensions__c": "",
+        # "Roof_Details__c": "",
+        # "Vehicle_Parking__c": "",
+        # "General_Occupancy_Types__c": "",
+        # "Fire_History_Summary__c": "",
 
-        "Obsequio_cross_sell__c": "",
-        "Drive_Distance_km__c": "",
+        # "Obsequio_cross_sell__c": "",
+        # "Drive_Distance_km__c": "",
         "_error": msg
     }
     return base
