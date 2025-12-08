@@ -406,10 +406,14 @@ def build_user_message(question_number, content):
             "1) Consider ONLY core plant that should appear in the description: "
             "MCW/MCWS (incoming mains cold water), CAL-* (calorifiers), COMBI-* (combination boilers). "
             "TMVs may be mentioned in the description but are NOT a separate Water Asset record.\n"
-            "2) IGNORE the following when deciding PASS/FAIL: SHOWER-*, any pumps (e.g, CALP-*)\n"
+            "2) IGNORE the following when deciding PASS/FAIL: showers (e.g. SHOWER-*), any pumps (e.g. CALP-*), "
+            "fire sprinkler systems, boiler pressurisation units, boiler feed & expansion (F&E) cisterns, "
+            "thermostatic mixing valves (TMVs), and any irrigation systems. These items may appear as Water Asset "
+            "IDs without being mentioned in the description and this must NOT cause a fail.\n"
             "3) PASS if every core plant named in the description has a matching Asset ID in the Water Assets forms, "
             "and there are no EXTRA core-plant Asset IDs that are not named in the description. "
-            "Extras limited to showers/pumps/etc. must NOT cause a fail.\n\n"
+            "Extras limited to showers/pumps/sprinklers/pressurisation units/F&E cisterns/TMVs/irrigation systems "
+            "must NOT cause a fail.\n\n"
             "Output format: reply with EXACTLY one word: PASS or FAIL. No explanation."
         )
     
