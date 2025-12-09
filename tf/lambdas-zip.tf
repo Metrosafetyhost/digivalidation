@@ -21,6 +21,7 @@ module "lambdas_zip" {
     "nova_water",
     "waterRiskCaseIngest",
     "pdf_qa",
+    "blur_image"
   ]
 
   # these are the Python files that get zipped
@@ -40,7 +41,8 @@ module "lambdas_zip" {
     "emails.py",
     "nova_water.py",
     "waterRiskCaseIngest.py",
-    "pdf_qa.py"
+    "pdf_qa.py",
+    "blur_image.py"
   ]
 
   runtime       = "python3.13"
@@ -94,5 +96,6 @@ module "lambdas_zip" {
     emails                 = { handler = "process", timeout = 240, memory_size = 512 }
     nova_water             = { handler = "process", timeout = 900, memory_size = 512 }
     waterRiskCaseIngest    = { handler = "process", timeout = 900, memory_size = 512 }
+    blur_image             = { handler = "process", timeout = 240, memory_size = 512 }
   }
 }
