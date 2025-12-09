@@ -44,7 +44,7 @@ SYSTEM_PROMPT = (
     "Storeys_Below_Ground__c, Approx_Dimensions__c, Roof_Details__c, "
     "Vehicle_Parking__c, General_Occupancy_Types__c, Fire_History_Summary__c. "
     "Drive_Distance_km__c, "
-    # "Obsequio_cross_sell_long__c"
+    "Obsequio_cross_sell_long__c"
     "Always provide a best-guess for every field, even if uncertain. If there is none however, respond with N/A. "
     "For Colour__c, return only a SINGLE most dominant or most likely colour (not multiple). "
     "Base your assumptions on typical UK standards and suppliers if the photo does not show enough detail. "
@@ -84,25 +84,25 @@ SYSTEM_PROMPT = (
     "Confidence__c must be a number between 0 and 1 representing your overall certainty for"
     "the classification and estimates."
 
-    # "Using publicly available information only, analyse the identified asset and determine which specific "
-    # "Obsequio Group company (or companies) could provide installation, replacement, maintenance, "
-    # "servicing, monitoring, inspection, or IoT connectivity for this asset. "
+    "Using publicly available information only, analyse the identified asset and determine which specific "
+    "Obsequio Group company (or companies) could provide installation, replacement, maintenance, "
+    "servicing, monitoring, inspection, or IoT connectivity for this asset. "
 
-    # "Your analysis must include: "
-    # "1. A clear identification of the asset type. "
-    # "2. The typical fire, safety, electrical, or compliance services such an asset usually needs. "
-    # "3. A mapping of those needs to the known capabilities of individual Obsequio Group companies. "
-    # "4. A statement of which companies can most likely: "
-    # "   - install the asset "
-    # "   - maintain/service it "
-    # "   - upgrade/replace it "
-    # "   - monitor it remotely "
-    # "   - provide IoT integration "
-    # "(Choose all that reasonably apply.) "
+    "Your analysis must include: "
+    "1. A clear identification of the asset type. "
+    "2. The typical fire, safety, electrical, or compliance services such an asset usually needs. "
+    "3. A mapping of those needs to the known capabilities of individual Obsequio Group companies. "
+    "4. A statement of which companies can most likely: "
+    "   - install the asset "
+    "   - maintain/service it "
+    "   - upgrade/replace it "
+    "   - monitor it remotely "
+    "   - provide IoT integration "
+    "(Choose all that reasonably apply.) "
 
-    # "Finally, provide a sales-ready summary in the field "
-    # "Obsequio_cross_sell_long__c that highlights the most relevant up-sell and cross-sell opportunities "
-    # "for this specific asset type. This summary must be direct, useful, and tailored to the asset. "
+    "Finally, provide a sales-ready summary in the field "
+    "Obsequio_cross_sell_long__c that highlights the most relevant up-sell and cross-sell opportunities "
+    "for this specific asset type. This summary must be direct, useful, and tailored to the asset. "
 )
 
 USER_INSTRUCTION =  "Respond ONLY with a compact single JSON object containing all fields listed in the system prompt" #Respond ONLY with a single JSON object containing all fields listed in the system prompt. Use full, detailed text for Obsequio_cross_sell_long__c. Do not include any text outside the JSON."
@@ -416,7 +416,7 @@ def call_openai(image_url: str, building_address: str) -> dict:
         "General_Occupancy_Types__c": "",
         "Fire_History_Summary__c": "",
 
-        # "Obsequio_cross_sell_long__c": "",
+        "Obsequio_cross_sell_long__c": "",
         "Drive_Distance_km__c": "",
     }
     for k, v in defaults.items():
@@ -465,7 +465,7 @@ def make_error_result(msg: str) -> dict:
         "General_Occupancy_Types__c": "",
         "Fire_History_Summary__c": "",
 
-        # "Obsequio_cross_sell_long__c": "",
+        "Obsequio_cross_sell_long__c": "",
         "Drive_Distance_km__c": "",
         "_error": msg
     }
