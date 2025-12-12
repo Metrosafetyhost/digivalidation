@@ -1077,3 +1077,35 @@ resource "aws_iam_role_policy_attachment" "attach_blur_image_s3_and_rekognition"
   role       = data.aws_iam_role.blur_image_role.name
   policy_arn = aws_iam_policy.blur_image_s3_and_rekognition.arn
 }
+
+
+# # gecoding Lambda - Amazon Location perms
+# data "aws_iam_role" "geocoding_role" {
+#   name = "bedrock-lambda-geocoding"
+# }
+
+# # Policy: allow the Lambda to call SearchPlaceIndexForText
+# resource "aws_iam_policy" "geocoding_location_policy" {
+#   name        = "GeocodingLocationSearch"
+#   description = "Allow geocoding Lambda to call Amazon Location place index"
+
+#   policy = jsonencode({
+#     Version = "2012-10-17",
+#     Statement = [
+#       {
+#         Effect = "Allow",
+#         Action = [
+#           "location:SearchPlaceIndexForText"
+#         ],
+#         Resource = "*" 
+#         # you can later scope this to the specific place index ARN once you create it
+#       }
+#     ]
+#   })
+# }
+
+# # Attach the policy to the geocoding Lambda role
+# resource "aws_iam_role_policy_attachment" "geocoding_location_attach" {
+#   role       = data.aws_iam_role.geocoding_role.name
+#   policy_arn = aws_iam_policy.geocoding_location_policy.arn
+# }

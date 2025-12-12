@@ -3,13 +3,13 @@ import boto3
 import os
 
 REGION = os.getenv("AWS_REGION", "eu-west-2")
-PLACE_INDEX_NAME = os.getenv("PLACE_INDEX_NAME")
+PLACE_INDEX = os.getenv("PLACE_INDEX_NAME")
 loc = boto3.client("location", region_name=REGION)
 
 
 def build_search_args(address: str, event: dict) -> dict:
     args = {
-        "IndexName": PLACE_INDEX_NAME,
+        "IndexName": PLACE_INDEX,
         "Text": address,
         "MaxResults": event.get("maxResults", 1)
     }
@@ -53,11 +53,11 @@ def geocode_single_address(address: str, event: dict) -> list[dict]:
 
 
 def process(event, context):
-    if not PLACE_INDEX_NAME:
+    if not PLACE_INDEX:
         return {
             "statusCode": 500,
             "body": json.dumps({
-                "error": "PLACE_INDEX_NAME environment variable is not set."
+                "error": "PLACE_INDEX environment variable is not set."
             })
         }
 
