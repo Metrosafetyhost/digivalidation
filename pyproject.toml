@@ -12,6 +12,7 @@ dependencies = [
     "aws-xray-sdk>=2.14.0",
     "bs4>=0.0.2",
     "llama-index-core==0.14.2",
+    "pymupdf>=1.24.0",
 ]
 
 [dependency-groups]
