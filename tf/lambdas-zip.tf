@@ -75,14 +75,21 @@ module "lambdas_zip" {
       }
     }
 
-    pdf_qa = {
-      handler     = "process"
-      timeout     = 240
-      memory_size = 512
-      lambda_environment = {
-        OPENAI_SECRET_ARN = aws_secretsmanager_secret.openai.arn
-      }
+  pdf_qa = {
+    handler     = "process"
+    timeout     = 240
+    memory_size = 512
+
+    lambda_environment = {
+      OPENAI_SECRET_ARN = aws_secretsmanager_secret.openai.arn
     }
+
+    lambda_layer_arns = [
+      module.lambda_layer.lambda_layer_arn, # shared deps
+      var.openai_layer_arn,                 # OpenAI
+      aws_lambda_layer_version.pymupdf.arn
+    ]
+  }
 
     # All other lambdas 
     basic_event            = { handler = "process", timeout = 240, memory_size = 512 }

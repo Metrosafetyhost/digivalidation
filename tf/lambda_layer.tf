@@ -1109,3 +1109,13 @@ resource "aws_iam_role_policy_attachment" "attach_blur_image_s3_and_rekognition"
 #   role       = data.aws_iam_role.geocoding_role.name
 #   policy_arn = aws_iam_policy.geocoding_location_policy.arn
 # }
+
+
+resource "aws_lambda_layer_version" "pymupdf" {
+  layer_name          = "${var.namespace}-${var.env}-pymupdf-py313-arm64"
+  filename            = "${path.module}/layer/pymupdf_layer_py313_arm64.zip"
+  compatible_runtimes = ["python3.13"]
+  compatible_architectures = ["arm64"]
+
+  source_code_hash = filebase64sha256("${path.module}/layer/pymupdf_layer_py313_arm64.zip")
+}
