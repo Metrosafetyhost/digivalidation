@@ -1025,6 +1025,32 @@ resource "aws_iam_role_policy_attachment" "attach_s3_read_metrosafetyprodfiles_t
   policy_arn = aws_iam_policy.lambda_s3_read_metrosafetyprodfiles.arn
 }
 
+# Allow bedrock-lambda-pdf_qa to write generated cover images
+resource "aws_iam_policy" "pdf_qa_write_covers" {
+  name        = "PdfQaWriteCovers"
+  description = "Allow pdf_qa Lambda to write cover PNGs to metrosafetyprodfiles/WorkOrders/covers/"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Sid    = "AllowPutCovers",
+        Effect = "Allow",
+        Action = [
+          "s3:PutObject",
+          "s3:PutObjectTagging"
+        ],
+        Resource = "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/covers/*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "attach_pdf_qa_write_covers" {
+  role       = data.aws_iam_role.pdf_qa_role.name
+  policy_arn = aws_iam_policy.pdf_qa_write_covers.arn
+}
+
 #blur image sata block 
 data "aws_iam_role" "blur_image_role" {
   name = "bedrock-lambda-blur_image"
@@ -1113,9 +1139,9 @@ resource "aws_iam_role_policy_attachment" "attach_blur_image_s3_and_rekognition"
 
 resource "aws_lambda_layer_version" "pymupdf" {
   layer_name          = "${var.namespace}-${var.env}-pymupdf-py313-arm64"
-  filename            = "${path.module}/layer/pymupdf_layer_py313_arm64.zip"
+  filename            = "${path.module}/../pymupdf/pymupdf.zip"
   compatible_runtimes = ["python3.13"]
   compatible_architectures = ["arm64"]
 
-  source_code_hash = filebase64sha256("${path.module}/layer/pymupdf_layer_py313_arm64.zip")
+  source_code_hash = filebase64sha256("${path.module}/../pymupdf/pymupdf.zip")
 }
