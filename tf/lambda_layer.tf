@@ -1147,11 +1147,6 @@ resource "aws_lambda_layer_version" "pymupdf" {
 }
 
 
-# 1) Look up the existing Lambda role by name (same style as your other blocks)
-data "aws_iam_role" "pdf_qa_role" {
-  name = "bedrock-lambda-pdf_qa"
-}
-
 # 2) Look up the existing Lambda function by name (so we can reference its ARN reliably)
 data "aws_lambda_function" "pdf_qa_function" {
   function_name = "bedrock-lambda-pdf_qa"
