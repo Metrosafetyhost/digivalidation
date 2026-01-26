@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import time
 import boto3
 import pymupdf  # PyMuPDF
 from openai import OpenAI
@@ -22,49 +23,397 @@ oai = OpenAI(api_key=OPENAI_API_KEY)
 
 def extract_cover_photo_png(pdf_bytes: bytes) -> bytes | None:
     """
-    Deterministically extracts the *largest embedded image* on page 1 (index 0).
-    Returns PNG bytes or None if no images found.
+    Extracts the image that occupies the largest displayed area on page 1 (index 0).
+    Returns PNG bytes or None if no placed images found.
     """
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     try:
         page = doc[0]
-        images = page.get_images(full=True)
-        if not images:
+        placed = []
+        for img in page.get_images(full=True):
+            xref = img[0]
+            rects = page.get_image_rects(xref)
+            if not rects:
+                continue
+            max_rect = max(rects, key=lambda r: r.width * r.height)
+            placed.append((xref, max_rect.width * max_rect.height))
+
+        if not placed:
             return None
 
-        # choose largest image by pixel area
-        best = None
-        for img in images:
-            xref = img[0]
-            pix = pymupdf.Pixmap(doc, xref)
-            try:
-                if pix.n > 4:
-                    pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
-                area = pix.width * pix.height
-                if (best is None) or (area > best[0]):
-                    best = (area, pix.tobytes("png"))
-            finally:
-                pix = None
-
-        return best[1] if best else None
+        best_xref, _ = max(placed, key=lambda t: t[1])
+        pix = pymupdf.Pixmap(doc, best_xref)
+        try:
+            if pix.n > 4:
+                pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
+            return pix.tobytes("png")
+        finally:
+            pix = None
     finally:
         doc.close()
+
+def extract_text_by_page(pdf_bytes: bytes, max_chars: int = 120_000) -> str:
+    """
+    Extract searchable text with page markers.
+    Cap total chars to keep prompts stable (adjust as needed).
+    """
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        chunks = []
+        total = 0
+        for i, page in enumerate(doc):
+            txt = page.get_text("text") or ""
+            if not txt.strip():
+                continue
+            block = f"\n[Page {i+1}]\n{txt}\n"
+            if total + len(block) > max_chars:
+                remaining = max_chars - total
+                if remaining > 0:
+                    chunks.append(block[:remaining])
+                break
+            chunks.append(block)
+            total += len(block)
+        return "".join(chunks).strip()
+    finally:
+        doc.close()
+
+
+BASE_RULES = """
+You are extracting facts from a Fire Risk Assessment PDF.
+
+Rules:
+- Do NOT guess. Only use information explicitly stated in the PDF (or clearly stated in the extracted text provided).
+- If a field is not explicitly present, return null.
+- If something is ambiguous, put details in notes (but still keep the field null if not explicit).
+- Numbers must be numbers (no units). Height in meters should be numeric.
+- Dates: if a completion date is stated, also provide DD/MM/YYYY.
+- For multi-select classification fields: return an array of allowed enum values only.
+"""
+
+def call_extract(file_id: str, extracted_text: str, schema_name: str, schema: dict, section_instructions: str) -> dict:
+    resp = oai.responses.create(
+        model=MODEL,
+        input=[{
+            "role": "user",
+            "content": [
+                {"type": "input_file", "file_id": file_id},
+                {"type": "input_text", "text": BASE_RULES},
+                {"type": "input_text", "text": f"Section instructions:\n{section_instructions}".strip()},
+                # Optional: enable this later if needed (but watch TPM)
+                # {"type": "input_text", "text": f"Extracted text (page-tagged):\n{extracted_text}".strip()},
+            ],
+        }],
+        text={
+            "format": {
+                "name": schema_name,
+                "type": "json_schema",
+                "schema": schema,
+                "strict": True,
+            }
+        },
+    )
+    return json.loads(resp.output_text)
+
+#retry wrapper to handle 429 TPM rate limits gracefully
+def call_extract_with_retry(
+    file_id: str,
+    extracted_text: str,
+    schema_name: str,
+    schema: dict,
+    section_instructions: str,
+    retries: int = 5
+) -> dict:
+    for attempt in range(retries):
+        try:
+            return call_extract(
+                file_id=file_id,
+                extracted_text=extracted_text,
+                schema_name=schema_name,
+                schema=schema,
+                section_instructions=section_instructions,
+            )
+        except Exception as e:
+            msg = str(e).lower()
+            if "429" in msg or "rate limit" in msg or "tpm" in msg:
+                sleep_s = 1.5 * (attempt + 1)  # 1.5s, 3s, 4.5s, 6s, 7.5s
+                print(f"[{schema_name}] Rate limited (TPM). Sleeping {sleep_s:.1f}s then retrying...")
+                time.sleep(sleep_s)
+                continue
+            raise
+
+    raise RuntimeError(f"[{schema_name}] Failed after {retries} retries due to rate limiting")
+
+# ----------------------------
+# Schemas (6 passes)
+# ----------------------------
+
+def schema_identity_address():
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "uprn": {"type": ["string", "null"]},
+            "building_name": {"type": ["string", "null"]},
+            "building_address": {"type": ["string", "null"]},
+            "address_line_1": {"type": ["string", "null"]},
+            "address_line_2": {"type": ["string", "null"]},
+            "address_line_3": {"type": ["string", "null"]},
+            "address_line_4": {"type": ["string", "null"]},
+            "postcode": {"type": ["string", "null"]},
+            "notes_identity_address": {"type": ["string", "null"]},
+        },
+        "required": [
+            "uprn","building_name","building_address","address_line_1","address_line_2",
+            "address_line_3","address_line_4","postcode","notes_identity_address"
+        ],
+    }
+
+def schema_fire_strategy_systems():
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "awss_sprinkler_misting": {"type": ["string", "null"]},
+            "evacuation_policy": {"type": ["string", "null"]},
+            "fra_completion_date_raw": {"type": ["string", "null"]},
+            "fra_completion_date_ddmmyyyy": {"type": ["string", "null"]},
+            "fra_producer": {"type": ["string", "null"]},
+            "fra_author": {"type": ["string", "null"]},
+            "notes_fire_strategy_systems": {"type": ["string", "null"]},
+        },
+        "required": [
+            "awss_sprinkler_misting","evacuation_policy","fra_completion_date_raw",
+            "fra_completion_date_ddmmyyyy","fra_producer","fra_author","notes_fire_strategy_systems"
+        ],
+    }
+
+def schema_geometry_below_ground():
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "storeys": {"type": ["integer", "null"]},
+            "height_m": {"type": ["number", "null"]},
+            "basement_levels": {"type": ["integer", "null"]},
+            "below_ground_mentioned": {"type": ["boolean", "null"]},
+            "notes_geometry_below_ground": {"type": ["string", "null"]},
+        },
+        "required": [
+            "storeys","height_m","basement_levels","below_ground_mentioned","notes_geometry_below_ground"
+        ],
+    }
+
+def schema_occupancy_use():
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "total_flats": {"type": ["integer", "null"]},
+            "building_uses": {"type": ["string", "null"]},
+            "general_needs": {"type": ["string", "null"]},
+            "main_occupancy_classification": {"type": ["string", "null"]},
+            "total_building_occupancy": {"type": ["integer", "null"]},
+            "other_occupancies": {"type": ["string", "null"]},
+            "residents_per_flat": {"type": ["integer", "null"]},
+            "uses_in_addition_to_residential": {"type": ["string", "null"]},
+            "notes_occupancy_use": {"type": ["string", "null"]},
+        },
+        "required": [
+            "total_flats","building_uses","general_needs","main_occupancy_classification",
+            "total_building_occupancy","other_occupancies","residents_per_flat",
+            "uses_in_addition_to_residential","notes_occupancy_use"
+        ],
+    }
+
+def schema_construction_external_walls():
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "main_external_wall_type": {"type": ["string", "null"]},
+            "walling_infill": {"type": ["string", "null"]},
+            "proximity_to_escape_routes": {"type": ["string", "null"]},
+            "proximity_to_openings": {"type": ["string", "null"]},
+            "main_walling_type_percent": {"type": ["number", "null"]},
+            "year_built": {"type": ["integer", "null"]},
+            "building_construction_description": {"type": ["string", "null"]},
+            "notes_construction_external_walls": {"type": ["string", "null"]},
+        },
+        "required": [
+            "main_external_wall_type","walling_infill","proximity_to_escape_routes",
+            "proximity_to_openings","main_walling_type_percent","year_built",
+            "building_construction_description","notes_construction_external_walls"
+        ],
+    }
+
+def schema_classifications():
+    building_classification_enum = [
+        "Residential 1a (Flats)",
+        "Residential 1b",
+        "Residential 1c",
+        "Residential (Institutional) 2a",
+        "Residential (other) 2b",
+        "Office 3",
+        "Shop & Commercial 4",
+        "Assembly & Recreation 5",
+        "Industrial 6",
+        "Storage & Other non-residential 7(a)",
+        "Car Parks 7(b)",
+        "Not Applicable",
+    ]
+
+    structural_frame_enum = [
+        "Traditional Masonry Cavity Wall",
+        "Solid Masonry Wall",
+        "Concrete Structural Frame",
+        "Steel Structural Frame",
+        "SFS",
+        "Timber Frame",
+        "SIP Panel",
+        "MMC",
+        "Not Known",
+    ]
+
+    infill_wall_types_enum = [
+        "Brick / Block",
+        "Lightweight Timber Framing (LTF)",
+        "Lightweight Steel Framing (LSF)",
+        "SIP Panel (N/A)",
+        "SFS",
+        "MMC",
+        "Not Applicable",
+        "Timber Structural Frame",
+    ]
+
+    external_wall_types_enum = [
+        "Masonry Cavity Wall (Fully Filled with Mineral Wool/Rockwool)",
+        "Solid Masonry/Stone",
+        "Metal Panel Ventilated Rainscreen (with non-combustible insulation)",
+        "Metal Panel Ventilated Rainscreen (with combustible insulation)",
+        "Ceramic / Stone Ventilated Rainscreen (with non-combustible insulation)",
+        "Ceramic / Stone Ventilated Rainscreen (with combustible insulation)",
+        "Cementitious Panel Ventilated Rainscreen (with non-combustible insulation)",
+        "HPL Ventilated Rainscreen (with non-combustible insulation)",
+        "HPL Ventilated Rainscreen (with combustible insulation)",
+        "Render / EPS",
+        "Render / Rockwool",
+        "Timber Cladding",
+        "ACM",
+        "Metal Spandrel Panel",
+        "UPVC Spandrel Panel",
+        "Glazed Curtain Walling",
+        "Metal Sandwich Panel",
+        "Not Applicable",
+        "Masonry Cavity Wall (partial fill combustible insulation)",
+        "Render / Concrete Block",
+        "Render / Unknown (on Traditional Masonry Cavity Wall Building)",
+        "Metal Standing Seam",
+        "Tiled (mansard face / dorner etc)",
+    ]
+
+    balcony_materials_enum = [
+        "Not Applicable",
+        "Metal",
+        "Timber",
+        "Glass",
+        "HPL",
+    ]
+
+    attachment_types_enum = [
+        "Not Applicable",
+        "Timber Decking",
+        "Decking (non-combustible)",
+        "Timber Railings",
+        "Timber Framing (Balcony)",
+        "Steel Framing (Balcony)",
+        "Breize Soleil (Combustible)",
+        "Breize Soleil (non-combustible)",
+        "Solar Shading (combustible)",
+        "Solar Shading (non-combustible)",
+        "Not Known",
+    ]
+
+    use_classification_enum = [
+        "Flat 1a",
+        "Residential Institutional 2a",
+        "Residential Other 2b",
+        "Office 3",
+        "Shop / Commercial 4",
+        "Assembly & Recreation 5",
+        "Industrial 6",
+        "Storage 7a",
+        "Car Park 7b (<2.5 tonnes)",
+    ]
+
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "building_classification_relevant": {
+                "type": "array",
+                "items": {"type": "string", "enum": building_classification_enum},
+            },
+            "structural_frame_classifications": {
+                "type": "array",
+                "items": {"type": "string", "enum": structural_frame_enum},
+            },
+            "infill_wall_type_classifications": {
+                "type": "array",
+                "items": {"type": "string", "enum": infill_wall_types_enum},
+            },
+            "external_wall_types_relevant": {
+                "type": "array",
+                "items": {"type": "string", "enum": external_wall_types_enum},
+            },
+            "balcony_materials": {
+                "type": "array",
+                "items": {"type": "string", "enum": balcony_materials_enum},
+            },
+            "attachment_types_relevant": {
+                "type": "array",
+                "items": {"type": "string", "enum": attachment_types_enum},
+            },
+            "secondary_use_classification": {
+                "type": "array",
+                "items": {"type": "string", "enum": use_classification_enum},
+            },
+            "third_use_classification": {
+                "type": "array",
+                "items": {"type": "string", "enum": use_classification_enum},
+            },
+            "fourth_use_classification": {
+                "type": "array",
+                "items": {"type": "string", "enum": use_classification_enum},
+            },
+            "notes_classifications": {"type": ["string", "null"]},
+        },
+        "required": [
+            "building_classification_relevant",
+            "structural_frame_classifications",
+            "infill_wall_type_classifications",
+            "external_wall_types_relevant",
+            "balcony_materials",
+            "attachment_types_relevant",
+            "secondary_use_classification",
+            "third_use_classification",
+            "fourth_use_classification",
+            "notes_classifications",
+        ],
+    }
+
 
 def process(event, context):
     try:
         payload = event if isinstance(event, dict) else json.loads(event["body"])
-
         bucket = payload.get("bucket", S3_BUCKET)
         pdf_key = payload["pdf_s3_key"]
-
-        # Optional: where to store the cover image in S3
-        cover_key = payload.get("cover_s3_key")  # e.g. "covers/CLIF0001.png"
+        cover_key = payload.get("cover_s3_key")  # optional
 
         print(f"Loading PDF from bucket={bucket}, key={pdf_key}")
         obj = s3.get_object(Bucket=bucket, Key=pdf_key)
         pdf_bytes = obj["Body"].read()
 
-        # (A) Extract cover photo in code (fast, reliable)
+        # Extract cover image (optional)
         cover_png_bytes = extract_cover_photo_png(pdf_bytes)
         if cover_png_bytes and cover_key:
             s3.put_object(
@@ -74,90 +423,58 @@ def process(event, context):
                 ContentType="image/png",
             )
 
-        # (B) Upload PDF to OpenAI Files
+        # Extract searchable text (not currently passed to model)
+        extracted_text = extract_text_by_page(pdf_bytes)
+
+        # Upload PDF once
         up = oai.files.create(
             file=("document.pdf", pdf_bytes),
-            purpose="responses",  # if your SDK supports it; otherwise "assistants" may still work
+            purpose="user_data",
         )
         file_id = up.id
 
-        # (C) Ask model for strict JSON matching your Salesforce fields
-        schema = {
-            "name": "fra_extract",
-            "schema": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "uprn": {"type": ["string", "null"]},
-                    "building_name": {"type": ["string", "null"]},
-                    "building_address": {"type": ["string", "null"]},
-                    "address_line_1": {"type": ["string", "null"]},
-                    "address_line_2": {"type": ["string", "null"]},
-                    "address_line_3": {"type": ["string", "null"]},
-                    "address_line_4": {"type": ["string", "null"]},
-                    "postcode": {"type": ["string", "null"]},
+        pass_specs = [
+            {"name": "identity_address", "schema": schema_identity_address(),
+             "instructions": "Extract: UPRN, building name, full address, address lines 1-4, postcode."},
 
-                    "awss_sprinkler_misting": {"type": ["string", "null"]},
-                    "storeys": {"type": ["integer", "null"]},
-                    "height_m": {"type": ["number", "null"]},
-                    "basement_levels": {"type": ["integer", "null"]},
-                    "below_ground_mentioned": {"type": ["boolean", "null"]},
-                    "total_flats": {"type": ["integer", "null"]},
+            {"name": "fire_strategy_systems", "schema": schema_fire_strategy_systems(),
+             "instructions": "Extract: AWSS/sprinkler/misting info, evacuation policy, FRA completion date, producer/company, author/assessor."},
 
-                    "evacuation_policy": {"type": ["string", "null"]},
-                    "fra_completion_date_raw": {"type": ["string", "null"]},
-                    "fra_completion_date_ddmmyyyy": {"type": ["string", "null"]},
-                    "fra_producer": {"type": ["string", "null"]},
-                    "fra_author": {"type": ["string", "null"]},
-                    "year_built": {"type": ["integer", "null"]},
+            {"name": "geometry_below_ground", "schema": schema_geometry_below_ground(),
+             "instructions": "Extract: storeys, height_m, basement_levels, below_ground_mentioned."},
 
-                    "notes": {"type": ["string", "null"]},  # optional: store anything ambiguous here
-                },
-                "required": [
-                    "uprn","building_name","building_address","address_line_1","address_line_2",
-                    "address_line_3","address_line_4","postcode","awss_sprinkler_misting","storeys",
-                    "height_m","basement_levels","below_ground_mentioned","total_flats","evacuation_policy",
-                    "fra_completion_date_raw","fra_completion_date_ddmmyyyy","fra_producer","fra_author",
-                    "year_built","notes"
-                ],
-            }
-        }
+            {"name": "occupancy_use", "schema": schema_occupancy_use(),
+             "instructions": "Extract: total flats, uses, general needs, main occupancy classification, occupancy, other occupancies, residents per flat, uses in addition to residential."},
 
-        instructions = """
-Extract the requested building fields from the PDF. If a field is not explicitly present, return null.
-Do not guess. Put uncertainties/assumptions into notes.
-Dates: also output DD/MM/YYYY if present or derivable from the PDF text.
-"""
+            {"name": "construction_external_walls", "schema": schema_construction_external_walls(),
+             "instructions": "Extract: external wall type, infill, proximity escape routes/openings, % coverage, year built, construction description."},
 
-        # Responses API is the recommended unified interface. :contentReference[oaicite:5]{index=5}
-        resp = oai.responses.create(
-            model=MODEL,
-            input=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "input_file", "file_id": file_id},
-                        {"type": "input_text", "text": instructions},
-                    ],
-                }
-            ],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "json_schema": schema,
-                    "strict": True
-                }
-            },
-        )
+            {"name": "classifications", "schema": schema_classifications(),
+             "instructions": "Fill classification lists ONLY using explicit evidence; return empty arrays if not supported."},
+        ]
 
-        # Most SDKs expose resp.output_text as the JSON string; adjust if yours differs.
-        extracted = json.loads(resp.output_text)
+        fields = {}
+        pass_errors = {}
+
+        for spec in pass_specs:
+            try:
+                out = call_extract_with_retry(
+                    file_id=file_id,
+                    extracted_text=extracted_text,
+                    schema_name=spec["name"],
+                    schema=spec["schema"],
+                    section_instructions=spec["instructions"],
+                )
+                fields.update(out)
+            except Exception as e:
+                pass_errors[spec["name"]] = str(e)
 
         return {
             "statusCode": 200,
             "body": json.dumps({
                 "ok": True,
-                "fields": extracted,
+                "fields": fields,
+                "pass_errors": pass_errors,
                 "cover_image_written": bool(cover_png_bytes and cover_key),
                 "cover_s3_key": cover_key if (cover_png_bytes and cover_key) else None
             }),
