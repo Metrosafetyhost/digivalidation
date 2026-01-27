@@ -3,6 +3,7 @@ import boto3
 import logging
 from botocore.client import Config
 import re
+from difflib import SequenceMatcher
 
 # initialise logging
 logger = logging.getLogger()
@@ -16,6 +17,52 @@ s3      = boto3.client(
     config=Config(signature_version="s3v4")
 )
 MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
+
+def _norm(s: str) -> str:
+    s = (s or "").lower().strip()
+    s = re.sub(r"[^a-z0-9\s]", " ", s)   # remove punctuation
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+def map_category(obj_type: str, raw_category: str, object_map: dict, threshold: float = 0.78) -> str:
+    allowed = object_map.get(obj_type, [])
+    if not raw_category or not allowed:
+        return raw_category
+
+    raw_n = _norm(raw_category)
+
+    # Exact (normalized) match
+    for a in allowed:
+        if _norm(a) == raw_n:
+            return a
+
+    # Token-reorder assist: "Apollo Key" ~ "Key (Apollo)"
+    raw_tokens = set(raw_n.split())
+    best = None
+    best_score = 0.0
+
+    for a in allowed:
+        a_n = _norm(a)
+        a_tokens = set(a_n.split())
+
+        # token overlap score
+        overlap = len(raw_tokens & a_tokens) / max(1, len(raw_tokens | a_tokens))
+
+        # string similarity score
+        sim = SequenceMatcher(None, raw_n, a_n).ratio()
+
+        # combine (weighted)
+        score = 0.6 * sim + 0.4 * overlap
+
+        if score > best_score:
+            best_score = score
+            best = a
+
+    if best and best_score >= threshold:
+        return best
+
+    # No good match → Unlisted (if available)
+    return "Unlisted" if "Unlisted" in allowed else raw_category
 
 # ------------------------------------------------------------
 # Exact Salesforce picklist
@@ -349,7 +396,8 @@ def validate_extraction(result: dict) -> dict:
         else:
             # Type has a closed set of categories
             if c not in allowed:
-                out["Object_Category__c"] = ""
+                out["Object_Category__c"] = "Unlisted" if "Unlisted" in allowed else ""
+
             else:
                 # normalise category to exactly the canonical string
                 out["Object_Category__c"] = c
@@ -564,6 +612,12 @@ def classify_asset_text(text):
         data = json.loads(raw)
         text_out = "".join(part.get("text", "") for part in data.get("content", []))
         out = json.loads(text_out)
+
+        out["Object_Category__c"] = map_category(
+        out.get("Object_Type__c", ""),
+        out.get("Object_Category__c", ""),
+        OBJECT_MAP
+        )
         # Enforce closed-world enums
         out = validate_extraction(out)
         return out
