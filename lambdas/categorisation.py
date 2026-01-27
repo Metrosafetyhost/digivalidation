@@ -205,6 +205,7 @@ OBJECT_MAP: dict[str, list[str]] = {
   "BSRA": [],
   "Building": [],
   "Building Generator": [],
+  "Building Plan": [],
   "Burns Kit": [],
   "Call Point": ["Button (Test)", "Flick Fuse", "Key (Allen)", "Key (Apollo)", "Key (Cylindrical)", "Key (Fork)", "Key (GFE)", "Key (KAC)", "Key (Long)", "Key (Newlec)", "Key (Old Flag)", "Key (Pin)", "Key (Raffiki)", "Key (Side)", "Key (STI)", "Key (Sycall)", "Key (TOK)", "Key (Triangle)", "Key (UP)", "Key (White Flag)", "Unlisted"],
   "Calorifier": [],
