@@ -83,7 +83,10 @@ You are extracting facts from a Fire Risk Assessment PDF.
 
 Rules:
 - Do NOT guess. Only use information explicitly stated in the PDF (or clearly stated in the extracted text provided).
-- If a field is not explicitly present, return null.
+- If a field is not explicitly present:
+  - For free-text fields, return "No specific information provided".
+  - For multi-select enum fields: return the most appropriate explicit fallback from the allowed options (prefer "Not Applicable", then "Not Known", then "No specific information provided" if present).
+  - For numeric/date fields, return null.
 - If something is ambiguous, put details in notes (but still keep the field null if not explicit).
 - Numbers must be numbers (no units). Height in meters should be numeric.
 - Dates: if a completion date is stated, also provide DD/MM/YYYY.
@@ -115,6 +118,33 @@ def call_extract(file_id: str, extracted_text: str, schema_name: str, schema: di
     return json.loads(resp.output_text)
 
 #retry wrapper to handle 429 TPM rate limits gracefully
+
+def apply_schema_defaults(schema: dict, data: dict) -> dict:
+    """Post-process model output to avoid empty/None answers where we want explicit fallbacks."""
+    props = (schema or {}).get("properties", {})
+    for key, prop_schema in props.items():
+        if key not in data:
+            continue
+        val = data.get(key)
+
+        # Fill empty multi-select arrays with an explicit fallback, if allowed by the enum.
+        if prop_schema.get("type") == "array" and isinstance(val, list) and len(val) == 0:
+            enum = (((prop_schema.get("items") or {}).get("enum")) or [])
+            for fallback in ("Not Applicable", "Not Known", "No specific information provided"):
+                if fallback in enum:
+                    data[key] = [fallback]
+                    break
+            continue
+
+        # Fill nullable free-text fields with the requested placeholder (except notes fields).
+        t = prop_schema.get("type")
+        if isinstance(t, list) and "string" in t and "null" in t and val is None:
+            if not key.lower().startswith("notes"):
+                data[key] = "No specific information provided"
+
+    return data
+
+
 def call_extract_with_retry(
     file_id: str,
     extracted_text: str,
@@ -125,13 +155,14 @@ def call_extract_with_retry(
 ) -> dict:
     for attempt in range(retries):
         try:
-            return call_extract(
+            result = call_extract(
                 file_id=file_id,
                 extracted_text=extracted_text,
                 schema_name=schema_name,
                 schema=schema,
                 section_instructions=section_instructions,
             )
+            return apply_schema_defaults(schema, result)
         except Exception as e:
             msg = str(e).lower()
             if "429" in msg or "rate limit" in msg or "tpm" in msg:
@@ -334,6 +365,7 @@ def schema_classifications():
     ]
 
     use_classification_enum = [
+        "No specific information provided",
         "Flat 1a",
         "Residential Institutional 2a",
         "Residential Other 2b",
