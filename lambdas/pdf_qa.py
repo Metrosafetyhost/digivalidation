@@ -185,9 +185,10 @@ def call_extract_with_retry(
 
     raise RuntimeError(f"[{schema_name}] Failed after {retries} retries due to rate limiting")
 
-# ----------------------------
+def bytes_to_mb(n: int, precision: int = 2) -> float:
+    return round(n / (1024 * 1024), precision)
+
 # Schemas (6 passes)
-# ----------------------------
 
 def schema_identity_address():
     return {
@@ -549,6 +550,15 @@ def process(event, context):
                 body_obj["cover_too_large"] = True
                 body_obj["cover_estimated_response_bytes"] = est
                 body_obj["max_response_bytes"] = MAX_RESPONSE_BYTES
+                
+        final_size = _estimate_response_size_bytes(body_obj)
+        final_size_bytes = _estimate_response_size_bytes(body_obj)
+
+        body_obj["response_size"] = {
+            "bytes": final_size_bytes,
+            "megabytes": bytes_to_mb(final_size_bytes),
+        }
+        print(f"[DEBUG] Final response size (bytes): {final_size}")
 
         return {
             "statusCode": 200,
