@@ -63,6 +63,11 @@ variable "openai_secret_name" {
   default = "openai/api_key"
 }
 
+variable "dewrra_api_key_secret_name" {
+  type    = string
+  default = "dewrra/api_key"
+}
+
 # Lambdas that should have OpenAI enabled (layer + secret access)
 variable "openai_enabled_lambdas" {
   type    = list(string)
