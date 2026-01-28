@@ -9,6 +9,17 @@ from openai import OpenAI
 S3_BUCKET = os.environ.get("ASSET_BUCKET", "metrosafetyprodfiles")
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
+# Keep margin under Salesforce synchronous callout response ceiling (6MB).
+# This threshold is for the *entire JSON response* (fields + cover base64 + overhead).
+MAX_RESPONSE_BYTES = int(os.environ.get("MAX_RESPONSE_BYTES", "5500000"))
+
+def _safe_json_dumps(obj: dict) -> str:
+    # Compact JSON to reduce payload size
+    return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+
+def _estimate_response_size_bytes(body_obj: dict) -> int:
+    return len(_safe_json_dumps(body_obj).encode("utf-8"))
+
 def _load_openai_key():
     arn = os.environ.get("OPENAI_SECRET_ARN")
     if arn:
@@ -441,19 +452,29 @@ def process(event, context):
         pdf_key = payload["pdf_s3_key"]
         cover_key = payload.get("cover_s3_key")  # optional
 
+        include_cover_bytes = payload.get("include_cover_bytes", True)
+
         print(f"Loading PDF from bucket={bucket}, key={pdf_key}")
         obj = s3.get_object(Bucket=bucket, Key=pdf_key)
         pdf_bytes = obj["Body"].read()
 
-        # Extract cover image (optional)
+        # Extract cover image
         cover_png_bytes = extract_cover_photo_png(pdf_bytes)
-        if cover_png_bytes and cover_key:
+
+        # Write cover image to S3 for traceability/fallback (generate a key if not provided)
+        cover_written = False
+        if cover_png_bytes:
+            if not cover_key:
+                base = pdf_key.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+                cover_key = f"WorkOrders/covers/{base}.png"
+
             s3.put_object(
                 Bucket=bucket,
                 Key=cover_key,
                 Body=cover_png_bytes,
                 ContentType="image/png",
             )
+            cover_written = True
 
         # Extract searchable text (not currently passed to model)
         extracted_text = extract_text_by_page(pdf_bytes)
@@ -501,20 +522,44 @@ def process(event, context):
             except Exception as e:
                 pass_errors[spec["name"]] = str(e)
 
+        # Build base response (single call)
+        body_obj = {
+            "ok": True,
+            "fields": fields,
+            "pass_errors": pass_errors,
+            "cover_image_written": cover_written,
+            "cover_s3_key": cover_key if cover_written else None,
+            "cover": None,  # filled conditionally below
+        }
+
+        # Conditionally include cover bytes inline (only if total response stays below threshold)
+        if include_cover_bytes and cover_png_bytes:
+            cover_b64 = base64.b64encode(cover_png_bytes).decode("utf-8")
+
+            candidate = dict(body_obj)
+            candidate["cover"] = {
+                "content_type": "image/png",
+                "bytes_base64": cover_b64,
+            }
+
+            est = _estimate_response_size_bytes(candidate)
+            if est <= MAX_RESPONSE_BYTES:
+                body_obj = candidate
+            else:
+                body_obj["cover_too_large"] = True
+                body_obj["cover_estimated_response_bytes"] = est
+                body_obj["max_response_bytes"] = MAX_RESPONSE_BYTES
+
         return {
             "statusCode": 200,
-            "body": json.dumps({
-                "ok": True,
-                "fields": fields,
-                "pass_errors": pass_errors,
-                "cover_image_written": bool(cover_png_bytes and cover_key),
-                "cover_s3_key": cover_key if (cover_png_bytes and cover_key) else None
-            }),
+            "headers": {"Content-Type": "application/json"},
+            "body": _safe_json_dumps(body_obj),
         }
 
     except Exception as e:
         print("Error:", e)
         return {
             "statusCode": 500,
+            "headers": {"Content-Type": "application/json"},
             "body": json.dumps({"ok": False, "error": str(e)}),
         }
