@@ -28,7 +28,18 @@ def _load_openai_key():
         return val.get("SecretString") or base64.b64decode(val["SecretBinary"]).decode()
     return os.environ.get("OPENAI_API_KEY")
 
+
+def _load_dewrra_api_key():
+    arn = os.environ.get("DEWRRA_API_KEY_SECRET_ARN")
+    if arn:
+        sm = boto3.client("secretsmanager")
+        val = sm.get_secret_value(SecretId=arn)
+        return val.get("SecretString") or base64.b64decode(val["SecretBinary"]).decode()
+    return os.environ.get("DEWRRA_API_KEY")
+
 OPENAI_API_KEY = _load_openai_key()
+DEWRRA_API_KEY = _load_dewrra_api_key()
+
 s3 = boto3.client("s3")
 oai = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -88,7 +99,6 @@ def extract_text_by_page(pdf_bytes: bytes, max_chars: int = 120_000) -> str:
     finally:
         doc.close()
 
-
 BASE_RULES = """
 You are extracting facts from a Fire Risk Assessment PDF.
 
@@ -128,8 +138,6 @@ def call_extract(file_id: str, extracted_text: str, schema_name: str, schema: di
     )
     return json.loads(resp.output_text)
 
-#retry wrapper to handle 429 TPM rate limits gracefully
-
 def apply_schema_defaults(schema: dict, data: dict) -> dict:
     """Post-process model output to avoid empty/None answers where we want explicit fallbacks."""
     props = (schema or {}).get("properties", {})
@@ -154,7 +162,6 @@ def apply_schema_defaults(schema: dict, data: dict) -> dict:
                 data[key] = "No specific information provided"
 
     return data
-
 
 def call_extract_with_retry(
     file_id: str,
@@ -189,7 +196,6 @@ def bytes_to_mb(n: int, precision: int = 2) -> float:
     return round(n / (1024 * 1024), precision)
 
 # Schemas (6 passes)
-
 def schema_identity_address():
     return {
         "type": "object",
@@ -445,10 +451,26 @@ def schema_classifications():
         ],
     }
 
-
 def process(event, context):
     try:
+        # NOTE: event from API Gateway HTTP API contains "headers" and "body".
         payload = event if isinstance(event, dict) else json.loads(event["body"])
+
+        # NEW: API key auth - expects header x-api-key
+        if DEWRRA_API_KEY:
+            headers = (event.get("headers") or {}) if isinstance(event, dict) else {}
+            incoming_key = headers.get("x-api-key") or headers.get("X-Api-Key") or headers.get("X-API-KEY")
+            if incoming_key != DEWRRA_API_KEY:
+                return {
+                    "statusCode": 403,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": _safe_json_dumps({
+                        "ok": False,
+                        "error_type": "UNAUTHORISED",
+                        "error": "Invalid or missing API key"
+                    }),
+                }
+
         bucket = payload.get("bucket", S3_BUCKET)
         pdf_key = payload["pdf_s3_key"]
         cover_key = payload.get("cover_s3_key")  # optional
@@ -550,15 +572,13 @@ def process(event, context):
                 body_obj["cover_too_large"] = True
                 body_obj["cover_estimated_response_bytes"] = est
                 body_obj["max_response_bytes"] = MAX_RESPONSE_BYTES
-                
-        final_size = _estimate_response_size_bytes(body_obj)
-        final_size_bytes = _estimate_response_size_bytes(body_obj)
 
+        final_size_bytes = _estimate_response_size_bytes(body_obj)
         body_obj["response_size"] = {
             "bytes": final_size_bytes,
             "megabytes": bytes_to_mb(final_size_bytes),
         }
-        print(f"[DEBUG] Final response size (bytes): {final_size}")
+        print(f"[DEBUG] Final response size (bytes): {final_size_bytes}")
 
         return {
             "statusCode": 200,

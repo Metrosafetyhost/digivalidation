@@ -24,3 +24,18 @@ resource "aws_iam_role_policy" "allow_get_openai_secret" {
     }]
   })
 }
+
+# Allow bedrock-lambda-pdf_qa to read the DEWRRA API key secret
+resource "aws_iam_role_policy" "allow_get_dewrra_secret_pdf_qa" {
+  name = "AllowGetDEWRRAApiKeySecret"
+  role = data.aws_iam_role.pdf_qa_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect   = "Allow",
+      Action   = ["secretsmanager:GetSecretValue"],
+      Resource = aws_secretsmanager_secret.dewrra_api_key.arn
+    }]
+  })
+}
