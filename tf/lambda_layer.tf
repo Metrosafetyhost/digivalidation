@@ -1040,7 +1040,7 @@ resource "aws_iam_policy" "pdf_qa_write_covers" {
           "s3:PutObject",
           "s3:PutObjectTagging"
         ],
-        Resource = "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/covers/*"
+        Resource = "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*/covers/*"
       }
     ]
   })
