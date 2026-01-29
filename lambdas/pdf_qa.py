@@ -575,7 +575,28 @@ def process(event, context):
                     schema=spec["schema"],
                     section_instructions=spec["instructions"],
                 )
-                fields.update(out)
+                fields[spec["name"]] = out
+
+                if spec["name"] == "classifications" and isinstance(fields.get("classifications"), dict):
+                    cls = fields["classifications"]
+
+                    def _join_if_list(v):
+                        if isinstance(v, list):
+                            return ", ".join([str(x) for x in v if x is not None and str(x).strip() != ""])
+                        return v
+
+                    cls["building_classification_relevant"] = _join_if_list(cls.get("building_classification_relevant"))
+                    cls["structural_frame_classifications"] = _join_if_list(cls.get("structural_frame_classifications"))
+                    cls["infill_wall_type_classifications"] = _join_if_list(cls.get("infill_wall_type_classifications"))
+                    cls["external_wall_types_relevant"] = _join_if_list(cls.get("external_wall_types_relevant"))
+                    cls["balcony_materials"] = _join_if_list(cls.get("balcony_materials"))
+                    cls["attachment_types_relevant"] = _join_if_list(cls.get("attachment_types_relevant"))
+                    cls["secondary_use_classification"] = _join_if_list(cls.get("secondary_use_classification"))
+                    cls["third_use_classification"] = _join_if_list(cls.get("third_use_classification"))
+                    cls["fourth_use_classification"] = _join_if_list(cls.get("fourth_use_classification"))
+
+                    fields["classifications"] = cls
+
             except Exception as e:
                 pass_errors[spec["name"]] = str(e)
 
