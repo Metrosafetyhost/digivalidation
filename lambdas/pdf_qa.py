@@ -29,19 +29,36 @@ def _load_openai_key():
     return os.environ.get("OPENAI_API_KEY")
 
 
-def _load_dewrra_api_key():
-    arn = os.environ.get("DEWRRA_API_KEY_SECRET_ARN")
-    if arn:
-        sm = boto3.client("secretsmanager")
-        val = sm.get_secret_value(SecretId=arn)
-        return val.get("SecretString") or base64.b64decode(val["SecretBinary"]).decode()
-    return os.environ.get("DEWRRA_API_KEY")
+# def _load_dewrra_api_key():
+#     arn = os.environ.get("DEWRRA_API_KEY_SECRET_ARN")
+#     if arn:
+#         sm = boto3.client("secretsmanager")
+#         val = sm.get_secret_value(SecretId=arn)
+#         return val.get("SecretString") or base64.b64decode(val["SecretBinary"]).decode()
+#     return os.environ.get("DEWRRA_API_KEY")
 
 OPENAI_API_KEY = _load_openai_key()
-DEWRRA_API_KEY = _load_dewrra_api_key()
+#DEWRRA_API_KEY = _load_dewrra_api_key()
 
 s3 = boto3.client("s3")
 oai = OpenAI(api_key=OPENAI_API_KEY)
+
+def find_any_pdf_key(bucket: str, workorder_id: str) -> str:
+    """
+    Returns the first PDF found under WorkOrders/<workorder_id>/.
+    Assumes there is only one PDF for testing.
+    """
+    prefix = f"WorkOrders/{workorder_id}/"
+    paginator = s3.get_paginator("list_objects_v2")
+
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            if key.lower().endswith(".pdf") and obj.get("Size", 0) > 0:
+                return key
+
+    raise FileNotFoundError(f"No PDF found under s3://{bucket}/{prefix}")
+
 
 def extract_cover_photo_png(pdf_bytes: bytes) -> bytes | None:
     """
@@ -453,27 +470,44 @@ def schema_classifications():
 
 def process(event, context):
     try:
-        # NOTE: event from API Gateway HTTP API contains "headers" and "body".
-        payload = event if isinstance(event, dict) else json.loads(event["body"])
+        # # NOTE: event from API Gateway HTTP API contains "headers" and "body".
+        if isinstance(event, dict) and isinstance(event.get("body"), str):
+            payload = json.loads(event["body"])
+        else:
+            payload = event if isinstance(event, dict) else json.loads(event["body"])
 
-        # NEW: API key auth - expects header x-api-key
-        if DEWRRA_API_KEY:
-            headers = (event.get("headers") or {}) if isinstance(event, dict) else {}
-            incoming_key = headers.get("x-api-key") or headers.get("X-Api-Key") or headers.get("X-API-KEY")
-            if incoming_key != DEWRRA_API_KEY:
-                return {
-                    "statusCode": 403,
-                    "headers": {"Content-Type": "application/json"},
-                    "body": _safe_json_dumps({
-                        "ok": False,
-                        "error_type": "UNAUTHORISED",
-                        "error": "Invalid or missing API key"
-                    }),
-                }
+        # # NEW: API key auth - expects header x-api-key
+        # if DEWRRA_API_KEY:
+        #     headers = (event.get("headers") or {}) if isinstance(event, dict) else {}
+        #     incoming_key = headers.get("x-api-key") or headers.get("X-Api-Key") or headers.get("X-API-KEY")
+        #     if incoming_key != DEWRRA_API_KEY:
+        #         return {
+        #             "statusCode": 403,
+        #             "headers": {"Content-Type": "application/json"},
+        #             "body": _safe_json_dumps({
+        #                 "ok": False,
+        #                 "error_type": "UNAUTHORISED",
+        #                 "error": "Invalid or missing API key"
+        #             }),
+        #         }
 
         bucket = payload.get("bucket", S3_BUCKET)
-        pdf_key = payload["pdf_s3_key"]
-        cover_key = payload.get("cover_s3_key")  # optional
+
+        # NEW: accept Salesforce body { "workOrderId": "..." }
+        workorder_id = payload.get("workOrderId") or payload.get("workorder_id") or payload.get("work_order_id")
+
+        # Allow old callers to pass pdf_s3_key, but default to "find the only PDF under the WO folder"
+        if "pdf_s3_key" in payload and payload["pdf_s3_key"]:
+            pdf_key = payload["pdf_s3_key"]
+        else:
+            if not workorder_id:
+                raise KeyError("Missing 'workOrderId' (or 'pdf_s3_key') in request body")
+            pdf_key = find_any_pdf_key(bucket=bucket, workorder_id=workorder_id)
+
+        # NEW: cover path is under the same WO folder in covers/
+        cover_key = None
+        if workorder_id:
+            cover_key = f"WorkOrders/{workorder_id}/covers/{workorder_id}_cover.png"
 
         include_cover_bytes = payload.get("include_cover_bytes", True)
 

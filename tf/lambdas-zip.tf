@@ -83,7 +83,7 @@ module "lambdas_zip" {
 
     lambda_environment = {
       OPENAI_SECRET_ARN = aws_secretsmanager_secret.openai.arn
-      DEWRRA_API_KEY_SECRET_ARN   = aws_secretsmanager_secret.dewrra_api_key.arn
+      //DEWRRA_API_KEY_SECRET_ARN   = aws_secretsmanager_secret.dewrra_api_key.arn
     }
   }
 
