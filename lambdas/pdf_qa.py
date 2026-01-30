@@ -12,9 +12,7 @@ from openai import OpenAI
 DEWRRA_JOBS_TABLE = os.environ.get("DEWRRA_JOBS_TABLE", "dewrra_jobs")
 
 # Where the worker writes the FINAL JSON result for GET /dewrra/results/{jobId}
-# (Keep results out of DynamoDB to avoid 400KB limit)
 #
-# UPDATE (per your request):
 # - Store results under the SAME WorkOrder folder as the PDF/cover:
 #   s3://ASSET_BUCKET/WorkOrders/<workOrderId>/results/<jobId>.json
 # - So we no longer need DEWRRA_RESULT_BUCKET / DEWRRA_RESULT_PREFIX for final storage.
@@ -559,7 +557,7 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
     if workorder_id:
         cover_key = f"WorkOrders/{workorder_id}/covers/{workorder_id}_cover.png"
 
-    include_cover_bytes = payload.get("include_cover_bytes", True)
+    include_cover_bytes = payload.get("include_cover_bytes", False)
 
     print(f"Loading PDF from bucket={bucket}, key={pdf_key}")
     obj = s3.get_object(Bucket=bucket, Key=pdf_key)

@@ -78,31 +78,31 @@ module "lambdas_zip" {
       }
     }
 
-  pdf_qa = {
-    handler     = "process"
-    timeout     = 240
-    memory_size = 512
+    pdf_qa = {
+      handler     = "process"
+      timeout     = 240
+      memory_size = 512
 
-    lambda_environment = {
-      OPENAI_SECRET_ARN = aws_secretsmanager_secret.openai.arn
-      //DEWRRA_API_KEY_SECRET_ARN   = aws_secretsmanager_secret.dewrra_api_key.arn
+      lambda_environment = {
+        DEWRRA_JOBS_TABLE     = aws_dynamodb_table.dewrra_jobs.name
+        ASSET_BUCKET          = "metrosafetyprodfiles"
+        DEWRRA_RESULTS_FOLDER = "results"
+        OPENAI_SECRET_ARN     = aws_secretsmanager_secret.openai.arn
+      }
     }
-  }
 
-  pdfqa_api = {
-    handler     = "process"
-    timeout     = 30
-    memory_size = 256
+    pdfqa_api = {
+      handler     = "process"
+      timeout     = 30
+      memory_size = 256
 
-    # lambda_environment = {
-    #   DEWRRA_JOBS_TABLE    = "dewrra_jobs"
-    #   DEWRRA_QUEUE_URL     = aws_sqs_queue.dewrra_jobs_queue.id   # or .url depending on provider version; usually .url
-    #   DEWRRA_RESULT_PREFIX = "dewrra/results/"
-
-    #   # If your API lambda will also validate API keys:
-    #   # DEWRRA_API_KEY_SECRET_ARN = aws_secretsmanager_secret.dewrra_api_key.arn
-    # }
-  }
+      lambda_environment = {
+        DEWRRA_JOBS_TABLE     = aws_dynamodb_table.dewrra_jobs.name
+        DEWRRA_JOBS_QUEUE_URL = aws_sqs_queue.dewrra_jobs_queue.url
+        ASSET_BUCKET          = "metrosafetyprodfiles"
+        DEWRRA_RESULTS_FOLDER = "results"
+      }
+    }
 
     # All other lambdas 
     basic_event            = { handler = "process", timeout = 240, memory_size = 512 }
