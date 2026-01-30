@@ -6,6 +6,16 @@ import boto3
 import pymupdf  # PyMuPDF
 from openai import OpenAI
 
+# ----------------------------
+# Async job infra (NEW)
+# ----------------------------
+DEWRRA_JOBS_TABLE = os.environ.get("DEWRRA_JOBS_TABLE", "dewrra_jobs")
+
+# Where the worker writes the FINAL JSON result for GET /dewrra/results/{jobId}
+# (Keep results out of DynamoDB to avoid 400KB limit)
+DEWRRA_RESULT_BUCKET = os.environ.get("DEWRRA_RESULT_BUCKET", "metrosafety-bedrock-output-data-dev-bedrock-lambda")
+DEWRRA_RESULT_PREFIX = os.environ.get("DEWRRA_RESULT_PREFIX", "dewrra/results/")  # e.g. dewrra/results/<jobId>.json
+
 S3_BUCKET = os.environ.get("ASSET_BUCKET", "metrosafetyprodfiles")
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
@@ -41,7 +51,55 @@ OPENAI_API_KEY = _load_openai_key()
 #DEWRRA_API_KEY = _load_dewrra_api_key()
 
 s3 = boto3.client("s3")
+ddb = boto3.resource("dynamodb")
+jobs_table = ddb.Table(DEWRRA_JOBS_TABLE)
+
 oai = OpenAI(api_key=OPENAI_API_KEY)
+
+def _now() -> int:
+    return int(time.time())
+
+def _ddb_update(job_id: str, **attrs):
+    """
+    Async infra helper (NEW):
+    Update the job record with status/progress/errors/result pointers.
+    """
+    attrs["updatedAt"] = _now()
+
+    expr_parts = []
+    ean = {}
+    eav = {}
+
+    for k, v in attrs.items():
+        ean[f"#{k}"] = k
+        eav[f":{k}"] = v
+        expr_parts.append(f"#{k} = :{k}")
+
+    jobs_table.update_item(
+        Key={"jobId": job_id},
+        UpdateExpression="SET " + ", ".join(expr_parts),
+        ExpressionAttributeNames=ean,
+        ExpressionAttributeValues=eav,
+    )
+
+def _ddb_get(job_id: str) -> dict | None:
+    res = jobs_table.get_item(Key={"jobId": job_id})
+    return res.get("Item")
+
+def _write_result_to_s3(job_id: str, body_obj: dict) -> tuple[str, str]:
+    """
+    Async infra helper (NEW):
+    Store final response JSON in S3 so /results can fetch it.
+    Returns (bucket, key).
+    """
+    key = f"{DEWRRA_RESULT_PREFIX}{job_id}.json"
+    s3.put_object(
+        Bucket=DEWRRA_RESULT_BUCKET,
+        Key=key,
+        Body=_safe_json_dumps(body_obj).encode("utf-8"),
+        ContentType="application/json",
+    )
+    return DEWRRA_RESULT_BUCKET, key
 
 def find_any_pdf_key(bucket: str, workorder_id: str) -> str:
     """
@@ -468,7 +526,237 @@ def schema_classifications():
         ],
     }
 
+def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
+    """
+    NEW wrapper around your original logic:
+    - Returns the body_obj dict (NOT the API Gateway response envelope)
+    - Keeps your comments + behaviour as close as possible
+    """
+    bucket = payload.get("bucket", S3_BUCKET)
+
+    # NEW: accept Salesforce body { "workOrderId": "..." }
+    workorder_id = payload.get("workOrderId") or payload.get("workorder_id") or payload.get("work_order_id")
+
+    # Allow old callers to pass pdf_s3_key, but default to "find the only PDF under the WO folder"
+    if "pdf_s3_key" in payload and payload["pdf_s3_key"]:
+        pdf_key = payload["pdf_s3_key"]
+    else:
+        if not workorder_id:
+            raise KeyError("Missing 'workOrderId' (or 'pdf_s3_key') in request body")
+        pdf_key = find_any_pdf_key(bucket=bucket, workorder_id=workorder_id)
+
+    # NEW: cover path is under the same WO folder in covers/
+    cover_key = None
+    if workorder_id:
+        cover_key = f"WorkOrders/{workorder_id}/covers/{workorder_id}_cover.png"
+
+    include_cover_bytes = payload.get("include_cover_bytes", True)
+
+    print(f"Loading PDF from bucket={bucket}, key={pdf_key}")
+    obj = s3.get_object(Bucket=bucket, Key=pdf_key)
+    pdf_bytes = obj["Body"].read()
+
+    # Extract cover image
+    cover_png_bytes = extract_cover_photo_png(pdf_bytes)
+
+    # Write cover image to S3 for traceability/fallback (generate a key if not provided)
+    cover_written = False
+    if cover_png_bytes:
+        if not cover_key:
+            base = pdf_key.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            cover_key = f"WorkOrders/covers/{base}.png"
+
+        s3.put_object(
+            Bucket=bucket,
+            Key=cover_key,
+            Body=cover_png_bytes,
+            ContentType="image/png",
+        )
+        cover_written = True
+
+    # Extract searchable text (not currently passed to model)
+    extracted_text = extract_text_by_page(pdf_bytes)
+
+    # Upload PDF once
+    up = oai.files.create(
+        file=("document.pdf", pdf_bytes),
+        purpose="user_data",
+    )
+    file_id = up.id
+
+    pass_specs = [
+        {"name": "identity_address", "schema": schema_identity_address(),
+         "instructions": "Extract: UPRN, building name, full address, address lines 1-4, postcode."},
+
+        {"name": "fire_strategy_systems", "schema": schema_fire_strategy_systems(),
+         "instructions": "Extract: AWSS/sprinkler/misting info, evacuation policy, FRA completion date, producer/company, author/assessor."},
+
+        {"name": "geometry_below_ground", "schema": schema_geometry_below_ground(),
+         "instructions": "Extract: storeys, height_m, basement_levels, below_ground_mentioned."},
+
+        {"name": "occupancy_use", "schema": schema_occupancy_use(),
+         "instructions": "Extract: total flats, uses, general needs, main occupancy classification, occupancy, other occupancies, residents per flat, uses in addition to residential."},
+
+        {"name": "construction_external_walls", "schema": schema_construction_external_walls(),
+         "instructions": "Extract: external wall type, infill, proximity escape routes/openings, % coverage, year built, construction description."},
+
+        {"name": "classifications", "schema": schema_classifications(),
+         "instructions": "Fill classification lists ONLY using explicit evidence"},
+    ]
+
+    fields = {}
+    pass_errors = {}
+
+    for spec in pass_specs:
+        try:
+            out = call_extract_with_retry(
+                file_id=file_id,
+                extracted_text=extracted_text,
+                schema_name=spec["name"],
+                schema=spec["schema"],
+                section_instructions=spec["instructions"],
+            )
+            fields[spec["name"]] = out
+
+            if spec["name"] == "classifications" and isinstance(fields.get("classifications"), dict):
+                cls = fields["classifications"]
+
+                def _join_if_list(v):
+                    if isinstance(v, list):
+                        return ", ".join([str(x) for x in v if x is not None and str(x).strip() != ""])
+                    return v
+
+                cls["building_classification_relevant"] = _join_if_list(cls.get("building_classification_relevant"))
+                cls["structural_frame_classifications"] = _join_if_list(cls.get("structural_frame_classifications"))
+                cls["infill_wall_type_classifications"] = _join_if_list(cls.get("infill_wall_type_classifications"))
+                cls["external_wall_types_relevant"] = _join_if_list(cls.get("external_wall_types_relevant"))
+                cls["balcony_materials"] = _join_if_list(cls.get("balcony_materials"))
+                cls["attachment_types_relevant"] = _join_if_list(cls.get("attachment_types_relevant"))
+                cls["secondary_use_classification"] = _join_if_list(cls.get("secondary_use_classification"))
+                cls["third_use_classification"] = _join_if_list(cls.get("third_use_classification"))
+                cls["fourth_use_classification"] = _join_if_list(cls.get("fourth_use_classification"))
+
+                fields["classifications"] = cls
+
+        except Exception as e:
+            pass_errors[spec["name"]] = str(e)
+
+    # Build base response (single call)
+    body_obj = {
+        "ok": True,
+        "fields": fields,
+        "pass_errors": pass_errors,
+        "cover_image_written": cover_written,
+        "cover_s3_key": cover_key if cover_written else None,
+        "cover": None,  # filled conditionally below
+    }
+
+    # Conditionally include cover bytes inline (only if total response stays below threshold)
+    # NOTE (Async worker): for polling /results, you *usually* don’t need inline bytes,
+    # but I’m keeping your original behaviour so you can enable/disable via include_cover_bytes.
+    if include_cover_bytes and cover_png_bytes:
+        cover_b64 = base64.b64encode(cover_png_bytes).decode("utf-8")
+
+        candidate = dict(body_obj)
+        candidate["cover"] = {
+            "content_type": "image/png",
+            "bytes_base64": cover_b64,
+        }
+
+        est = _estimate_response_size_bytes(candidate)
+        if est <= MAX_RESPONSE_BYTES:
+            body_obj = candidate
+        else:
+            body_obj["cover_too_large"] = True
+            body_obj["cover_estimated_response_bytes"] = est
+            body_obj["max_response_bytes"] = MAX_RESPONSE_BYTES
+
+    final_size_bytes = _estimate_response_size_bytes(body_obj)
+    body_obj["response_size"] = {
+        "bytes": final_size_bytes,
+        "megabytes": bytes_to_mb(final_size_bytes),
+    }
+    print(f"[DEBUG] Final response size (bytes): {final_size_bytes}")
+
+    return body_obj
+
+
+def _is_sqs_event(event: dict) -> bool:
+    return isinstance(event, dict) and isinstance(event.get("Records"), list) and event["Records"] and "body" in event["Records"][0]
+
+
 def process(event, context):
+    """
+    NOTE: You said Babushka uses 'process' as the handler — kept as-is.
+
+    This function now supports:
+    (A) SQS-triggered async worker mode  (NEW)
+    (B) Old API Gateway sync mode for ad-hoc/manual testing (kept for convenience)
+    """
+    # ----------------------------
+    # (A) SQS WORKER MODE (NEW)
+    # ----------------------------
+    if _is_sqs_event(event):
+        for rec in event.get("Records", []):
+            try:
+                msg = json.loads(rec.get("body") or "{}")
+                job_id = msg.get("jobId")
+                if not job_id:
+                    print("Missing jobId in SQS message body")
+                    continue
+
+                # Load job record from DynamoDB to get the Work Order ID
+                job_item = _ddb_get(job_id)
+                if not job_item:
+                    print(f"Job not found in DynamoDB: {job_id}")
+                    continue
+
+                workorder_id = job_item.get("workOrderId")
+                if not workorder_id:
+                    _ddb_update(job_id, status="FAILED", errorMessage="Missing workOrderId in DynamoDB job record")
+                    continue
+
+                # Mark running
+                _ddb_update(job_id, status="RUNNING")
+
+                # Build payload in the same shape your old logic expects
+                payload = {
+                    "workOrderId": workorder_id,
+                    # keep default behaviour unless you override env var / include flag
+                    # "include_cover_bytes": False,
+                }
+
+                body_obj = _run_pdfqa_logic(payload=payload, event=event)
+
+                # Write final JSON to S3 (so /dewrra/results/{jobId} can fetch it)
+                result_bucket, result_key = _write_result_to_s3(job_id, body_obj)
+
+                _ddb_update(
+                    job_id,
+                    status="SUCCEEDED",
+                    resultS3Bucket=result_bucket,
+                    resultS3Key=result_key,
+                    coverS3Key=body_obj.get("cover_s3_key"),
+                )
+
+            except Exception as e:
+                # If we can identify a jobId, mark FAILED, otherwise just log
+                err = str(e)
+                print("Error:", err)
+                try:
+                    msg = json.loads(rec.get("body") or "{}")
+                    job_id = msg.get("jobId")
+                    if job_id:
+                        _ddb_update(job_id, status="FAILED", errorMessage=err)
+                except Exception:
+                    pass
+
+        # For SQS event source mapping, returning normally indicates success.
+        return {"ok": True}
+
+    # ----------------------------
+    # (B) LEGACY / MANUAL TEST MODE
+    # ----------------------------
     try:
         # # NOTE: event from API Gateway HTTP API contains "headers" and "body".
         if isinstance(event, dict) and isinstance(event.get("body"), str):
@@ -491,149 +779,7 @@ def process(event, context):
         #             }),
         #         }
 
-        bucket = payload.get("bucket", S3_BUCKET)
-
-        # NEW: accept Salesforce body { "workOrderId": "..." }
-        workorder_id = payload.get("workOrderId") or payload.get("workorder_id") or payload.get("work_order_id")
-
-        # Allow old callers to pass pdf_s3_key, but default to "find the only PDF under the WO folder"
-        if "pdf_s3_key" in payload and payload["pdf_s3_key"]:
-            pdf_key = payload["pdf_s3_key"]
-        else:
-            if not workorder_id:
-                raise KeyError("Missing 'workOrderId' (or 'pdf_s3_key') in request body")
-            pdf_key = find_any_pdf_key(bucket=bucket, workorder_id=workorder_id)
-
-        # NEW: cover path is under the same WO folder in covers/
-        cover_key = None
-        if workorder_id:
-            cover_key = f"WorkOrders/{workorder_id}/covers/{workorder_id}_cover.png"
-
-        include_cover_bytes = payload.get("include_cover_bytes", True)
-
-        print(f"Loading PDF from bucket={bucket}, key={pdf_key}")
-        obj = s3.get_object(Bucket=bucket, Key=pdf_key)
-        pdf_bytes = obj["Body"].read()
-
-        # Extract cover image
-        cover_png_bytes = extract_cover_photo_png(pdf_bytes)
-
-        # Write cover image to S3 for traceability/fallback (generate a key if not provided)
-        cover_written = False
-        if cover_png_bytes:
-            if not cover_key:
-                base = pdf_key.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-                cover_key = f"WorkOrders/covers/{base}.png"
-
-            s3.put_object(
-                Bucket=bucket,
-                Key=cover_key,
-                Body=cover_png_bytes,
-                ContentType="image/png",
-            )
-            cover_written = True
-
-        # Extract searchable text (not currently passed to model)
-        extracted_text = extract_text_by_page(pdf_bytes)
-
-        # Upload PDF once
-        up = oai.files.create(
-            file=("document.pdf", pdf_bytes),
-            purpose="user_data",
-        )
-        file_id = up.id
-
-        pass_specs = [
-            {"name": "identity_address", "schema": schema_identity_address(),
-             "instructions": "Extract: UPRN, building name, full address, address lines 1-4, postcode."},
-
-            {"name": "fire_strategy_systems", "schema": schema_fire_strategy_systems(),
-             "instructions": "Extract: AWSS/sprinkler/misting info, evacuation policy, FRA completion date, producer/company, author/assessor."},
-
-            {"name": "geometry_below_ground", "schema": schema_geometry_below_ground(),
-             "instructions": "Extract: storeys, height_m, basement_levels, below_ground_mentioned."},
-
-            {"name": "occupancy_use", "schema": schema_occupancy_use(),
-             "instructions": "Extract: total flats, uses, general needs, main occupancy classification, occupancy, other occupancies, residents per flat, uses in addition to residential."},
-
-            {"name": "construction_external_walls", "schema": schema_construction_external_walls(),
-             "instructions": "Extract: external wall type, infill, proximity escape routes/openings, % coverage, year built, construction description."},
-
-            {"name": "classifications", "schema": schema_classifications(),
-             "instructions": "Fill classification lists ONLY using explicit evidence; return empty arrays if not supported."},
-        ]
-
-        fields = {}
-        pass_errors = {}
-
-        for spec in pass_specs:
-            try:
-                out = call_extract_with_retry(
-                    file_id=file_id,
-                    extracted_text=extracted_text,
-                    schema_name=spec["name"],
-                    schema=spec["schema"],
-                    section_instructions=spec["instructions"],
-                )
-                fields[spec["name"]] = out
-
-                if spec["name"] == "classifications" and isinstance(fields.get("classifications"), dict):
-                    cls = fields["classifications"]
-
-                    def _join_if_list(v):
-                        if isinstance(v, list):
-                            return ", ".join([str(x) for x in v if x is not None and str(x).strip() != ""])
-                        return v
-
-                    cls["building_classification_relevant"] = _join_if_list(cls.get("building_classification_relevant"))
-                    cls["structural_frame_classifications"] = _join_if_list(cls.get("structural_frame_classifications"))
-                    cls["infill_wall_type_classifications"] = _join_if_list(cls.get("infill_wall_type_classifications"))
-                    cls["external_wall_types_relevant"] = _join_if_list(cls.get("external_wall_types_relevant"))
-                    cls["balcony_materials"] = _join_if_list(cls.get("balcony_materials"))
-                    cls["attachment_types_relevant"] = _join_if_list(cls.get("attachment_types_relevant"))
-                    cls["secondary_use_classification"] = _join_if_list(cls.get("secondary_use_classification"))
-                    cls["third_use_classification"] = _join_if_list(cls.get("third_use_classification"))
-                    cls["fourth_use_classification"] = _join_if_list(cls.get("fourth_use_classification"))
-
-                    fields["classifications"] = cls
-
-            except Exception as e:
-                pass_errors[spec["name"]] = str(e)
-
-        # Build base response (single call)
-        body_obj = {
-            "ok": True,
-            "fields": fields,
-            "pass_errors": pass_errors,
-            "cover_image_written": cover_written,
-            "cover_s3_key": cover_key if cover_written else None,
-            "cover": None,  # filled conditionally below
-        }
-
-        # Conditionally include cover bytes inline (only if total response stays below threshold)
-        if include_cover_bytes and cover_png_bytes:
-            cover_b64 = base64.b64encode(cover_png_bytes).decode("utf-8")
-
-            candidate = dict(body_obj)
-            candidate["cover"] = {
-                "content_type": "image/png",
-                "bytes_base64": cover_b64,
-            }
-
-            est = _estimate_response_size_bytes(candidate)
-            if est <= MAX_RESPONSE_BYTES:
-                body_obj = candidate
-            else:
-                body_obj["cover_too_large"] = True
-                body_obj["cover_estimated_response_bytes"] = est
-                body_obj["max_response_bytes"] = MAX_RESPONSE_BYTES
-
-        final_size_bytes = _estimate_response_size_bytes(body_obj)
-        body_obj["response_size"] = {
-            "bytes": final_size_bytes,
-            "megabytes": bytes_to_mb(final_size_bytes),
-        }
-        print(f"[DEBUG] Final response size (bytes): {final_size_bytes}")
+        body_obj = _run_pdfqa_logic(payload=payload, event=event)
 
         return {
             "statusCode": 200,
