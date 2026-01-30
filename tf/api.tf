@@ -152,56 +152,40 @@ resource "aws_lambda_permission" "apigw_lambda_water_risk_case_ingest" {
   source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
 }
 
-# Integration for PDF QA Lambda
-resource "aws_apigatewayv2_integration" "pdf_qa_integration" {
-  api_id           = aws_apigatewayv2_api.lambda_api.id
-  integration_type = "AWS_PROXY"
-  integration_uri  = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-pdf_qa"
+data "aws_lambda_function" "pdfqa_api" {
+  function_name = "bedrock-lambda-pdfqa_api"
 }
 
-resource "aws_apigatewayv2_route" "pdf_qa_route" {
+resource "aws_apigatewayv2_integration" "pdfqa_api_integration" {
+  api_id                 = aws_apigatewayv2_api.lambda_api.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = data.aws_lambda_function.pdfqa_api.invoke_arn
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "dewrra_start_route" {
   api_id    = aws_apigatewayv2_api.lambda_api.id
-  route_key = "POST /pdf_qa"
-  target    = "integrations/${aws_apigatewayv2_integration.pdf_qa_integration.id}"
+  route_key = "POST /dewrra/start"
+  target    = "integrations/${aws_apigatewayv2_integration.pdfqa_api_integration.id}"
 }
 
-resource "aws_lambda_permission" "apigw_lambda_pdf_qa" {
-  statement_id  = "AllowExecutionFromAPIGatewayPdfQa"
+resource "aws_apigatewayv2_route" "dewrra_status_route" {
+  api_id    = aws_apigatewayv2_api.lambda_api.id
+  route_key = "GET /dewrra/status/{jobId}"
+  target    = "integrations/${aws_apigatewayv2_integration.pdfqa_api_integration.id}"
+}
+
+resource "aws_apigatewayv2_route" "dewrra_results_route" {
+  api_id    = aws_apigatewayv2_api.lambda_api.id
+  route_key = "GET /dewrra/results/{jobId}"
+  target    = "integrations/${aws_apigatewayv2_integration.pdfqa_api_integration.id}"
+}
+
+resource "aws_lambda_permission" "apigw_lambda_pdfqa_api" {
+  statement_id  = "AllowExecutionFromAPIGatewayPdfQaApi"
   action        = "lambda:InvokeFunction"
-  function_name = "bedrock-lambda-pdf_qa"
+  function_name = data.aws_lambda_function.pdfqa_api.function_name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
 }
 
-# #DEWRRA
-# resource "aws_apigatewayv2_integration" "pdfqa_api_integration" {
-#   api_id           = aws_apigatewayv2_api.lambda_api.id
-#   integration_type = "AWS_PROXY"
-#   integration_uri  = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-dewrra-api"
-# }
-
-# resource "aws_apigatewayv2_route" "dewrra_start_route" {
-#   api_id    = aws_apigatewayv2_api.lambda_api.id
-#   route_key = "POST /dewrra/start"
-#   target    = "integrations/${aws_apigatewayv2_integration.pdfqa_api_integration.id}"
-# }
-
-# resource "aws_apigatewayv2_route" "dewrra_status_route" {
-#   api_id    = aws_apigatewayv2_api.lambda_api.id
-#   route_key = "GET /dewrra/status/{jobId}"
-#   target    = "integrations/${aws_apigatewayv2_integration.pdfqa_api_integration.id}"
-# }
-
-# resource "aws_apigatewayv2_route" "dewrra_results_route" {
-#   api_id    = aws_apigatewayv2_api.lambda_api.id
-#   route_key = "GET /dewrra/results/{jobId}"
-#   target    = "integrations/${aws_apigatewayv2_integration.pdfqa_api_integration.id}"
-# }
-
-# resource "aws_lambda_permission" "apigw_lambda_pdfqa_api" {
-#   statement_id  = "AllowExecutionFromAPIGatewayDEWRRAApi"
-#   action        = "lambda:InvokeFunction"
-#   function_name = "bedrock-lambda-dewrra-api"
-#   principal     = "apigateway.amazonaws.com"
-#   source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
-# }
