@@ -89,7 +89,7 @@ module "lambdas_zip" {
     }
   }
 
-    pdfqa_api = {
+  pdfqa_api = {
     handler     = "process"
     timeout     = 30
     memory_size = 256
