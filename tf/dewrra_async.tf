@@ -24,6 +24,8 @@ resource "aws_sqs_queue" "dewrra_jobs_dlq" {
 
 resource "aws_sqs_queue" "dewrra_jobs_queue" {
   name = "dewrra_jobs_queue"
+  
+  visibility_timeout_seconds = 300
 
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.dewrra_jobs_dlq.arn
