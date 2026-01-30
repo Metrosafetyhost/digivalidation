@@ -13,8 +13,12 @@ DEWRRA_JOBS_TABLE = os.environ.get("DEWRRA_JOBS_TABLE", "dewrra_jobs")
 
 # Where the worker writes the FINAL JSON result for GET /dewrra/results/{jobId}
 # (Keep results out of DynamoDB to avoid 400KB limit)
-DEWRRA_RESULT_BUCKET = os.environ.get("DEWRRA_RESULT_BUCKET", "metrosafety-bedrock-output-data-dev-bedrock-lambda")
-DEWRRA_RESULT_PREFIX = os.environ.get("DEWRRA_RESULT_PREFIX", "dewrra/results/")  # e.g. dewrra/results/<jobId>.json
+#
+# UPDATE (per your request):
+# - Store results under the SAME WorkOrder folder as the PDF/cover:
+#   s3://ASSET_BUCKET/WorkOrders/<workOrderId>/results/<jobId>.json
+# - So we no longer need DEWRRA_RESULT_BUCKET / DEWRRA_RESULT_PREFIX for final storage.
+RESULTS_FOLDER = os.environ.get("DEWRRA_RESULTS_FOLDER", "results")  # WorkOrders/<workOrderId>/<RESULTS_FOLDER>/<jobId>.json
 
 S3_BUCKET = os.environ.get("ASSET_BUCKET", "metrosafetyprodfiles")
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -86,20 +90,25 @@ def _ddb_get(job_id: str) -> dict | None:
     res = jobs_table.get_item(Key={"jobId": job_id})
     return res.get("Item")
 
-def _write_result_to_s3(job_id: str, body_obj: dict) -> tuple[str, str]:
+def _write_result_to_s3(job_id: str, workorder_id: str, body_obj: dict) -> tuple[str, str]:
     """
     Async infra helper (NEW):
     Store final response JSON in S3 so /results can fetch it.
     Returns (bucket, key).
+
+    Write to:
+      s3://ASSET_BUCKET/WorkOrders/<workOrderId>/results/<jobId>.json
     """
-    key = f"{DEWRRA_RESULT_PREFIX}{job_id}.json"
+    bucket = S3_BUCKET
+    key = f"WorkOrders/{workorder_id}/{RESULTS_FOLDER}/{job_id}.json"
+
     s3.put_object(
-        Bucket=DEWRRA_RESULT_BUCKET,
+        Bucket=bucket,
         Key=key,
         Body=_safe_json_dumps(body_obj).encode("utf-8"),
         ContentType="application/json",
     )
-    return DEWRRA_RESULT_BUCKET, key
+    return bucket, key
 
 def find_any_pdf_key(bucket: str, workorder_id: str) -> str:
     """
@@ -693,9 +702,7 @@ def process(event, context):
     (A) SQS-triggered async worker mode  (NEW)
     (B) Old API Gateway sync mode for ad-hoc/manual testing (kept for convenience)
     """
-    # ----------------------------
-    # (A) SQS WORKER MODE (NEW)
-    # ----------------------------
+    # (A) SQS WORKER MODE (
     if _is_sqs_event(event):
         for rec in event.get("Records", []):
             try:
@@ -729,7 +736,7 @@ def process(event, context):
                 body_obj = _run_pdfqa_logic(payload=payload, event=event)
 
                 # Write final JSON to S3 (so /dewrra/results/{jobId} can fetch it)
-                result_bucket, result_key = _write_result_to_s3(job_id, body_obj)
+                result_bucket, result_key = _write_result_to_s3(job_id, str(workorder_id), body_obj)
 
                 _ddb_update(
                     job_id,

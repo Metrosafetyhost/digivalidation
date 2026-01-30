@@ -7,7 +7,10 @@ from botocore.exceptions import ClientError
 
 DDB_TABLE = os.environ.get("DEWRRA_JOBS_TABLE", "dewrra_jobs")
 QUEUE_URL = os.environ.get("DEWRRA_JOBS_QUEUE_URL")  # required
-RESULT_BUCKET_DEFAULT = os.environ.get("DEWRRA_RESULT_BUCKET")  # optional fallback
+
+# We want results in the WorkOrder folder in the SAME bucket as the PDFs/covers.
+WORKORDERS_BUCKET = os.environ.get("ASSET_BUCKET", "metrosafetyprodfiles")
+RESULTS_FOLDER = os.environ.get("DEWRRA_RESULTS_FOLDER", "results")  # under WorkOrders/<id>/
 
 ddb = boto3.resource("dynamodb")
 table = ddb.Table(DDB_TABLE)
@@ -41,14 +44,25 @@ def _route_key(event):
     return event.get("routeKey") or ""
 
 
+def _result_key_for(work_order_id: str, job_id: str) -> str:
+    # s3://metrosafetyprodfiles/WorkOrders/<workOrderId>/results/<jobId>.json
+    return f"WorkOrders/{work_order_id}/{RESULTS_FOLDER}/{job_id}.json"
+
+
 def start_job(event):
     payload = _get_json_body(event)
     work_order_id = payload.get("workOrderId") or payload.get("workorder_id") or payload.get("work_order_id")
     if not work_order_id:
         return _resp(400, {"ok": False, "error": "Missing workOrderId"})
 
+    if not QUEUE_URL:
+        return _resp(500, {"ok": False, "error": "Missing env var DEWRRA_JOBS_QUEUE_URL"})
+
     job_id = uuid.uuid4().hex
     ts = _now()
+
+    # Pre-compute where the worker should write results
+    result_key = _result_key_for(str(work_order_id), job_id)
 
     item = {
         "jobId": job_id,
@@ -56,12 +70,13 @@ def start_job(event):
         "status": "QUEUED",
         "createdAt": ts,
         "updatedAt": ts,
+
+        # Store where results will be written
+        "resultS3Bucket": WORKORDERS_BUCKET,
+        "resultS3Key": result_key,
     }
 
     table.put_item(Item=item)
-
-    if not QUEUE_URL:
-        return _resp(500, {"ok": False, "error": "Missing env var DEWRRA_JOBS_QUEUE_URL"})
 
     # Put the job on the queue for the worker
     sqs.send_message(
@@ -103,7 +118,6 @@ def get_results(event):
 
     status = item.get("status")
     if status in ("QUEUED", "RUNNING"):
-        # Salesforce can treat this as "still processing"
         return _resp(409, {"ok": False, "jobId": job_id, "status": status, "error": "Not ready"})
 
     if status == "FAILED":
@@ -115,7 +129,7 @@ def get_results(event):
         })
 
     # SUCCEEDED
-    bucket = item.get("resultS3Bucket") or RESULT_BUCKET_DEFAULT
+    bucket = item.get("resultS3Bucket")
     key = item.get("resultS3Key")
     if not bucket or not key:
         return _resp(500, {"ok": False, "jobId": job_id, "error": "Missing result location"})
