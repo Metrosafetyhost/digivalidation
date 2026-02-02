@@ -342,7 +342,25 @@ def schema_occupancy_use():
             "total_flats": {"type": ["integer", "null"]},
             "building_uses": {"type": ["string", "null"]},
             "general_needs": {"type": ["string", "null"]},
-            "main_occupancy_classification": {"type": ["string", "null"]},
+            "main_occupancy_classification": {
+                "type": ["string", "null"],
+                "enum": [
+                    "Residential 1a (Flats)",
+                    "Residential 1b",
+                    "Residential 1c",
+                    "Residential (Institutional) 2a",
+                    "Residential 2(b) Other",
+                    "Office 3",
+                    "Shop & Commercial 4",
+                    "Assembly & Recreation 5",
+                    "Industrial 6",
+                    "Storage & Other non-residential 7(a)",
+                    "Car Parks 7(b)",
+                    "Not Applicable",
+                    "No specific information provided",
+                ],
+            },
+
             "total_building_occupancy": {"type": ["integer", "null"]},
             "other_occupancies": {"type": ["string", "null"]},
             "residents_per_flat": {"type": ["integer", "null"]},
@@ -759,9 +777,7 @@ def process(event, context):
         # For SQS event source mapping, returning normally indicates success.
         return {"ok": True}
 
-    # ----------------------------
     # (B) LEGACY / MANUAL TEST MODE
-    # ----------------------------
     try:
         # # NOTE: event from API Gateway HTTP API contains "headers" and "body".
         if isinstance(event, dict) and isinstance(event.get("body"), str):
@@ -769,7 +785,6 @@ def process(event, context):
         else:
             payload = event if isinstance(event, dict) else json.loads(event["body"])
 
-        # # NEW: API key auth - expects header x-api-key
         # if DEWRRA_API_KEY:
         #     headers = (event.get("headers") or {}) if isinstance(event, dict) else {}
         #     incoming_key = headers.get("x-api-key") or headers.get("X-Api-Key") or headers.get("X-API-KEY")
