@@ -251,10 +251,6 @@ def apply_schema_defaults(schema: dict, data: dict) -> dict:
             if ba is not None and str(ba).strip() != "" and ba != "No specific information provided":
                 data["building_name"] = ba
 
-    # If main_walling_type_percent is null, force the explicit placeholder.
-    if "main_walling_type_percent" in data and data.get("main_walling_type_percent") is None:
-        data["main_walling_type_percent"] = "No specific information provided"
-
     # Derive occupancy/inputs when missing (no notes added).
     if "total_flats" in data and "residents_per_flat" in data and "total_building_occupancy" in data:
         tf = data.get("total_flats")
@@ -417,7 +413,7 @@ def schema_construction_external_walls():
             "walling_infill": {"type": ["string", "null"]},
             "proximity_to_escape_routes": {"type": ["string", "null"]},
             "proximity_to_openings": {"type": ["string", "null"]},
-            "main_walling_type_percent": {"type": ["number", "string", "null"]},
+            "main_walling_type_percent": {"type": ["number", "null"]},
             "year_built": {"type": ["integer", "null"]},
             "building_construction_description": {"type": ["string", "null"]},
             "notes_construction_external_walls": {"type": ["string", "null"]},
@@ -794,7 +790,6 @@ def process(event, context):
                     resultS3Bucket=result_bucket,
                     resultS3Key=result_key,
                     coverS3Key=body_obj.get("cover_s3_key"),
-                    responseBytes=(body_obj.get("response_size") or {}).get("bytes"),
                     responseMegabytes=str((body_obj.get("response_size") or {}).get("megabytes")),
                 )
 
