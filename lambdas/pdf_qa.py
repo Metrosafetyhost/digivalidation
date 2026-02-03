@@ -243,6 +243,40 @@ def apply_schema_defaults(schema: dict, data: dict) -> dict:
             if not key.lower().startswith("notes"):
                 data[key] = "No specific information provided"
 
+    # If building_name is missing/placeholder, fall back to building_address.
+    if "building_name" in data and "building_address" in data:
+        bn = data.get("building_name")
+        ba = data.get("building_address")
+        if (bn is None or str(bn).strip() == "" or bn == "No specific information provided"):
+            if ba is not None and str(ba).strip() != "" and ba != "No specific information provided":
+                data["building_name"] = ba
+
+    # If main_walling_type_percent is null, force the explicit placeholder.
+    if "main_walling_type_percent" in data and data.get("main_walling_type_percent") is None:
+        data["main_walling_type_percent"] = "No specific information provided"
+
+    # Derive occupancy/inputs when missing (no notes added).
+    if "total_flats" in data and "residents_per_flat" in data and "total_building_occupancy" in data:
+        tf = data.get("total_flats")
+        rpf = data.get("residents_per_flat")
+        tbo = data.get("total_building_occupancy")
+
+        # Prefer computing occupancy from flats * residents_per_flat.
+        if tbo is None and isinstance(tf, int) and isinstance(rpf, int):
+            data["total_building_occupancy"] = tf * rpf
+            tbo = data["total_building_occupancy"]
+
+        # If residents_per_flat is missing but occupancy and flats exist, derive if divisible cleanly.
+        if data.get("residents_per_flat") is None and isinstance(tbo, int) and isinstance(tf, int) and tf > 0:
+            if tbo % tf == 0:
+                data["residents_per_flat"] = tbo // tf
+                rpf = data["residents_per_flat"]
+
+        # If total_flats is missing but occupancy and residents_per_flat exist, derive if divisible cleanly.
+        if data.get("total_flats") is None and isinstance(tbo, int) and isinstance(rpf, int) and rpf > 0:
+            if tbo % rpf == 0:
+                data["total_flats"] = tbo // rpf
+
     return data
 
 def call_extract_with_retry(
@@ -383,7 +417,7 @@ def schema_construction_external_walls():
             "walling_infill": {"type": ["string", "null"]},
             "proximity_to_escape_routes": {"type": ["string", "null"]},
             "proximity_to_openings": {"type": ["string", "null"]},
-            "main_walling_type_percent": {"type": ["number", "null"]},
+            "main_walling_type_percent": {"type": ["number", "string", "null"]},
             "year_built": {"type": ["integer", "null"]},
             "building_construction_description": {"type": ["string", "null"]},
             "notes_construction_external_walls": {"type": ["string", "null"]},
@@ -575,7 +609,7 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
     if workorder_id:
         cover_key = f"WorkOrders/{workorder_id}/covers/{workorder_id}_cover.png"
 
-    include_cover_bytes = payload.get("include_cover_bytes", False)
+    include_cover_bytes = payload.get("include_cover_bytes", True)
 
     print(f"Loading PDF from bucket={bucket}, key={pdf_key}")
     obj = s3.get_object(Bucket=bucket, Key=pdf_key)
@@ -746,7 +780,7 @@ def process(event, context):
                 payload = {
                     "workOrderId": workorder_id,
                     # keep default behaviour unless you override env var / include flag
-                    # "include_cover_bytes": False,
+                    "include_cover_bytes": True,
                 }
 
                 body_obj = _run_pdfqa_logic(payload=payload, event=event)
@@ -760,6 +794,11 @@ def process(event, context):
                     resultS3Bucket=result_bucket,
                     resultS3Key=result_key,
                     coverS3Key=body_obj.get("cover_s3_key"),
+
+                    coverIncluded=body_obj.get("cover_included"),
+                    coverReason=body_obj.get("cover_reason"),
+                    responseBytes=(body_obj.get("response_size") or {}).get("bytes"),
+                    responseMegabytes=(body_obj.get("response_size") or {}).get("megabytes"),
                 )
 
             except Exception as e:
