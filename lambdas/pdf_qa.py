@@ -6,6 +6,11 @@ import boto3
 import pymupdf  # PyMuPDF
 from openai import OpenAI
 
+# NEW (added): image resizing for predictable SF payloads / max-height behaviour
+from PIL import Image
+import io
+import re
+
 # ----------------------------
 # Async job infra (NEW)
 # ----------------------------
@@ -24,6 +29,13 @@ MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 # Keep margin under Salesforce synchronous callout response ceiling (6MB).
 # This threshold is for the *entire JSON response* (fields + cover base64 + overhead).
 MAX_RESPONSE_BYTES = int(os.environ.get("MAX_RESPONSE_BYTES", "5500000"))
+
+# NEW (added): include extracted text to improve consistency (bounded)
+INCLUDE_EXTRACTED_TEXT_DEFAULT = os.environ.get("INCLUDE_EXTRACTED_TEXT_DEFAULT", "false").lower() == "true"
+EXTRACTED_TEXT_MAX_CHARS_PER_CALL = int(os.environ.get("EXTRACTED_TEXT_MAX_CHARS_PER_CALL", "20000"))
+
+# NEW (added): cap cover image height so SF + base64 stays stable
+COVER_MAX_HEIGHT_PX = int(os.environ.get("COVER_MAX_HEIGHT_PX", "1400"))
 
 def _safe_json_dumps(obj: dict) -> str:
     # Compact JSON to reduce payload size
@@ -124,6 +136,49 @@ def find_any_pdf_key(bucket: str, workorder_id: str) -> str:
 
     raise FileNotFoundError(f"No PDF found under s3://{bucket}/{prefix}")
 
+# NEW (added): normalise UK postcodes reliably (handles NW10\n5JE -> NW10 5JE)
+def normalize_uk_postcode(value: str | None) -> str | None:
+    if not value:
+        return value
+    raw = str(value).upper()
+    # Strip everything except A-Z0-9
+    compact = re.sub(r"[^A-Z0-9]", "", raw)
+    # UK inward code is always last 3 chars; insert a space before that if long enough
+    if len(compact) >= 5:
+        return compact[:-3] + " " + compact[-3:]
+    return compact
+
+# NEW (added): join address lines into a usable building address fallback
+def join_address_lines(*parts: str | None) -> str | None:
+    cleaned = []
+    for p in parts:
+        if p is None:
+            continue
+        s = str(p).strip()
+        if not s:
+            continue
+        if s == "No specific information provided":
+            continue
+        cleaned.append(s)
+    return ", ".join(cleaned) if cleaned else None
+
+# NEW (added): resize PNG bytes if too tall (prevents huge base64 / SF field limits)
+def _resize_png_if_needed(png_bytes: bytes, max_h: int) -> bytes:
+    try:
+        im = Image.open(io.BytesIO(png_bytes))
+        w, h = im.size
+        if h <= max_h:
+            return png_bytes
+        scale = max_h / float(h)
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+        im2 = im.resize((new_w, new_h), Image.LANCZOS)
+        out = io.BytesIO()
+        im2.save(out, format="PNG", optimize=True)
+        return out.getvalue()
+    except Exception:
+        # If anything goes wrong, return original bytes (don't break extraction)
+        return png_bytes
 
 def extract_cover_photo_png(pdf_bytes: bytes) -> bytes | None:
     """
@@ -150,7 +205,9 @@ def extract_cover_photo_png(pdf_bytes: bytes) -> bytes | None:
         try:
             if pix.n > 4:
                 pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
-            return pix.tobytes("png")
+            png = pix.tobytes("png")
+            # NEW (added): downscale to keep responses + downstream handling stable
+            return _resize_png_if_needed(png, COVER_MAX_HEIGHT_PX)
         finally:
             pix = None
     finally:
@@ -196,18 +253,30 @@ Rules:
 - For multi-select classification fields: return an array of allowed enum values only.
 """
 
-def call_extract(file_id: str, extracted_text: str, schema_name: str, schema: dict, section_instructions: str) -> dict:
+def call_extract(
+    file_id: str,
+    extracted_text: str,
+    schema_name: str,
+    schema: dict,
+    section_instructions: str,
+    include_extracted_text: bool = False,
+    extracted_text_max_chars: int = EXTRACTED_TEXT_MAX_CHARS_PER_CALL,
+) -> dict:
+    # NEW (added): bounded extracted text, only when enabled (improves consistency for split postcodes/tables)
+    content = [
+        {"type": "input_file", "file_id": file_id},
+        {"type": "input_text", "text": BASE_RULES},
+        {"type": "input_text", "text": f"Section instructions:\n{section_instructions}".strip()},
+    ]
+    if include_extracted_text and extracted_text:
+        snippet = extracted_text[:extracted_text_max_chars]
+        content.append({"type": "input_text", "text": f"Extracted text (page-tagged, truncated):\n{snippet}".strip()})
+
     resp = oai.responses.create(
         model=MODEL,
         input=[{
             "role": "user",
-            "content": [
-                {"type": "input_file", "file_id": file_id},
-                {"type": "input_text", "text": BASE_RULES},
-                {"type": "input_text", "text": f"Section instructions:\n{section_instructions}".strip()},
-                # Optional: enable this later if needed (but watch TPM)
-                # {"type": "input_text", "text": f"Extracted text (page-tagged):\n{extracted_text}".strip()},
-            ],
+            "content": content,
         }],
         text={
             "format": {
@@ -243,6 +312,10 @@ def apply_schema_defaults(schema: dict, data: dict) -> dict:
             if not key.lower().startswith("notes"):
                 data[key] = "No specific information provided"
 
+    # postcode normalisation (handles split lines e.g., "NW10" + "5JE")
+    if "postcode" in data and data.get("postcode"):
+        data["postcode"] = normalize_uk_postcode(data.get("postcode"))
+
     # If building_name is missing/placeholder, fall back to building_address.
     if "building_name" in data and "building_address" in data:
         bn = data.get("building_name")
@@ -250,6 +323,20 @@ def apply_schema_defaults(schema: dict, data: dict) -> dict:
         if (bn is None or str(bn).strip() == "" or bn == "No specific information provided"):
             if ba is not None and str(ba).strip() != "" and ba != "No specific information provided":
                 data["building_name"] = ba
+
+    # If building_address is missing/placeholder, build it from address lines + postcode.
+    if "building_address" in data:
+        ba = data.get("building_address")
+        if ba is None or str(ba).strip() == "" or ba == "No specific information provided":
+            fallback = join_address_lines(
+                data.get("address_line_1"),
+                data.get("address_line_2"),
+                data.get("address_line_3"),
+                data.get("address_line_4"),
+                data.get("postcode"),
+            )
+            if fallback:
+                data["building_address"] = fallback
 
     # Derive occupancy/inputs when missing (no notes added).
     if "total_flats" in data and "residents_per_flat" in data and "total_building_occupancy" in data:
@@ -281,7 +368,8 @@ def call_extract_with_retry(
     schema_name: str,
     schema: dict,
     section_instructions: str,
-    retries: int = 5
+    retries: int = 5,
+    include_extracted_text: bool = False,
 ) -> dict:
     for attempt in range(retries):
         try:
@@ -291,6 +379,7 @@ def call_extract_with_retry(
                 schema_name=schema_name,
                 schema=schema,
                 section_instructions=section_instructions,
+                include_extracted_text=include_extracted_text,
             )
             return apply_schema_defaults(schema, result)
         except Exception as e:
@@ -607,6 +696,9 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
 
     include_cover_bytes = payload.get("include_cover_bytes", True)
 
+    # NEW (added): allow per-request override of extracted text usage
+    include_extracted_text = payload.get("include_extracted_text", INCLUDE_EXTRACTED_TEXT_DEFAULT)
+
     print(f"Loading PDF from bucket={bucket}, key={pdf_key}")
     obj = s3.get_object(Bucket=bucket, Key=pdf_key)
     pdf_bytes = obj["Body"].read()
@@ -629,7 +721,7 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
         )
         cover_written = True
 
-    # Extract searchable text (not currently passed to model)
+    # Extract searchable text (optionally passed to model; bounded in call_extract)
     extracted_text = extract_text_by_page(pdf_bytes)
 
     # Upload PDF once
@@ -641,22 +733,32 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
 
     pass_specs = [
         {"name": "identity_address", "schema": schema_identity_address(),
-         "instructions": "Extract: UPRN, building name, full address, address lines 1-4, postcode."},
+         "instructions": "Extract: UPRN, building name, full address, address lines 1-4, postcode.",
+         "use_extracted_text": True},  # NEW (added): helps with split postcodes / headers
 
         {"name": "fire_strategy_systems", "schema": schema_fire_strategy_systems(),
-         "instructions": "Extract: AWSS/sprinkler/misting info, evacuation policy, FRA completion date, producer/company, author/assessor."},
+         "instructions": "Extract: AWSS/sprinkler/misting info, evacuation policy, FRA completion date, producer/company, author/assessor.",
+         "use_extracted_text": False},
 
         {"name": "geometry_below_ground", "schema": schema_geometry_below_ground(),
-         "instructions": "Extract: storeys, height_m, basement_levels, below_ground_mentioned."},
+         "instructions": "Extract: storeys, height_m, basement_levels, below_ground_mentioned.",
+         "use_extracted_text": False},
 
         {"name": "occupancy_use", "schema": schema_occupancy_use(),
-         "instructions": "Extract: total flats, uses, general needs, main occupancy classification, occupancy, other occupancies, residents per flat, uses in addition to residential."},
+         "instructions": "Extract: total flats, uses, general needs, main occupancy classification, occupancy, other occupancies, residents per flat, uses in addition to residential.",
+         "use_extracted_text": False},
 
         {"name": "construction_external_walls", "schema": schema_construction_external_walls(),
-         "instructions": "Extract: external wall type, infill, proximity escape routes/openings, % coverage, year built, construction description."},
+         # NEW (added): steer it to use the Construction information table (common source of wall type)
+         "instructions": (
+             "Extract: external wall type, infill, proximity escape routes/openings, % coverage, year built, construction description.\n"
+             "If a 'Construction information' table is present, use that as the primary source for Main External Wall Type / wall construction details."
+         ),
+         "use_extracted_text": True},  # NEW (added): improves table capture consistency
 
         {"name": "classifications", "schema": schema_classifications(),
-         "instructions": "Fill classification lists ONLY using explicit evidence"},
+         "instructions": "Fill classification lists ONLY using explicit evidence",
+         "use_extracted_text": False},
     ]
 
     fields = {}
@@ -670,6 +772,7 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
                 schema_name=spec["name"],
                 schema=spec["schema"],
                 section_instructions=spec["instructions"],
+                include_extracted_text=(include_extracted_text and spec.get("use_extracted_text", False)),
             )
             fields[spec["name"]] = out
 
@@ -777,6 +880,8 @@ def process(event, context):
                     "workOrderId": workorder_id,
                     # keep default behaviour unless you override env var / include flag
                     "include_cover_bytes": True,
+                    # NEW (added): enable extracted text to improve consistency (bounded)
+                    "include_extracted_text": True,
                 }
 
                 body_obj = _run_pdfqa_logic(payload=payload, event=event)
