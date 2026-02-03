@@ -794,11 +794,8 @@ def process(event, context):
                     resultS3Bucket=result_bucket,
                     resultS3Key=result_key,
                     coverS3Key=body_obj.get("cover_s3_key"),
-
-                    coverIncluded=body_obj.get("cover_included"),
-                    coverReason=body_obj.get("cover_reason"),
                     responseBytes=(body_obj.get("response_size") or {}).get("bytes"),
-                    responseMegabytes=(body_obj.get("response_size") or {}).get("megabytes"),
+                    responseMegabytes=str((body_obj.get("response_size") or {}).get("megabytes")),
                 )
 
             except Exception as e:
