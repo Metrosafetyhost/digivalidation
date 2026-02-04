@@ -107,6 +107,16 @@ data "aws_iam_policy_document" "pdfqa_worker_policy" {
     actions = ["s3:PutObject", "s3:PutObjectTagging"]
     resources = ["arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*/results/*"]
   }
+  # Worker writes cover PNG to WorkOrders/<workOrderId>/covers/<workOrderId>_cover.png in metrosafetyprod
+  statement {
+    sid     = "S3PutWorkOrderCoversDataSafety"
+    effect  = "Allow"
+    actions = [
+      "s3:PutObject",
+      "s3:PutObjectTagging"
+    ]
+    resources = ["arn:aws:s3:::metrosafetyprod/WorkOrders/*/covers/*"]
+  }
 
 }
 

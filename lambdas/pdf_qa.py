@@ -18,6 +18,7 @@ DEWRRA_JOBS_TABLE = os.environ.get("DEWRRA_JOBS_TABLE", "dewrra_jobs")
 #   s3://ASSET_BUCKET/WorkOrders/<workOrderId>/results/<jobId>.json
 # - So we no longer need DEWRRA_RESULT_BUCKET / DEWRRA_RESULT_PREFIX for final storage.
 RESULTS_FOLDER = os.environ.get("DEWRRA_RESULTS_FOLDER", "results")  # WorkOrders/<workOrderId>/<RESULTS_FOLDER>/<jobId>.json
+COVER_BUCKET = os.environ.get("COVER_BUCKET", "metrosafetyprod") 
 
 S3_BUCKET = os.environ.get("ASSET_BUCKET", "metrosafetyprodfiles")
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -180,7 +181,7 @@ def extract_cover_photo_png(pdf_bytes: bytes) -> bytes | None:
         try:
             if pix.n > 4:
                 pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
-                return pix.tobytes("png")
+            return pix.tobytes("png")
         finally:
             pix = None
     finally:
@@ -695,7 +696,7 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
             cover_key = f"WorkOrders/covers/{base}.png"
 
         s3.put_object(
-            Bucket=bucket,
+            Bucket=COVER_BUCKET,
             Key=cover_key,
             Body=cover_png_bytes,
             ContentType="image/png",
