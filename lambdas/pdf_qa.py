@@ -2,7 +2,6 @@ import os
 import json
 import base64
 import time
-import re
 import boto3
 import pymupdf  # PyMuPDF
 from openai import OpenAI
@@ -25,14 +24,6 @@ MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 # Keep margin under Salesforce synchronous callout response ceiling (6MB).
 # This threshold is for the *entire JSON response* (fields + cover base64 + overhead).
 MAX_RESPONSE_BYTES = int(os.environ.get("MAX_RESPONSE_BYTES", "5500000"))
-
-# NEW: optionally enforce a maximum cover image pixel height before returning/storing.
-# This directly helps with Salesforce-side max image height constraints (Max_image_height).
-MAX_COVER_HEIGHT_PX = int(os.environ.get("MAX_COVER_HEIGHT_PX", "0"))  # 0 = disabled
-
-# NEW: allow bounded extracted-text context to improve reliability without blowing TPM.
-# (Chars, not tokens; chars are simpler to control deterministically.)
-IDENTITY_TEXT_MAX_CHARS = int(os.environ.get("IDENTITY_TEXT_MAX_CHARS", "20000"))
 
 def _safe_json_dumps(obj: dict) -> str:
     # Compact JSON to reduce payload size
@@ -134,41 +125,6 @@ def find_any_pdf_key(bucket: str, workorder_id: str) -> str:
     raise FileNotFoundError(f"No PDF found under s3://{bucket}/{prefix}")
 
 
-def _resize_png_if_needed(png_bytes: bytes) -> bytes:
-    """
-    NEW:
-    If MAX_COVER_HEIGHT_PX is set (>0) and the extracted cover image exceeds that height,
-    resize proportionally to the max height.
-
-    This helps with Salesforce-side Max_image_height constraints and can reduce base64 size.
-    """
-    if not png_bytes or MAX_COVER_HEIGHT_PX <= 0:
-        return png_bytes
-
-    try:
-        from PIL import Image
-        import io
-
-        im = Image.open(io.BytesIO(png_bytes))
-        w, h = im.size
-        if h <= MAX_COVER_HEIGHT_PX:
-            return png_bytes
-
-        scale = MAX_COVER_HEIGHT_PX / float(h)
-        new_w = max(1, int(round(w * scale)))
-        new_h = MAX_COVER_HEIGHT_PX
-
-        im = im.resize((new_w, new_h), resample=Image.LANCZOS)
-
-        out = io.BytesIO()
-        # Keep PNG to match your existing content_type expectation.
-        im.save(out, format="PNG", optimize=True)
-        return out.getvalue()
-    except Exception:
-        # If PIL isn't available or something goes wrong, fall back to original bytes.
-        return png_bytes
-
-
 def extract_cover_photo_png(pdf_bytes: bytes) -> bytes | None:
     """
     Extracts the image that occupies the largest displayed area on page 1 (index 0).
@@ -194,9 +150,7 @@ def extract_cover_photo_png(pdf_bytes: bytes) -> bytes | None:
         try:
             if pix.n > 4:
                 pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
-            png_bytes = pix.tobytes("png")
-            # NEW: enforce max pixel height if configured
-            return _resize_png_if_needed(png_bytes)
+            return pix.tobytes("png")
         finally:
             pix = None
     finally:
@@ -227,92 +181,6 @@ def extract_text_by_page(pdf_bytes: bytes, max_chars: int = 120_000) -> str:
     finally:
         doc.close()
 
-def extract_text_first_pages(pdf_bytes: bytes, page_count: int = 2, max_chars: int = 20_000) -> str:
-    """
-    NEW:
-    Extract text from the first N pages only, bounded by max_chars.
-    This is more reliable for identity/address fields that appear on the cover/front matter.
-    """
-    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
-    try:
-        chunks = []
-        total = 0
-        for i in range(min(page_count, len(doc))):
-            txt = doc[i].get_text("text") or ""
-            if not txt.strip():
-                continue
-            block = f"\n[Page {i+1}]\n{txt}\n"
-            if total + len(block) > max_chars:
-                remaining = max_chars - total
-                if remaining > 0:
-                    chunks.append(block[:remaining])
-                break
-            chunks.append(block)
-            total += len(block)
-        return "".join(chunks).strip()
-    finally:
-        doc.close()
-
-def normalize_uk_postcode(raw: str | None) -> str | None:
-    """
-    NEW:
-    Normalize any UK postcode-like string to "OUTWARD INWARD".
-    - Handles 'NW105JE' -> 'NW10 5JE'
-    - Handles 'NW10' + '5JE' split scenarios if caller concatenates first.
-    """
-    if raw is None:
-        return None
-    s = re.sub(r"\s+", "", str(raw).strip().upper())
-    if not s:
-        return None
-
-    # Very common UK postcode pattern
-    m = re.search(r"\b([A-Z]{1,2}\d{1,2}[A-Z]?)\s*([0-9][A-Z]{2})\b", s)
-    if m:
-        return f"{m.group(1)} {m.group(2)}"
-
-    # If only inward provided (e.g. '5JE'), return as-is; better than corrupting it.
-    if re.fullmatch(r"[0-9][A-Z]{2}", s):
-        return s
-
-    return raw  # fallback, don't guess
-
-def merge_outward_inward_postcode(outward: str | None, inward: str | None) -> str | None:
-    """
-    NEW:
-    If outward is like "NW10" and inward is like "5JE", combine to "NW10 5JE".
-    """
-    if outward is None and inward is None:
-        return None
-    o = (outward or "").strip().upper()
-    i = (inward or "").strip().upper()
-    o = re.sub(r"\s+", "", o)
-    i = re.sub(r"\s+", "", i)
-
-    if re.fullmatch(r"[A-Z]{1,2}\d{1,2}[A-Z]?", o) and re.fullmatch(r"[0-9][A-Z]{2}", i):
-        return f"{o} {i}"
-
-    # If one side already looks like a full postcode, normalize it
-    full = normalize_uk_postcode(o) or normalize_uk_postcode(i)
-    return full
-
-def build_full_address_from_lines(data: dict) -> str | None:
-    """
-    NEW:
-    Compose a full address from address lines and postcode.
-    """
-    parts = []
-    for k in ("address_line_1", "address_line_2", "address_line_3", "address_line_4"):
-        v = data.get(k)
-        if v and str(v).strip() and v != "No specific information provided" and v != "Not Applicable":
-            parts.append(str(v).strip())
-    pc = data.get("postcode")
-    if pc and str(pc).strip() and pc != "No specific information provided" and pc != "Not Applicable":
-        parts.append(str(pc).strip())
-    if not parts:
-        return None
-    return ", ".join(parts)
-
 BASE_RULES = """
 You are extracting facts from a Fire Risk Assessment PDF.
 
@@ -328,37 +196,18 @@ Rules:
 - For multi-select classification fields: return an array of allowed enum values only.
 """
 
-def call_extract(
-    file_id: str,
-    extracted_text: str,
-    schema_name: str,
-    schema: dict,
-    section_instructions: str,
-    supporting_text: str | None = None,
-) -> dict:
-    """
-    supporting_text (NEW):
-    Optional bounded extracted text (e.g. first pages / relevant pages)
-    to stabilize extraction of small header fields like address + postcode.
-    """
-    content = [
-        {"type": "input_file", "file_id": file_id},
-        {"type": "input_text", "text": BASE_RULES},
-        {"type": "input_text", "text": f"Section instructions:\n{section_instructions}".strip()},
-    ]
-
-    # Optional: enable this later if needed (but watch TPM)
-    # NEW: we add bounded text when provided, instead of the full extracted_text blob
-    if supporting_text and supporting_text.strip():
-        content.append({"type": "input_text", "text": f"Supporting extracted text (bounded):\n{supporting_text}".strip()})
-
+def call_extract(file_id: str, extracted_text: str, schema_name: str, schema: dict, section_instructions: str) -> dict:
     resp = oai.responses.create(
         model=MODEL,
-        # NEW: reduce run-to-run variance
-        temperature=0,
         input=[{
             "role": "user",
-            "content": content,
+            "content": [
+                {"type": "input_file", "file_id": file_id},
+                {"type": "input_text", "text": BASE_RULES},
+                {"type": "input_text", "text": f"Section instructions:\n{section_instructions}".strip()},
+                # Optional: enable this later if needed (but watch TPM)
+                # {"type": "input_text", "text": f"Extracted text (page-tagged):\n{extracted_text}".strip()},
+            ],
         }],
         text={
             "format": {
@@ -394,39 +243,13 @@ def apply_schema_defaults(schema: dict, data: dict) -> dict:
             if not key.lower().startswith("notes"):
                 data[key] = "No specific information provided"
 
-    # NEW: postcode normalization & split-line repair
-    # Common failure you saw: "NW10" and "5JE" split across address lines or postcode field.
-    pc = data.get("postcode")
-    a3 = data.get("address_line_3")
-    a4 = data.get("address_line_4")
-
-    # If postcode is only inward (e.g. "5JE") and address_line_3 is outward (e.g. "NW10"),
-    # combine them into a full postcode.
-    combined = None
-    if pc and re.fullmatch(r"\s*[0-9][A-Za-z]{2}\s*", str(pc)):
-        combined = merge_outward_inward_postcode(a3, pc)
-    if not combined:
-        combined = normalize_uk_postcode(pc)
-
-    if combined:
-        data["postcode"] = combined
-
-    # NEW: Fill "building_name" from address_line_1 if missing/placeholder.
-    # (Your example cover effectively has no separate "building name". The closest is line 1.)
-    if "building_name" in data:
+    # If building_name is missing/placeholder, fall back to building_address.
+    if "building_name" in data and "building_address" in data:
         bn = data.get("building_name")
-        if bn is None or str(bn).strip() == "" or bn in ("No specific information provided", "Not Applicable"):
-            al1 = data.get("address_line_1")
-            if al1 and str(al1).strip() and al1 not in ("No specific information provided", "Not Applicable"):
-                data["building_name"] = al1
-
-    # NEW: Fill "building_address" by composing address lines + postcode if missing/placeholder.
-    if "building_address" in data:
         ba = data.get("building_address")
-        if ba is None or str(ba).strip() == "" or ba in ("No specific information provided", "Not Applicable"):
-            composed = build_full_address_from_lines(data)
-            if composed:
-                data["building_address"] = composed
+        if (bn is None or str(bn).strip() == "" or bn == "No specific information provided"):
+            if ba is not None and str(ba).strip() != "" and ba != "No specific information provided":
+                data["building_name"] = ba
 
     # Derive occupancy/inputs when missing (no notes added).
     if "total_flats" in data and "residents_per_flat" in data and "total_building_occupancy" in data:
@@ -458,7 +281,6 @@ def call_extract_with_retry(
     schema_name: str,
     schema: dict,
     section_instructions: str,
-    supporting_text: str | None = None,
     retries: int = 5
 ) -> dict:
     for attempt in range(retries):
@@ -469,7 +291,6 @@ def call_extract_with_retry(
                 schema_name=schema_name,
                 schema=schema,
                 section_instructions=section_instructions,
-                supporting_text=supporting_text,
             )
             return apply_schema_defaults(schema, result)
         except Exception as e:
@@ -811,9 +632,6 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
     # Extract searchable text (not currently passed to model)
     extracted_text = extract_text_by_page(pdf_bytes)
 
-    # NEW: bounded front-matter text for identity/address reliability
-    identity_support_text = extract_text_first_pages(pdf_bytes, page_count=2, max_chars=IDENTITY_TEXT_MAX_CHARS)
-
     # Upload PDF once
     up = oai.files.create(
         file=("document.pdf", pdf_bytes),
@@ -835,8 +653,7 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
          "instructions": "Extract: total flats, uses, general needs, main occupancy classification, occupancy, other occupancies, residents per flat, uses in addition to residential."},
 
         {"name": "construction_external_walls", "schema": schema_construction_external_walls(),
-         # NEW: prompt tweak to explicitly use construction info table if present
-         "instructions": "Extract: external wall type, infill, proximity escape routes/openings, % coverage, year built, construction description. If a construction information table is present, use it."},
+         "instructions": "Extract: external wall type, infill, proximity escape routes/openings, % coverage, year built, construction description."},
 
         {"name": "classifications", "schema": schema_classifications(),
          "instructions": "Fill classification lists ONLY using explicit evidence"},
@@ -847,18 +664,12 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
 
     for spec in pass_specs:
         try:
-            # NEW: selectively provide bounded supporting text where it matters most
-            supporting_text = None
-            if spec["name"] == "identity_address":
-                supporting_text = identity_support_text
-
             out = call_extract_with_retry(
                 file_id=file_id,
                 extracted_text=extracted_text,
                 schema_name=spec["name"],
                 schema=spec["schema"],
                 section_instructions=spec["instructions"],
-                supporting_text=supporting_text,
             )
             fields[spec["name"]] = out
 
@@ -905,8 +716,6 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
         candidate["cover"] = {
             "content_type": "image/png",
             "bytes_base64": cover_b64,
-            # NEW: include dimensions hint if you want SF to reason about Max_image_height
-            "max_cover_height_px_applied": MAX_COVER_HEIGHT_PX if MAX_COVER_HEIGHT_PX > 0 else None,
         }
 
         est = _estimate_response_size_bytes(candidate)
