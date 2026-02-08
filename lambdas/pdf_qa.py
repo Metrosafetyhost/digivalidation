@@ -158,25 +158,67 @@ def join_address_lines(*parts: str | None) -> str | None:
 
 def extract_cover_photo_png(pdf_bytes: bytes) -> bytes | None:
     """
-    Extracts the image that occupies the largest displayed area on page 1 (index 0).
-    Returns PNG bytes or None if no placed images found.
+    Extract the most likely *cover photo* from page 1.
+
+    Fixes the failure mode where a full-page raster 'template/background' image
+    is embedded and incorrectly selected as the largest image.
+
+    Heuristics:
+      - compute displayed area (rect) for each placed image
+      - if any image covers most of the page (>85%), treat as background and ignore
+        *unless it's the only candidate*
+      - ignore very small images (logos)
+      - prefer the largest remaining candidate; slight preference for images lower on the page
     """
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     try:
         page = doc[0]
-        placed = []
+        page_rect = page.rect
+        page_area = page_rect.width * page_rect.height
+        page_h = page_rect.height
+
+        candidates = []
         for img in page.get_images(full=True):
             xref = img[0]
             rects = page.get_image_rects(xref)
             if not rects:
                 continue
-            max_rect = max(rects, key=lambda r: r.width * r.height)
-            placed.append((xref, max_rect.width * max_rect.height))
 
-        if not placed:
+            # If same xref appears multiple times, use largest placement
+            rect = max(rects, key=lambda r: r.width * r.height)
+            area = rect.width * rect.height
+            area_ratio = area / page_area if page_area else 0
+
+            # pixel size helps filter out tiny logos
+            try:
+                pix = pymupdf.Pixmap(doc, xref)
+                pix_area = pix.width * pix.height
+            finally:
+                pix = None
+
+            candidates.append((xref, rect, area, area_ratio, pix_area))
+
+        if not candidates:
             return None
 
-        best_xref, _ = max(placed, key=lambda t: t[1])
+        # 1) Filter out obvious tiny images (logos/icons)
+        # (Tune threshold if needed; this works well for your samples.)
+        non_tiny = [c for c in candidates if c[4] >= 150_000] or candidates
+
+        # 2) Filter out page-sized backgrounds if there are other options
+        non_bg = [c for c in non_tiny if c[3] < 0.85]
+        pool = non_bg if non_bg else non_tiny  # if everything looks "backgroundy", fall back
+
+        # 3) Pick the best candidate:
+        #    mostly largest displayed area, with a small bias toward lower-half placement
+        def score(c):
+            _xref, rect, area, _ratio, _pix_area = c
+            y_mid = (rect.y0 + rect.y1) / 2.0
+            lower_bias = 0.7 + 0.6 * (y_mid / page_h)  # ranges ~0.7..1.3
+            return area * lower_bias
+
+        best_xref, *_ = max(pool, key=score)
+
         pix = pymupdf.Pixmap(doc, best_xref)
         try:
             if pix.n > 4:
