@@ -21,6 +21,7 @@ module "lambdas_zip" {
     "nova_water",
     "waterRiskCaseIngest",
     "pdf_qa",
+    "qa_photo_analysis",
     "pdfqa_api",
     "blur_image",
     "geocoding",
@@ -44,6 +45,7 @@ module "lambdas_zip" {
     "nova_water.py",
     "waterRiskCaseIngest.py",
     "pdf_qa.py",
+    "qa_photo_analysis.py",
     "pdfqa_api.py",
     "blur_image.py",
     "geocoding.py",
@@ -121,5 +123,6 @@ module "lambdas_zip" {
     waterRiskCaseIngest    = { handler = "process", timeout = 900, memory_size = 512 }
     blur_image             = { handler = "process", timeout = 240, memory_size = 512 }
     geocoding              = { handler = "process", timeout = 240, memory_size = 512 }
+    qa_photo_analysis      = { handler = "process", timeout = 240, memory_size = 512 }
   }
 }

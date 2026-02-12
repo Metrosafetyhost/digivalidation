@@ -6,6 +6,7 @@ import boto3
 import pymupdf  # PyMuPDF
 import re  # NEW (added): needed for postcode normalization
 from openai import OpenAI
+from qa_photo_analysis import PhotoAnalyzer
 
 # ----------------------------
 # Async job infra (NEW)
@@ -22,6 +23,25 @@ COVER_BUCKET = os.environ.get("COVER_BUCKET", "metrosafetyprod")
 
 S3_BUCKET = os.environ.get("ASSET_BUCKET", "metrosafetyprodfiles")
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+
+# Vision / photo analysis model (used only when enable_photo_analysis=true in the request)
+PHOTO_ANALYSIS_MODEL = os.environ.get("PHOTO_ANALYSIS_MODEL", MODEL)
+
+# Optional JSON list for allowed materials (used only when enable_photo_analysis=true)
+DEFAULT_ALLOWED_MATERIALS = json.loads(os.environ.get(
+    "PHOTO_ALLOWED_MATERIALS_JSON",
+    json.dumps([
+        "Solid Brick Masonry",
+        "Rendered Walls",
+        "Timber",
+        "Concrete",
+        "Steel",
+        "Stone",
+        "Glass",
+        "Blockwork",
+        "Cladding",
+    ]),
+))
 
 # Keep margin under Salesforce synchronous callout response ceiling (6MB).
 # This threshold is for the *entire JSON response* (fields + cover base64 + overhead).
@@ -745,6 +765,26 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
         )
         cover_written = True
 
+
+    # ----------------------------
+    # OPTIONAL: Photo (cover image) analysis (runs only when explicitly enabled)
+    # ----------------------------
+    enable_photo_analysis = (payload.get("enable_photo_analysis") is True)
+
+    photo_summary = None
+    photo_error = None
+
+    if enable_photo_analysis:
+        if not cover_png_bytes:
+            photo_error = "Cover image could not be extracted from PDF"
+        else:
+            try:
+                pa = PhotoAnalyzer(oai_client=oai, model=PHOTO_ANALYSIS_MODEL)
+                out = pa.analyse_cover_png(cover_png_bytes=cover_png_bytes)
+                photo_summary = out.get("summary")
+            except Exception as e:
+                photo_error = str(e)
+
     # Extract searchable text (optionally passed to model; bounded in call_extract)
     extracted_text = extract_text_by_page(pdf_bytes)
 
@@ -822,6 +862,12 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
 
         except Exception as e:
             pass_errors[spec["name"]] = str(e)
+
+    # Attach photo summary result (if enabled)
+    if photo_summary:
+        fields["photo_summary"] = photo_summary
+    if photo_error:
+        pass_errors["photo_summary"] = photo_error
 
     # Build base response (single call)
     body_obj = {
