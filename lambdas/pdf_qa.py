@@ -4,22 +4,19 @@ import base64
 import time
 import boto3
 import pymupdf  # PyMuPDF
-import re  # NEW (added): needed for postcode normalization
+import re
 from openai import OpenAI
-from qa_photo_analysis import PhotoAnalyzer
 
 # ----------------------------
-# Async job infra (NEW)
+# Async job infra
 # ----------------------------
 DEWRRA_JOBS_TABLE = os.environ.get("DEWRRA_JOBS_TABLE", "dewrra_jobs")
 
 # Where the worker writes the FINAL JSON result for GET /dewrra/results/{jobId}
-#
-# - Store results under the SAME WorkOrder folder as the PDF/cover:
+# Store results under the SAME WorkOrder folder as the PDF/cover:
 #   s3://ASSET_BUCKET/WorkOrders/<workOrderId>/results/<jobId>.json
-# - So we no longer need DEWRRA_RESULT_BUCKET / DEWRRA_RESULT_PREFIX for final storage.
-RESULTS_FOLDER = os.environ.get("DEWRRA_RESULTS_FOLDER", "results")  # WorkOrders/<workOrderId>/<RESULTS_FOLDER>/<jobId>.json
-COVER_BUCKET = os.environ.get("COVER_BUCKET", "metrosafetyprod") 
+RESULTS_FOLDER = os.environ.get("DEWRRA_RESULTS_FOLDER", "results")
+COVER_BUCKET = os.environ.get("COVER_BUCKET", "metrosafetyprod")
 
 S3_BUCKET = os.environ.get("ASSET_BUCKET", "metrosafetyprodfiles")
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -27,36 +24,104 @@ MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 # Vision / photo analysis model (used only when enable_photo_analysis=true in the request)
 PHOTO_ANALYSIS_MODEL = os.environ.get("PHOTO_ANALYSIS_MODEL", MODEL)
 
-# Optional JSON list for allowed materials (used only when enable_photo_analysis=true)
-DEFAULT_ALLOWED_MATERIALS = json.loads(os.environ.get(
-    "PHOTO_ALLOWED_MATERIALS_JSON",
-    json.dumps([
-        "Solid Brick Masonry",
-        "Rendered Walls",
-        "Timber",
-        "Concrete",
-        "Steel",
-        "Stone",
-        "Glass",
-        "Blockwork",
-        "Cladding",
-    ]),
-))
-
 # Keep margin under Salesforce synchronous callout response ceiling (6MB).
-# This threshold is for the *entire JSON response* (fields + cover base64 + overhead).
 MAX_RESPONSE_BYTES = int(os.environ.get("MAX_RESPONSE_BYTES", "5500000"))
 
-# NEW (added): include extracted text to improve consistency (bounded)
+# Include extracted text to improve consistency (bounded)
 INCLUDE_EXTRACTED_TEXT_DEFAULT = os.environ.get("INCLUDE_EXTRACTED_TEXT_DEFAULT", "false").lower() == "true"
 EXTRACTED_TEXT_MAX_CHARS_PER_CALL = int(os.environ.get("EXTRACTED_TEXT_MAX_CHARS_PER_CALL", "20000"))
 
+
+# ----------------------------
+# Photo analysis (inlined from qa_photo_analysis.py)
+# ----------------------------
+
+PHOTO_RULES = """
+You are analysing a building exterior photo shown on the front cover of a Fire Risk Assessment report.
+
+Rules:
+- Be helpful, but do not invent facts. If something is unclear, say "Not known from the photo".
+- Infer only where it is reasonable from visible cues (e.g., basement lightwells/steps/grade changes).
+- Write a single summary suitable for a Salesforce long text field.
+- Keep it structured and easy to read (short labelled lines).
+- Do NOT output JSON keys other than "summary".
+""".strip()
+
+
+def photo_summary_schema() -> dict:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {"summary": {"type": "string"}},
+        "required": ["summary"],
+    }
+
+
+def analyse_cover_png(oai_client: OpenAI, model: str, cover_png_bytes: bytes) -> dict:
+    """Return {"summary": "..."} using OpenAI Responses API."""
+    img_b64 = base64.b64encode(cover_png_bytes).decode("utf-8")
+    image_url = f"data:image/png;base64,{img_b64}"
+
+    schema = photo_summary_schema()
+
+    prompt = (
+        "Write ONE summary string starting with exactly:\n"
+        "\"From the image displayed on the front cover of this report:\"\n\n"
+        "Answer the following as short labelled lines (use the label text exactly):\n"
+        "- Floors visible:\n"
+        "- Basement obvious:\n"
+        "- Estimated height (m):\n"
+        "- Estimated year built (or era):\n"
+        "- Main external wall type:\n"
+        "- Other external wall types visible:\n"
+        "- Approx. wall type coverage (overall):\n"
+        "- Balconies present:\n"
+        "- Balcony materials:\n"
+        "- Materials near openings (and approx distance):\n"
+        "- Materials near escape doors (and approx distance):\n"
+        "- Notes/uncertainties:\n\n"
+        "Guidance:\n"
+        "- For 'Basement obvious', infer from visible lightwells, stepped entrances, raised/lowered ground levels, or ventilation grilles; otherwise say 'Not known from the photo'.\n"
+        "- For distances, approximate in metres (e.g., 'within ~1m', '2–3m').\n"
+        "- If uncertain for any line, write 'Not known from the photo'."
+    )
+
+    resp = oai_client.responses.create(
+        model=model,
+        input=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": PHOTO_RULES},
+                    {"type": "input_text", "text": prompt},
+                    {"type": "input_image", "image_url": image_url},
+                ],
+            }
+        ],
+        text={
+            "format": {
+                "name": "dewrra_photo_summary",
+                "type": "json_schema",
+                "schema": schema,
+                "strict": True,
+            }
+        },
+    )
+
+    return json.loads(resp.output_text)
+
+
+# ----------------------------
+# Helpers
+# ----------------------------
+
 def _safe_json_dumps(obj: dict) -> str:
-    # Compact JSON to reduce payload size
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+
 
 def _estimate_response_size_bytes(body_obj: dict) -> int:
     return len(_safe_json_dumps(body_obj).encode("utf-8"))
+
 
 def _load_openai_key():
     arn = os.environ.get("OPENAI_SECRET_ARN")
@@ -67,16 +132,7 @@ def _load_openai_key():
     return os.environ.get("OPENAI_API_KEY")
 
 
-# def _load_dewrra_api_key():
-#     arn = os.environ.get("DEWRRA_API_KEY_SECRET_ARN")
-#     if arn:
-#         sm = boto3.client("secretsmanager")
-#         val = sm.get_secret_value(SecretId=arn)
-#         return val.get("SecretString") or base64.b64decode(val["SecretBinary"]).decode()
-#     return os.environ.get("DEWRRA_API_KEY")
-
 OPENAI_API_KEY = _load_openai_key()
-#DEWRRA_API_KEY = _load_dewrra_api_key()
 
 s3 = boto3.client("s3")
 ddb = boto3.resource("dynamodb")
@@ -84,14 +140,12 @@ jobs_table = ddb.Table(DEWRRA_JOBS_TABLE)
 
 oai = OpenAI(api_key=OPENAI_API_KEY)
 
+
 def _now() -> int:
     return int(time.time())
 
+
 def _ddb_update(job_id: str, **attrs):
-    """
-    Async infra helper (NEW):
-    Update the job record with status/progress/errors/result pointers.
-    """
     attrs["updatedAt"] = _now()
 
     expr_parts = []
@@ -110,19 +164,13 @@ def _ddb_update(job_id: str, **attrs):
         ExpressionAttributeValues=eav,
     )
 
+
 def _ddb_get(job_id: str) -> dict | None:
     res = jobs_table.get_item(Key={"jobId": job_id})
     return res.get("Item")
 
-def _write_result_to_s3(job_id: str, workorder_id: str, body_obj: dict) -> tuple[str, str]:
-    """
-    Async infra helper (NEW):
-    Store final response JSON in S3 so /results can fetch it.
-    Returns (bucket, key).
 
-    Write to:
-      s3://ASSET_BUCKET/WorkOrders/<workOrderId>/results/<jobId>.json
-    """
+def _write_result_to_s3(job_id: str, workorder_id: str, body_obj: dict) -> tuple[str, str]:
     bucket = S3_BUCKET
     key = f"WorkOrders/{workorder_id}/{RESULTS_FOLDER}/{job_id}.json"
 
@@ -134,11 +182,8 @@ def _write_result_to_s3(job_id: str, workorder_id: str, body_obj: dict) -> tuple
     )
     return bucket, key
 
+
 def find_any_pdf_key(bucket: str, workorder_id: str) -> str:
-    """
-    Returns the first PDF found under WorkOrders/<workorder_id>/.
-    Assumes there is only one PDF for testing.
-    """
     prefix = f"WorkOrders/{workorder_id}/"
     paginator = s3.get_paginator("list_objects_v2")
 
@@ -150,19 +195,17 @@ def find_any_pdf_key(bucket: str, workorder_id: str) -> str:
 
     raise FileNotFoundError(f"No PDF found under s3://{bucket}/{prefix}")
 
-# NEW (added): normalise UK postcodes reliably (handles NW10\n5JE -> NW10 5JE)
+
 def normalize_uk_postcode(value: str | None) -> str | None:
     if not value:
         return value
     raw = str(value).upper()
-    # Strip everything except A-Z0-9
     compact = re.sub(r"[^A-Z0-9]", "", raw)
-    # UK inward code is always last 3 chars; insert a space before that if long enough
     if len(compact) >= 5:
         return compact[:-3] + " " + compact[-3:]
     return compact
 
-# NEW (added): join address lines into a usable building address fallback
+
 def join_address_lines(*parts: str | None) -> str | None:
     cleaned = []
     for p in parts:
@@ -176,20 +219,9 @@ def join_address_lines(*parts: str | None) -> str | None:
         cleaned.append(s)
     return ", ".join(cleaned) if cleaned else None
 
+
 def extract_cover_photo_png(pdf_bytes: bytes) -> bytes | None:
-    """
-    Extract the most likely *cover photo* from page 1.
-
-    Fixes the failure mode where a full-page raster 'template/background' image
-    is embedded and incorrectly selected as the largest image.
-
-    Heuristics:
-      - compute displayed area (rect) for each placed image
-      - if any image covers most of the page (>85%), treat as background and ignore
-        *unless it's the only candidate*
-      - ignore very small images (logos)
-      - prefer the largest remaining candidate; slight preference for images lower on the page
-    """
+    """Extract most likely cover photo from page 1."""
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     try:
         page = doc[0]
@@ -204,12 +236,10 @@ def extract_cover_photo_png(pdf_bytes: bytes) -> bytes | None:
             if not rects:
                 continue
 
-            # If same xref appears multiple times, use largest placement
             rect = max(rects, key=lambda r: r.width * r.height)
             area = rect.width * rect.height
             area_ratio = area / page_area if page_area else 0
 
-            # pixel size helps filter out tiny logos
             try:
                 pix = pymupdf.Pixmap(doc, xref)
                 pix_area = pix.width * pix.height
@@ -221,20 +251,14 @@ def extract_cover_photo_png(pdf_bytes: bytes) -> bytes | None:
         if not candidates:
             return None
 
-        # 1) Filter out obvious tiny images (logos/icons)
-        # (Tune threshold if needed; this works well for your samples.)
         non_tiny = [c for c in candidates if c[4] >= 150_000] or candidates
-
-        # 2) Filter out page-sized backgrounds if there are other options
         non_bg = [c for c in non_tiny if c[3] < 0.85]
-        pool = non_bg if non_bg else non_tiny  # if everything looks "backgroundy", fall back
+        pool = non_bg if non_bg else non_tiny
 
-        # 3) Pick the best candidate:
-        #    mostly largest displayed area, with a small bias toward lower-half placement
         def score(c):
             _xref, rect, area, _ratio, _pix_area = c
             y_mid = (rect.y0 + rect.y1) / 2.0
-            lower_bias = 0.7 + 0.6 * (y_mid / page_h)  # ranges ~0.7..1.3
+            lower_bias = 0.7 + 0.6 * (y_mid / page_h)
             return area * lower_bias
 
         best_xref, *_ = max(pool, key=score)
@@ -249,11 +273,8 @@ def extract_cover_photo_png(pdf_bytes: bytes) -> bytes | None:
     finally:
         doc.close()
 
+
 def extract_text_by_page(pdf_bytes: bytes, max_chars: int = 120_000) -> str:
-    """
-    Extract searchable text with page markers.
-    Cap total chars to keep prompts stable (adjust as needed).
-    """
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     try:
         chunks = []
@@ -287,7 +308,8 @@ Rules:
 - Numbers must be numbers (no units). Height in meters should be numeric.
 - Dates: if a completion date is stated, also provide DD/MM/YYYY.
 - For multi-select classification fields: return an array of allowed enum values only.
-"""
+""".strip()
+
 
 def call_extract(
     file_id: str,
@@ -298,7 +320,6 @@ def call_extract(
     include_extracted_text: bool = False,
     extracted_text_max_chars: int = EXTRACTED_TEXT_MAX_CHARS_PER_CALL,
 ) -> dict:
-    # NEW (added): bounded extracted text, only when enabled (improves consistency for split postcodes/tables)
     content = [
         {"type": "input_file", "file_id": file_id},
         {"type": "input_text", "text": BASE_RULES},
@@ -310,10 +331,7 @@ def call_extract(
 
     resp = oai.responses.create(
         model=MODEL,
-        input=[{
-            "role": "user",
-            "content": content,
-        }],
+        input=[{"role": "user", "content": content}],
         text={
             "format": {
                 "name": schema_name,
@@ -325,15 +343,14 @@ def call_extract(
     )
     return json.loads(resp.output_text)
 
+
 def apply_schema_defaults(schema: dict, data: dict) -> dict:
-    """Post-process model output to avoid empty/None answers where we want explicit fallbacks."""
     props = (schema or {}).get("properties", {})
     for key, prop_schema in props.items():
         if key not in data:
             continue
         val = data.get(key)
 
-        # Fill empty multi-select arrays with an explicit fallback, if allowed by the enum.
         if prop_schema.get("type") == "array" and isinstance(val, list) and len(val) == 0:
             enum = (((prop_schema.get("items") or {}).get("enum")) or [])
             for fallback in ("Not Applicable", "Not Known", "No specific information provided"):
@@ -342,17 +359,14 @@ def apply_schema_defaults(schema: dict, data: dict) -> dict:
                     break
             continue
 
-        # Fill nullable free-text fields with the requested placeholder (except notes fields).
         t = prop_schema.get("type")
         if isinstance(t, list) and "string" in t and "null" in t and val is None:
             if not key.lower().startswith("notes"):
                 data[key] = "No specific information provided"
 
-    # postcode normalisation (handles split lines e.g., "NW10" + "5JE")
     if "postcode" in data and data.get("postcode"):
         data["postcode"] = normalize_uk_postcode(data.get("postcode"))
 
-    # If building_name is missing/placeholder, fall back to building_address.
     if "building_name" in data and "building_address" in data:
         bn = data.get("building_name")
         ba = data.get("building_address")
@@ -360,7 +374,6 @@ def apply_schema_defaults(schema: dict, data: dict) -> dict:
             if ba is not None and str(ba).strip() != "" and ba != "No specific information provided":
                 data["building_name"] = ba
 
-    # If building_address is missing/placeholder, build it from address lines + postcode.
     if "building_address" in data:
         ba = data.get("building_address")
         if ba is None or str(ba).strip() == "" or ba == "No specific information provided":
@@ -374,7 +387,6 @@ def apply_schema_defaults(schema: dict, data: dict) -> dict:
             if fallback:
                 data["building_address"] = fallback
 
-    # NEW (added): if building_name is still missing/placeholder AFTER building_address fallback, set it now.
     if "building_name" in data and "building_address" in data:
         bn = data.get("building_name")
         ba = data.get("building_address")
@@ -382,29 +394,26 @@ def apply_schema_defaults(schema: dict, data: dict) -> dict:
             if ba is not None and str(ba).strip() != "" and ba != "No specific information provided":
                 data["building_name"] = ba
 
-    # Derive occupancy/inputs when missing (no notes added).
     if "total_flats" in data and "residents_per_flat" in data and "total_building_occupancy" in data:
         tf = data.get("total_flats")
         rpf = data.get("residents_per_flat")
         tbo = data.get("total_building_occupancy")
 
-        # Prefer computing occupancy from flats * residents_per_flat.
         if tbo is None and isinstance(tf, int) and isinstance(rpf, int):
             data["total_building_occupancy"] = tf * rpf
             tbo = data["total_building_occupancy"]
 
-        # If residents_per_flat is missing but occupancy and flats exist, derive if divisible cleanly.
         if data.get("residents_per_flat") is None and isinstance(tbo, int) and isinstance(tf, int) and tf > 0:
             if tbo % tf == 0:
                 data["residents_per_flat"] = tbo // tf
                 rpf = data["residents_per_flat"]
 
-        # If total_flats is missing but occupancy and residents_per_flat exist, derive if divisible cleanly.
         if data.get("total_flats") is None and isinstance(tbo, int) and isinstance(rpf, int) and rpf > 0:
             if tbo % rpf == 0:
                 data["total_flats"] = tbo // rpf
 
     return data
+
 
 def call_extract_with_retry(
     file_id: str,
@@ -429,7 +438,7 @@ def call_extract_with_retry(
         except Exception as e:
             msg = str(e).lower()
             if "429" in msg or "rate limit" in msg or "tpm" in msg:
-                sleep_s = 1.5 * (attempt + 1)  # 1.5s, 3s, 4.5s, 6s, 7.5s
+                sleep_s = 1.5 * (attempt + 1)
                 print(f"[{schema_name}] Rate limited (TPM). Sleeping {sleep_s:.1f}s then retrying...")
                 time.sleep(sleep_s)
                 continue
@@ -437,10 +446,15 @@ def call_extract_with_retry(
 
     raise RuntimeError(f"[{schema_name}] Failed after {retries} retries due to rate limiting")
 
+
 def bytes_to_mb(n: int, precision: int = 2) -> float:
     return round(n / (1024 * 1024), precision)
 
-# Schemas (6 passes)
+
+# ----------------------------
+# Schemas (unchanged)
+# ----------------------------
+
 def schema_identity_address():
     return {
         "type": "object",
@@ -457,10 +471,18 @@ def schema_identity_address():
             "notes_identity_address": {"type": ["string", "null"]},
         },
         "required": [
-            "uprn","building_name","building_address","address_line_1","address_line_2",
-            "address_line_3","address_line_4","postcode","notes_identity_address"
+            "uprn",
+            "building_name",
+            "building_address",
+            "address_line_1",
+            "address_line_2",
+            "address_line_3",
+            "address_line_4",
+            "postcode",
+            "notes_identity_address",
         ],
     }
+
 
 def schema_fire_strategy_systems():
     return {
@@ -476,10 +498,16 @@ def schema_fire_strategy_systems():
             "notes_fire_strategy_systems": {"type": ["string", "null"]},
         },
         "required": [
-            "awss_sprinkler_misting","evacuation_policy","fra_completion_date_raw",
-            "fra_completion_date_ddmmyyyy","fra_producer","fra_author","notes_fire_strategy_systems"
+            "awss_sprinkler_misting",
+            "evacuation_policy",
+            "fra_completion_date_raw",
+            "fra_completion_date_ddmmyyyy",
+            "fra_producer",
+            "fra_author",
+            "notes_fire_strategy_systems",
         ],
     }
+
 
 def schema_geometry_below_ground():
     return {
@@ -493,9 +521,14 @@ def schema_geometry_below_ground():
             "notes_geometry_below_ground": {"type": ["string", "null"]},
         },
         "required": [
-            "storeys","height_m","basement_levels","below_ground_mentioned","notes_geometry_below_ground"
+            "storeys",
+            "height_m",
+            "basement_levels",
+            "below_ground_mentioned",
+            "notes_geometry_below_ground",
         ],
     }
+
 
 def schema_occupancy_use():
     return {
@@ -523,7 +556,6 @@ def schema_occupancy_use():
                     "No specific information provided",
                 ],
             },
-
             "total_building_occupancy": {"type": ["integer", "null"]},
             "other_occupancies": {"type": ["string", "null"]},
             "residents_per_flat": {"type": ["integer", "null"]},
@@ -531,11 +563,18 @@ def schema_occupancy_use():
             "notes_occupancy_use": {"type": ["string", "null"]},
         },
         "required": [
-            "total_flats","building_uses","general_needs","main_occupancy_classification",
-            "total_building_occupancy","other_occupancies","residents_per_flat",
-            "uses_in_addition_to_residential","notes_occupancy_use"
+            "total_flats",
+            "building_uses",
+            "general_needs",
+            "main_occupancy_classification",
+            "total_building_occupancy",
+            "other_occupancies",
+            "residents_per_flat",
+            "uses_in_addition_to_residential",
+            "notes_occupancy_use",
         ],
     }
+
 
 def schema_construction_external_walls():
     return {
@@ -552,11 +591,17 @@ def schema_construction_external_walls():
             "notes_construction_external_walls": {"type": ["string", "null"]},
         },
         "required": [
-            "main_external_wall_type","walling_infill","proximity_to_escape_routes",
-            "proximity_to_openings","main_walling_type_percent","year_built",
-            "building_construction_description","notes_construction_external_walls"
+            "main_external_wall_type",
+            "walling_infill",
+            "proximity_to_escape_routes",
+            "proximity_to_openings",
+            "main_walling_type_percent",
+            "year_built",
+            "building_construction_description",
+            "notes_construction_external_walls",
         ],
     }
+
 
 def schema_classifications():
     building_classification_enum = [
@@ -623,13 +668,7 @@ def schema_classifications():
         "Tiled (mansard face / dorner etc)",
     ]
 
-    balcony_materials_enum = [
-        "Not Applicable",
-        "Metal",
-        "Timber",
-        "Glass",
-        "HPL",
-    ]
+    balcony_materials_enum = ["Not Applicable", "Metal", "Timber", "Glass", "HPL"]
 
     attachment_types_enum = [
         "Not Applicable",
@@ -714,18 +753,16 @@ def schema_classifications():
         ],
     }
 
+
+# ----------------------------
+# Main logic
+# ----------------------------
+
 def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
-    """
-    NEW wrapper around your original logic:
-    - Returns the body_obj dict (NOT the API Gateway response envelope)
-    - Keeps your comments + behaviour as close as possible
-    """
     bucket = payload.get("bucket", S3_BUCKET)
 
-    # NEW: accept Salesforce body { "workOrderId": "..." }
     workorder_id = payload.get("workOrderId") or payload.get("workorder_id") or payload.get("work_order_id")
 
-    # Allow old callers to pass pdf_s3_key, but default to "find the only PDF under the WO folder"
     if "pdf_s3_key" in payload and payload["pdf_s3_key"]:
         pdf_key = payload["pdf_s3_key"]
     else:
@@ -733,24 +770,19 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
             raise KeyError("Missing 'workOrderId' (or 'pdf_s3_key') in request body")
         pdf_key = find_any_pdf_key(bucket=bucket, workorder_id=workorder_id)
 
-    # NEW: cover path is under the same WO folder in covers/
     cover_key = None
     if workorder_id:
         cover_key = f"WorkOrders/{workorder_id}/covers/{workorder_id}_cover.png"
 
     include_cover_bytes = payload.get("include_cover_bytes", True)
-
-    # NEW (added): allow per-request override of extracted text usage
     include_extracted_text = payload.get("include_extracted_text", INCLUDE_EXTRACTED_TEXT_DEFAULT)
 
     print(f"Loading PDF from bucket={bucket}, key={pdf_key}")
     obj = s3.get_object(Bucket=bucket, Key=pdf_key)
     pdf_bytes = obj["Body"].read()
 
-    # Extract cover image
     cover_png_bytes = extract_cover_photo_png(pdf_bytes)
 
-    # Write cover image to S3 for traceability/fallback (generate a key if not provided)
     cover_written = False
     if cover_png_bytes:
         if not cover_key:
@@ -765,12 +797,8 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
         )
         cover_written = True
 
-
-    # ----------------------------
-    # OPTIONAL: Photo (cover image) analysis (runs only when explicitly enabled)
-    # ----------------------------
+    # OPTIONAL photo analysis
     enable_photo_analysis = (payload.get("enable_photo_analysis") is True)
-
     photo_summary = None
     photo_error = None
 
@@ -779,16 +807,13 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
             photo_error = "Cover image could not be extracted from PDF"
         else:
             try:
-                pa = PhotoAnalyzer(oai_client=oai, model=PHOTO_ANALYSIS_MODEL)
-                out = pa.analyse_cover_png(cover_png_bytes=cover_png_bytes)
+                out = analyse_cover_png(oai_client=oai, model=PHOTO_ANALYSIS_MODEL, cover_png_bytes=cover_png_bytes)
                 photo_summary = out.get("summary")
             except Exception as e:
                 photo_error = str(e)
 
-    # Extract searchable text (optionally passed to model; bounded in call_extract)
     extracted_text = extract_text_by_page(pdf_bytes)
 
-    # Upload PDF once
     up = oai.files.create(
         file=("document.pdf", pdf_bytes),
         purpose="user_data",
@@ -796,33 +821,45 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
     file_id = up.id
 
     pass_specs = [
-        {"name": "identity_address", "schema": schema_identity_address(),
-         "instructions": "Extract: UPRN, building name, full address, address lines 1-4, postcode.",
-         "use_extracted_text": True},  # NEW (added): helps with split postcodes / headers
-
-        {"name": "fire_strategy_systems", "schema": schema_fire_strategy_systems(),
-         "instructions": "Extract: AWSS/sprinkler/misting info, evacuation policy, FRA completion date, producer/company, author/assessor.",
-         "use_extracted_text": False},
-
-        {"name": "geometry_below_ground", "schema": schema_geometry_below_ground(),
-         "instructions": "Extract: storeys, height_m, basement_levels, below_ground_mentioned.",
-         "use_extracted_text": False},
-
-        {"name": "occupancy_use", "schema": schema_occupancy_use(),
-         "instructions": "Extract: total flats, uses, general needs, main occupancy classification, occupancy, other occupancies, residents per flat, uses in addition to residential.",
-         "use_extracted_text": False},
-
-        {"name": "construction_external_walls", "schema": schema_construction_external_walls(),
-         # NEW (added): steer it to use the Construction information table (common source of wall type)
-         "instructions": (
-             "Extract: external wall type, infill, proximity escape routes/openings, % coverage, year built, construction description.\n"
-             "If a 'Construction information' table is present, use that as the primary source for Main External Wall Type / wall construction details."
-         ),
-         "use_extracted_text": True},  # NEW (added): improves table capture consistency
-
-        {"name": "classifications", "schema": schema_classifications(),
-         "instructions": "Fill classification lists ONLY using explicit evidence",
-         "use_extracted_text": False},
+        {
+            "name": "identity_address",
+            "schema": schema_identity_address(),
+            "instructions": "Extract: UPRN, building name, full address, address lines 1-4, postcode.",
+            "use_extracted_text": True,
+        },
+        {
+            "name": "fire_strategy_systems",
+            "schema": schema_fire_strategy_systems(),
+            "instructions": "Extract: AWSS/sprinkler/misting info, evacuation policy, FRA completion date, producer/company, author/assessor.",
+            "use_extracted_text": False,
+        },
+        {
+            "name": "geometry_below_ground",
+            "schema": schema_geometry_below_ground(),
+            "instructions": "Extract: storeys, height_m, basement_levels, below_ground_mentioned.",
+            "use_extracted_text": False,
+        },
+        {
+            "name": "occupancy_use",
+            "schema": schema_occupancy_use(),
+            "instructions": "Extract: total flats, uses, general needs, main occupancy classification, occupancy, other occupancies, residents per flat, uses in addition to residential.",
+            "use_extracted_text": False,
+        },
+        {
+            "name": "construction_external_walls",
+            "schema": schema_construction_external_walls(),
+            "instructions": (
+                "Extract: external wall type, infill, proximity escape routes/openings, % coverage, year built, construction description.\n"
+                "If a 'Construction information' table is present, use that as the primary source for Main External Wall Type / wall construction details."
+            ),
+            "use_extracted_text": True,
+        },
+        {
+            "name": "classifications",
+            "schema": schema_classifications(),
+            "instructions": "Fill classification lists ONLY using explicit evidence",
+            "use_extracted_text": False,
+        },
     ]
 
     fields = {}
@@ -863,33 +900,25 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
         except Exception as e:
             pass_errors[spec["name"]] = str(e)
 
-    # Attach photo summary result (if enabled)
     if photo_summary:
         fields["photo_summary"] = photo_summary
     if photo_error:
         pass_errors["photo_summary"] = photo_error
 
-    # Build base response (single call)
     body_obj = {
         "ok": True,
         "fields": fields,
         "pass_errors": pass_errors,
         "cover_image_written": cover_written,
         "cover_s3_key": cover_key if cover_written else None,
-        "cover": None,  # filled conditionally below
+        "cover": None,
     }
 
-    # Conditionally include cover bytes inline (only if total response stays below threshold)
-    # NOTE (Async worker): for polling /results, you *usually* don’t need inline bytes,
-    # but I’m keeping your original behaviour so you can enable/disable via include_cover_bytes.
     if include_cover_bytes and cover_png_bytes:
         cover_b64 = base64.b64encode(cover_png_bytes).decode("utf-8")
 
         candidate = dict(body_obj)
-        candidate["cover"] = {
-            "content_type": "image/png",
-            "bytes_base64": cover_b64,
-        }
+        candidate["cover"] = {"content_type": "image/png", "bytes_base64": cover_b64}
 
         est = _estimate_response_size_bytes(candidate)
         if est <= MAX_RESPONSE_BYTES:
@@ -900,28 +929,24 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
             body_obj["max_response_bytes"] = MAX_RESPONSE_BYTES
 
     final_size_bytes = _estimate_response_size_bytes(body_obj)
-    body_obj["response_size"] = {
-        "bytes": final_size_bytes,
-        "megabytes": bytes_to_mb(final_size_bytes),
-    }
+    body_obj["response_size"] = {"bytes": final_size_bytes, "megabytes": bytes_to_mb(final_size_bytes)}
     print(f"[DEBUG] Final response size (bytes): {final_size_bytes}")
 
     return body_obj
 
 
 def _is_sqs_event(event: dict) -> bool:
-    return isinstance(event, dict) and isinstance(event.get("Records"), list) and event["Records"] and "body" in event["Records"][0]
+    return (
+        isinstance(event, dict)
+        and isinstance(event.get("Records"), list)
+        and event["Records"]
+        and "body" in event["Records"][0]
+    )
 
 
 def process(event, context):
-    """
-    NOTE: You said Babushka uses 'process' as the handler — kept as-is.
+    """Lambda handler."""
 
-    This function now supports:
-    (A) SQS-triggered async worker mode  (NEW)
-    (B) Old API Gateway sync mode for ad-hoc/manual testing (kept for convenience)
-    """
-    # (A) SQS WORKER MODE (
     if _is_sqs_event(event):
         for rec in event.get("Records", []):
             try:
@@ -931,7 +956,6 @@ def process(event, context):
                     print("Missing jobId in SQS message body")
                     continue
 
-                # Load job record from DynamoDB to get the Work Order ID
                 job_item = _ddb_get(job_id)
                 if not job_item:
                     print(f"Job not found in DynamoDB: {job_id}")
@@ -942,21 +966,18 @@ def process(event, context):
                     _ddb_update(job_id, status="FAILED", errorMessage="Missing workOrderId in DynamoDB job record")
                     continue
 
-                # Mark running
                 _ddb_update(job_id, status="RUNNING")
 
-                # Build payload in the same shape your old logic expects
                 payload = {
                     "workOrderId": workorder_id,
-                    # keep default behaviour unless you override env var / include flag
                     "include_cover_bytes": True,
-                    # NEW (added): enable extracted text to improve consistency (bounded)
                     "include_extracted_text": True,
+                    # flip to True if you want photo analysis in bulk runs:
+                    "enable_photo_analysis": False,
                 }
 
                 body_obj = _run_pdfqa_logic(payload=payload, event=event)
 
-                # Write final JSON to S3 (so /dewrra/results/{jobId} can fetch it)
                 result_bucket, result_key = _write_result_to_s3(job_id, str(workorder_id), body_obj)
 
                 _ddb_update(
@@ -969,7 +990,6 @@ def process(event, context):
                 )
 
             except Exception as e:
-                # If we can identify a jobId, mark FAILED, otherwise just log
                 err = str(e)
                 print("Error:", err)
                 try:
@@ -980,30 +1000,14 @@ def process(event, context):
                 except Exception:
                     pass
 
-        # For SQS event source mapping, returning normally indicates success.
         return {"ok": True}
 
-    # (B) LEGACY / MANUAL TEST MODE
+    # Legacy / manual test mode
     try:
-        # # NOTE: event from API Gateway HTTP API contains "headers" and "body".
         if isinstance(event, dict) and isinstance(event.get("body"), str):
             payload = json.loads(event["body"])
         else:
             payload = event if isinstance(event, dict) else json.loads(event["body"])
-
-        # if DEWRRA_API_KEY:
-        #     headers = (event.get("headers") or {}) if isinstance(event, dict) else {}
-        #     incoming_key = headers.get("x-api-key") or headers.get("X-Api-Key") or headers.get("X-API-KEY")
-        #     if incoming_key != DEWRRA_API_KEY:
-        #         return {
-        #             "statusCode": 403,
-        #             "headers": {"Content-Type": "application/json"},
-        #             "body": _safe_json_dumps({
-        #                 "ok": False,
-        #                 "error_type": "UNAUTHORISED",
-        #                 "error": "Invalid or missing API key"
-        #             }),
-        #         }
 
         body_obj = _run_pdfqa_logic(payload=payload, event=event)
 
