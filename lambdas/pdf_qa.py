@@ -24,6 +24,9 @@ MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 # Vision / photo analysis model (used only when enable_photo_analysis=true in the request)
 PHOTO_ANALYSIS_MODEL = os.environ.get("PHOTO_ANALYSIS_MODEL", MODEL)
 
+# Vision / photo annotation model (used only when enable_photo_annotation=true in the request)
+PHOTO_ANNOTATION_MODEL = os.environ.get("PHOTO_ANNOTATION_MODEL", "gpt-image-1")
+
 # Keep margin under Salesforce synchronous callout response ceiling (6MB).
 MAX_RESPONSE_BYTES = int(os.environ.get("MAX_RESPONSE_BYTES", "5500000"))
 
@@ -74,7 +77,7 @@ def analyse_cover_png(oai_client: OpenAI, model: str, cover_png_bytes: bytes) ->
         "- Estimated year built (or era):\n"
         "- Main external wall type:\n"
         "- Other external wall types visible:\n"
-        "- Approx. wall type coverage (overall):\n"
+        "- Approx. wall type coverage (overall, % by material):\n"
         "- Balconies present:\n"
         "- Balcony materials:\n"
         "- Materials near openings (and approx distance):\n"
@@ -83,6 +86,7 @@ def analyse_cover_png(oai_client: OpenAI, model: str, cover_png_bytes: bytes) ->
         "Guidance:\n"
         "- For 'Basement obvious', infer from visible lightwells, stepped entrances, raised/lowered ground levels, or ventilation grilles; otherwise say 'Not known from the photo'.\n"
         "- For distances, approximate in metres (e.g., 'within ~1m', '2–3m').\n"
+        "- For 'Approx. wall type coverage (overall, % by material)', estimate the visible proportion of each wall material as percentages that sum to ~100%. Format like: 'Brick ~65%, Timber cladding ~35%'. If only one material is visible, use ~100% for that material.\n"
         "- If uncertain for any line, write 'Not known from the photo'."
     )
 
@@ -109,6 +113,35 @@ def analyse_cover_png(oai_client: OpenAI, model: str, cover_png_bytes: bytes) ->
     )
 
     return json.loads(resp.output_text)
+
+
+def annotate_cover_png_openai(oai_client: OpenAI, model: str, cover_png_bytes: bytes, summary: str | None = None) -> bytes:
+    """Return annotated cover PNG bytes using OpenAI Images edit endpoint."""
+    prompt = (
+        "Annotate this building exterior photo with clear callouts and dashed outlines.\n"
+        "Requirements:\n"
+        "- Add labels for floors/attic if visible.\n"
+        "- Add an estimated height label (meters) and estimated build year/era label.\n"
+        "- Outline the main external wall materials with dashed lines and label each with an approximate % cover estimate.\n"
+        "- If balconies are visible, point them out and label their materials.\n"
+        "- Use readable text, avoid covering key features, and keep the style professional.\n"
+        "- Do not invent details not visible.\n"
+    )
+
+    if summary:
+        prompt += "\nUse these findings for labels (do not add extra facts):\n" + summary
+
+    # openai-python supports multipart tuples: (filename, bytes, content_type)
+    img_file = ("cover.png", cover_png_bytes, "image/png")
+
+    resp = oai_client.images.edit(
+        model=model,
+        image=[img_file],
+        prompt=prompt,
+    )
+
+    b64 = resp.data[0].b64_json
+    return base64.b64decode(b64)
 
 
 # ----------------------------
@@ -802,6 +835,12 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
     photo_summary = None
     photo_error = None
 
+    # OPTIONAL photo annotation
+    enable_photo_annotation = (payload.get("enable_photo_annotation") is True)
+    photo_annotated_written = False
+    photo_annotated_key = None
+    photo_annotation_error = None
+
     if enable_photo_analysis:
         if not cover_png_bytes:
             photo_error = "Cover image could not be extracted from PDF"
@@ -811,6 +850,34 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
                 photo_summary = out.get("summary")
             except Exception as e:
                 photo_error = str(e)
+
+    if enable_photo_annotation:
+        if not cover_png_bytes:
+            photo_annotation_error = "Cover image could not be extracted from PDF"
+        else:
+            try:
+                annotated_png_bytes = annotate_cover_png_openai(
+                    oai_client=oai,
+                    model=PHOTO_ANNOTATION_MODEL,
+                    cover_png_bytes=cover_png_bytes,
+                    summary=photo_summary,
+                )
+
+                if workorder_id:
+                    photo_annotated_key = f"WorkOrders/{workorder_id}/covers/{workorder_id}_cover_annotated.png"
+                else:
+                    base = pdf_key.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+                    photo_annotated_key = f"WorkOrders/covers/{base}_annotated.png"
+
+                s3.put_object(
+                    Bucket=COVER_BUCKET,
+                    Key=photo_annotated_key,
+                    Body=annotated_png_bytes,
+                    ContentType="image/png",
+                )
+                photo_annotated_written = True
+            except Exception as e:
+                photo_annotation_error = str(e)
 
     extracted_text = extract_text_by_page(pdf_bytes)
 
@@ -904,6 +971,10 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
         fields["photo_summary"] = photo_summary
     if photo_error:
         pass_errors["photo_summary"] = photo_error
+    if photo_annotated_written:
+        fields["photo_annotated_s3_key"] = photo_annotated_key
+    if photo_annotation_error:
+        pass_errors["photo_annotation"] = photo_annotation_error
 
     body_obj = {
         "ok": True,
@@ -911,6 +982,8 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
         "pass_errors": pass_errors,
         "cover_image_written": cover_written,
         "cover_s3_key": cover_key if cover_written else None,
+        "cover_annotated_written": photo_annotated_written,
+        "cover_annotated_s3_key": photo_annotated_key if photo_annotated_written else None,
         "cover": None,
     }
 
@@ -973,7 +1046,7 @@ def process(event, context):
                     "include_cover_bytes": True,
                     "include_extracted_text": True,
                     # flip to True if you want photo analysis in bulk runs:
-                    "enable_photo_analysis": False,
+                    "enable_photo_analysis": True,
                 }
 
                 body_obj = _run_pdfqa_logic(payload=payload, event=event)
