@@ -1071,6 +1071,7 @@ def process(event, context):
                     "include_extracted_text": False,
                     # flip to True if you want photo analysis in bulk runs:
                     "enable_photo_analysis": True,
+                    "enable_photo_annotation": True,
                 }
 
                 body_obj = _run_pdfqa_logic(payload=payload, event=event)
