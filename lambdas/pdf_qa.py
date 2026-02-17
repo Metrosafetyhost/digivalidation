@@ -32,7 +32,7 @@ MAX_RESPONSE_BYTES = int(os.environ.get("MAX_RESPONSE_BYTES", "5500000"))
 
 # Include extracted text to improve consistency (bounded)
 INCLUDE_EXTRACTED_TEXT_DEFAULT = os.environ.get("INCLUDE_EXTRACTED_TEXT_DEFAULT", "false").lower() == "true"
-EXTRACTED_TEXT_MAX_CHARS_PER_CALL = int(os.environ.get("EXTRACTED_TEXT_MAX_CHARS_PER_CALL", "20000"))
+EXTRACTED_TEXT_MAX_CHARS_PER_CALL = int(os.environ.get("EXTRACTED_TEXT_MAX_CHARS_PER_CALL", "8000"))
 
 
 # ----------------------------
@@ -495,7 +495,7 @@ def call_extract_with_retry(
         except Exception as e:
             msg = str(e).lower()
             if "429" in msg or "rate limit" in msg or "tpm" in msg:
-                sleep_s = 1.5 * (attempt + 1)
+                sleep_s = 4.0 * (attempt + 1)
                 print(f"[{schema_name}] Rate limited (TPM). Sleeping {sleep_s:.1f}s then retrying...")
                 time.sleep(sleep_s)
                 continue
@@ -1068,7 +1068,7 @@ def process(event, context):
                 payload = {
                     "workOrderId": workorder_id,
                     "include_cover_bytes": True,
-                    "include_extracted_text": True,
+                    "include_extracted_text": False,
                     # flip to True if you want photo analysis in bulk runs:
                     "enable_photo_analysis": True,
                 }
