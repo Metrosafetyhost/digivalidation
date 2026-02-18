@@ -104,6 +104,16 @@ module "lambdas_zip" {
       }
     }
 
+    geocoding = {
+      handler     = "process"
+      timeout     = 240
+      memory_size = 512
+
+      lambda_environment = {
+        PLACE_INDEX_NAME = aws_location_place_index.geocoding.index_name
+      }
+    }
+
     # All other lambdas 
     basic_event            = { handler = "process", timeout = 240, memory_size = 512 }
     bedrock                = { handler = "process", timeout = 240, memory_size = 512 }
@@ -120,6 +130,5 @@ module "lambdas_zip" {
     nova_water             = { handler = "process", timeout = 900, memory_size = 512 }
     waterRiskCaseIngest    = { handler = "process", timeout = 900, memory_size = 512 }
     blur_image             = { handler = "process", timeout = 240, memory_size = 512 }
-    geocoding              = { handler = "process", timeout = 240, memory_size = 512 }
   }
 }

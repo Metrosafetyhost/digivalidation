@@ -1,6 +1,4 @@
-############################################
 # dewrra_jobs (DynamoDB) + SQS + event mapping
-############################################
 
 resource "aws_dynamodb_table" "dewrra_jobs" {
   name         = "dewrra_jobs"
@@ -41,9 +39,7 @@ resource "aws_lambda_event_source_mapping" "pdfqa_worker_sqs" {
   maximum_batching_window_in_seconds = 0
 }
 
-############################################
 # pdfqa_api (HTTP API lambda) - minimal IAM
-############################################
 
 data "aws_iam_role" "pdfqa_api_role" {
   name = "bedrock-lambda-pdfqa_api"
@@ -83,9 +79,7 @@ resource "aws_iam_role_policy_attachment" "pdfqa_api_attach" {
   policy_arn = aws_iam_policy.pdfqa_api_policy.arn
 }
 
-############################################
 # pdf_qa worker (SQS consumer lambda) - ONLY missing perms
-############################################
 
 data "aws_iam_role" "pdfqa_worker_role" {
   name = "bedrock-lambda-pdf_qa"
