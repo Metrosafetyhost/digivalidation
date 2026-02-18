@@ -831,7 +831,7 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
     if workorder_id:
         cover_key = f"WorkOrders/{workorder_id}/covers/{workorder_id}_cover.png"
 
-    include_cover_bytes = payload.get("include_cover_bytes", True)
+    include_cover_bytes = payload.get("include_cover_bytes", False)
     include_extracted_text = payload.get("include_extracted_text", INCLUDE_EXTRACTED_TEXT_DEFAULT)
 
     print(f"Loading PDF from bucket={bucket}, key={pdf_key}")
@@ -1067,7 +1067,7 @@ def process(event, context):
 
                 payload = {
                     "workOrderId": workorder_id,
-                    "include_cover_bytes": True,
+                    "include_cover_bytes": False,
                     "include_extracted_text": False,
                     # flip to True if you want photo analysis in bulk runs:
                     "enable_photo_analysis": True,
