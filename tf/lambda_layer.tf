@@ -1145,3 +1145,40 @@ resource "aws_lambda_layer_version" "pymupdf" {
 
   source_code_hash = filebase64sha256("${path.module}/../pymupdf/pymupdf.zip")
 }
+
+#geocoding
+data "aws_iam_role" "geocoding_role" {
+  name = "bedrock-lambda-geocoding"
+}
+
+# Allow the Lambda to query the Place Index
+resource "aws_iam_policy" "geocoding_location_policy" {
+  name        = "GeocodingLocationSearch"
+  description = "Allow geocoding Lambda to call Amazon Location place index"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Sid    = "AllowSearchPlaceIndexForText",
+        Effect = "Allow",
+        Action = [
+          "geo:SearchPlaceIndexForText"
+        ],
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "geocoding_location_attach" {
+  role       = data.aws_iam_role.geocoding_role.name
+  policy_arn = aws_iam_policy.geocoding_location_policy.arn
+}
+
+# (Recommended) CloudWatch logs if you don't already attach it elsewhere
+resource "aws_iam_role_policy_attachment" "geocoding_basic_exec" {
+  role       = data.aws_iam_role.geocoding_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
