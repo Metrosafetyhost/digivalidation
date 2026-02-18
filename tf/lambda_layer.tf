@@ -1182,3 +1182,7 @@ resource "aws_iam_role_policy_attachment" "geocoding_basic_exec" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+resource "aws_location_place_index" "geocoding" {
+  index_name  = "metrosafety-place-index"
+  data_source = "Here" # or "Esri"
+}
