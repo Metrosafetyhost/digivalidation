@@ -498,9 +498,13 @@ def classify_asset_text(text):
         set Label__c to exactly "Step <number>" (JUST the word “Step” and the number, no following text).
         Examples: “Step 7: Open the valve …” → Label__c = "Step 7"; “... proceed to Step 3 ...” → Label__c = "Step 3".
     3) ELSE prefer a short asset code anywhere in the text, typically one of:
-        FF\d+, FK\d+, EL\d+, EM\d+, CP\d+, MCP\d+, SD\d+, HD\d+, SB\d+, R\d+, or generally [A-Z]{1,3}\d{1,3}.
+        FF\d+, FK\d+, EL\d+, EM\d+, CP\d+, MCP\d+, FAP\d+, SD\d+, HD\d+, SB\d+, R\d+, or generally [A-Z]{1,3}\d{1,3}.
     - Return Label__c as-is for sentence-like labels; uppercase only the short code tokens (e.g., "FF1", "FK11").
     - If none of the above are found, set Label__c to an empty string "".
+    - SPECIAL CASE (Fire Alarm Panel):
+    If the asset is a Fire Alarm Panel (or clearly described as "fire alarm panel") and a panel number is present
+    (e.g., "panel 1", "fire alarm panel 2", "FAP 3"), then set Label__c to "FAP<number>" (e.g., "FAP1").
+    Do NOT return the number alone for fire alarm panels.
 
     5) NAME (Name)  — and the “Testing Procedures” override
 
@@ -528,7 +532,9 @@ def classify_asset_text(text):
     - Set Object_Category__c from an explicit subtype (e.g., "Wet System"); otherwise "".
     - Label__c: If a “Step <number>: …” line exists anywhere, use the FULL step line. Otherwise prefer a short code (e.g., FF\d+, EL\d+, etc., or [A-Z]{1,3}\d{1,3}); return null if none.
     - Asset_Instructions__c: Use the first explicit test step sentence if present; otherwise the first clear imperative testing sentence; otherwise "".
-    - Name: Build using your existing non-testing format (e.g., "<Location Guess>, <Object Type Acronym>, <Label>").
+    - Name: Build as "<Location Guess> <Object Type Acronym><Label__c>" (no commas).
+        Example: "Ground Floor Entrance Lobby Wall FAP1".
+        If Label__c is empty, use "<Location Guess> <Object Type Acronym>".
 
     Tie-breakers
     - Only apply the HEADER override when the testing phrase is clearly part of the opening header as defined above. If unsure, treat as normal description (no override).
