@@ -410,7 +410,17 @@ def validate_extraction(result: dict) -> dict:
         if re.fullmatch(r"[A-Za-z]{1,3}\d{1,3}", lbl_stripped):
             out["Label__c"] = lbl_stripped.upper()
         else:
-            out["Label__c"] = lbl_stripped  # preserve case for sentences like "Step 7: ..."
+            out["Label__c"] = lbl_stripped
+
+    name = out.get("Name")
+    lbl = out.get("Label__c")
+
+    if isinstance(name, str) and isinstance(lbl, str) and lbl.strip():
+        name_clean = name.strip()
+
+        # If label isn't already present, append it
+        if lbl.upper() not in name_clean.upper():
+            out["Name"] = f"{name_clean}{'' if name_clean.endswith(' ') else ' '}{lbl}"
 
     return out
 
