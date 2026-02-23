@@ -11,7 +11,7 @@ def build_search_args(address: str, event: dict) -> dict:
     args = {
         "IndexName": PLACE_INDEX,
         "Text": address,
-        "MaxResults": event.get("maxResults", 1)
+        "MaxResults": event.get("maxResults", 1),
     }
 
     bias = event.get("biasPosition")
@@ -27,22 +27,35 @@ def build_search_args(address: str, event: dict) -> dict:
 
 def map_place_result(result: dict) -> dict:
     place = result.get("Place", {})
-    point = place.get("Geometry", {}).get("Point", [None, None])
-    lon, lat = point if len(point) == 2 else (None, None)
 
     return {
-        "label": place.get("Label"),
-        "latitude": lat,
-        "longitude": lon,
-        "confidence": result.get("Relevance"),
         "country": place.get("Country"),
-        "region": place.get("Region"),
-        "subRegion": place.get("SubRegion"),
-        "municipality": place.get("Municipality"),
+        "city": place.get("Municipality"),
         "postalCode": place.get("PostalCode"),
         "street": place.get("Street"),
         "houseNumber": place.get("AddressNumber"),
-        "raw": place,
+        "confidence": result.get("Relevance"),
+        "label": place.get("Label"),
+    }
+
+
+def build_output_fields(mapped: dict) -> dict:
+    # Build "37A Waterloo Street" style street
+    house = mapped.get("houseNumber")
+    street = mapped.get("street")
+
+    if house and street:
+        street_out = f"{house} {street}".strip()
+    else:
+        street_out = (street or "").strip()
+
+    return {
+        "country": mapped.get("country"),
+        "city": mapped.get("city"),
+        "postalCode": mapped.get("postalCode"),
+        "street": street_out,
+        # optional: keep confidence for debugging
+        "confidence": mapped.get("confidence"),
     }
 
 
@@ -53,36 +66,49 @@ def geocode_single_address(address: str, event: dict) -> list[dict]:
 
 
 def process(event, context):
-    if not PLACE_INDEX:
-        return {
-            "statusCode": 500,
-            "body": json.dumps({
-                "error": "PLACE_INDEX environment variable is not set."
-            })
-        }
+    payload = event
+    if isinstance(event, dict) and "body" in event:
+        try:
+            payload = json.loads(event.get("body") or "{}")
+        except Exception:
+            payload = {}
 
-    address = event.get("address")
+    address = payload.get("address")
     if not isinstance(address, str) or not address.strip():
         return {
             "statusCode": 400,
-            "body": json.dumps({"error": "Provide a non-empty 'address' string."})
+            "body": json.dumps({"error": "Provide a non-empty 'address' string."}),
+        }
+
+    if not PLACE_INDEX:
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "PLACE_INDEX_NAME environment variable is not set."}),
         }
 
     try:
-        results = geocode_single_address(address, event)
+        results = geocode_single_address(address, payload)
     except Exception as e:
         return {
             "statusCode": 500,
-            "body": json.dumps({
-                "error": "Error calling Amazon Location",
-                "details": str(e)
-            })
+            "body": json.dumps({"error": "Error calling Amazon Location", "details": str(e)}),
         }
 
-    return {
-        "statusCode": 200,
-        "body": json.dumps({
-            "query": address,
-            "results": results
-        })
-    }
+    if not results:
+        return {
+            "statusCode": 200,
+            "body": json.dumps(
+                {
+                    "country": None,
+                    "street": None,
+                    "city": None,
+                    "postalCode": None,
+                    "confidence": None,
+                }
+            ),
+        }
+
+    best = results[0]
+    out = build_output_fields(best)
+
+    return {"statusCode": 200, "body": json.dumps(out)}
