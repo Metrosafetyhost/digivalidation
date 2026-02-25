@@ -292,6 +292,11 @@ resource "aws_iam_role_policy_attachment" "proofing_bedrock_attach" {
   policy_arn = aws_iam_policy.proofing_bedrock_invoke.arn
 }
 
+resource "aws_iam_role_policy_attachment" "proofing_bedrock_controlplane_attach" {
+  role       = aws_iam_role.bedrock_lambda_checklist_proofing.name
+  policy_arn = aws_iam_policy.proofing_bedrock_controlplane.arn
+}
+
 ###########
 # 4. S3 read
 ###########
@@ -530,6 +535,11 @@ resource "aws_iam_role_policy_attachment" "fra_bedrock_invoke" {
   policy_arn = aws_iam_policy.proofing_bedrock_invoke.arn
 }
 
+resource "aws_iam_role_policy_attachment" "fra_bedrock_controlplane_attach" {
+  role       = "bedrock-lambda-fra_checklist_proofing"
+  policy_arn = aws_iam_policy.proofing_bedrock_controlplane.arn
+}
+
 resource "aws_iam_role_policy" "allow_invoke_hsa_checklist_proofing" {
   name = "AllowInvokeHSAProofing"
   role = aws_iam_role.bedrock_lambda_checklist.name
@@ -561,6 +571,11 @@ resource "aws_iam_role_policy_attachment" "hsa_textract_output_read" {
 resource "aws_iam_role_policy_attachment" "hsa_bedrock_invoke" {
   role       = "bedrock-lambda-hsa_checklist_proofing"
   policy_arn = aws_iam_policy.proofing_bedrock_invoke.arn
+}
+
+resource "aws_iam_role_policy_attachment" "hsa_bedrock_controlplane_attach" {
+  role       = "bedrock-lambda-hsa_checklist_proofing"
+  policy_arn = aws_iam_policy.proofing_bedrock_controlplane.arn
 }
 
 resource "aws_iam_role_policy_attachment" "water_proofing_s3_read_metrosafetyprod" {
@@ -1005,6 +1020,27 @@ resource "aws_iam_policy" "nova_water_s3_read" {
           "s3:HeadObject"
         ],
         Resource = "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*"
+      }
+    ]
+  })
+}
+
+###########
+# Bedrock control-plane (for debug: GetFoundationModel)
+###########
+resource "aws_iam_policy" "proofing_bedrock_controlplane" {
+  name        = "ProofingBedrockControlPlanePolicy"
+  description = "Allow proofing Lambdas to call Bedrock control-plane APIs (GetFoundationModel) for debugging"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "bedrock:GetFoundationModel"
+        ],
+        Resource = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0"
       }
     ]
   })
