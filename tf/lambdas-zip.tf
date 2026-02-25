@@ -80,7 +80,7 @@ module "lambdas_zip" {
 
     pdf_qa = {
       handler     = "process"
-      timeout     = 600
+      timeout     = 900
       memory_size = 2048
 
       lambda_environment = {
