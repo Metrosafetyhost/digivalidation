@@ -80,8 +80,8 @@ module "lambdas_zip" {
 
     pdf_qa = {
       handler     = "process"
-      timeout     = 240
-      memory_size = 512
+      timeout     = 600
+      memory_size = 2048
 
       lambda_environment = {
         DEWRRA_JOBS_TABLE     = aws_dynamodb_table.dewrra_jobs.name
