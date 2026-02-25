@@ -543,6 +543,15 @@ def build_user_message(question_number, content):
 def send_to_bedrock(user_text):
     MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
 
+    logger.info("MODEL_ID=%s", MODEL_ID)
+    logger.info("AWS_REGION=%s", os.environ.get("AWS_REGION"))
+
+    sts = boto3.client("sts")
+    logger.info("STS=%s", sts.get_caller_identity())
+
+    bedrock_control = boto3.client("bedrock", region_name="eu-west-2")
+    logger.info("MODEL_DETAILS=%s", bedrock_control.get_foundation_model(modelIdentifier=MODEL_ID)["modelDetails"]["modelLifecycle"])
+
     payload = {
         "anthropic_version": "bedrock-2023-05-31",
         "max_tokens":        1000,
