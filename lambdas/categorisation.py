@@ -24,12 +24,40 @@ def _norm(s: str) -> str:
     s = re.sub(r"\s+", " ", s)
     return s
 
+PHRASE_ALIASES: dict[str, dict[str, str]] = {
+    "Emergency Light": {
+        "fluro tube": "Fluorescent Tube",
+        "fluoro tube": "Fluorescent Tube",
+        "fluroescent tube": "Fluorescent Tube",  # common misspelling seen in my assessors 
+        "flourescent tube": "Fluorescent Tube",
+        "florescent tube": "Fluorescent Tube",
+    }
+}
+
 def map_category(obj_type: str, raw_category: str, object_map: dict, threshold: float = 0.78) -> str:
     allowed = object_map.get(obj_type, [])
     if not raw_category or not allowed:
         return raw_category
 
     raw_n = _norm(raw_category)
+
+    # ------------------------------------------------------------
+    # Phrase alias pass
+    # Works even when raw_category contains extra text like "Type: Fluro Tube"
+    # ------------------------------------------------------------
+    aliases_for_type = PHRASE_ALIASES.get(obj_type, {})
+    if aliases_for_type:
+        # exact alias
+        if raw_n in aliases_for_type:
+            mapped = aliases_for_type[raw_n]
+            if mapped in allowed:
+                return mapped
+
+        # contains alias (handles longer strings)
+        for k, v in aliases_for_type.items():
+            if k in raw_n:
+                if v in allowed:
+                    return v
 
     # Exact (normalized) match
     for a in allowed:
