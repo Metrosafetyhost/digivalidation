@@ -5,12 +5,50 @@ import re
 from botocore.client import Config
 import os
 from botocore.exceptions import ClientError
+import time
+import random
+from botocore.config import Config as RetryConfig
 # ——— Initialise logging ———
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+MODEL_ID = "anthropic.claude-3-7-sonnet-20250219-v1:0"
+
+# Standard AWS client retries (covers transient network/service issues)
+AWS_RETRY_CONFIG = RetryConfig(retries={"max_attempts": 5, "mode": "standard"})
+
+# Cache for model lifecycle lookups (control plane) for the lifetime of the Lambda container
+_MODEL_LIFECYCLE_CACHE = None
+
+def get_model_lifecycle_safe(bedrock_control_client, model_id):
+    """
+    Best-effort lookup of model lifecycle details (control plane). This must NEVER fail the run.
+    Cached for the lifetime of the Lambda container.
+    """
+    global _MODEL_LIFECYCLE_CACHE
+
+    if _MODEL_LIFECYCLE_CACHE is not None:
+        return _MODEL_LIFECYCLE_CACHE
+
+    for attempt in range(3):
+        try:
+            resp = bedrock_control_client.get_foundation_model(modelIdentifier=model_id)
+            _MODEL_LIFECYCLE_CACHE = resp["modelDetails"]["modelLifecycle"]
+            return _MODEL_LIFECYCLE_CACHE
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code", "Unknown")
+            logger.warning("get_foundation_model failed (%s) attempt=%s", code, attempt + 1)
+            if code not in ("ResourceNotFoundException", "ThrottlingException", "ServiceUnavailableException"):
+                break
+            time.sleep((0.15 * (2 ** attempt)) + (random.random() * 0.1))
+        except Exception as e:
+            logger.warning("get_foundation_model failed (%s). Continuing.", e)
+            break
+
+    return None
+
 # ——— AWS clients ———
-bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
+bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2', config=AWS_RETRY_CONFIG)
 
 s3 = boto3.client(
     "s3",
@@ -133,16 +171,20 @@ def build_user_message(question_number, content):
 
 
 def send_to_bedrock(user_text):
-    MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
+
 
     logger.info("MODEL_ID=%s", MODEL_ID)
     logger.info("AWS_REGION=%s", os.environ.get("AWS_REGION"))
 
-    sts = boto3.client("sts")
+    sts = boto3.client("sts", config=AWS_RETRY_CONFIG)
     logger.info("STS=%s", sts.get_caller_identity())
 
-    bedrock_control = boto3.client("bedrock", region_name="eu-west-2")
-    logger.info("MODEL_DETAILS=%s", bedrock_control.get_foundation_model(modelIdentifier=MODEL_ID)["modelDetails"]["modelLifecycle"])
+    bedrock_control = boto3.client("bedrock", region_name="eu-west-2", config=AWS_RETRY_CONFIG)
+    lifecycle = get_model_lifecycle_safe(bedrock_control, MODEL_ID)
+    if lifecycle is not None:
+        logger.info("MODEL_DETAILS=%s", lifecycle)
+    else:
+        logger.info("MODEL_DETAILS=unavailable")
 
     payload = {
         "anthropic_version": "bedrock-2023-05-31",

@@ -43,7 +43,7 @@ def _should_email(work_type: str) -> bool:
     return (work_type or "").upper() in ALLOWED_EMAIL_TYPES
 
 # Configurations
-BEDROCK_MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
+BEDROCK_MODEL_ID = "anthropic.claude-3-7-sonnet-20250219-v1:0"
 BUCKET_NAME = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
 TABLE_NAME = "ProofingMetadata"
 PDF_BUCKET = "metrosafetyprodfiles"
