@@ -13,7 +13,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
-MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
+MODEL_ID = "anthropic.claude-3-7-sonnet-20250219-v1:0"
 
 # Standard AWS client retries (covers transient network/service issues)
 AWS_RETRY_CONFIG = RetryConfig(retries={"max_attempts": 5, "mode": "standard"})
