@@ -24,8 +24,11 @@ resource "aws_iam_policy" "bedrock_invoke_policy" {
     Statement = [
       {
         Effect   = "Allow"
-        Action   = "bedrock:InvokeModel"
-        Resource = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0" #anthropic.claude-3-haiku-20240307-v1:0"
+        Action   = [
+          "bedrock:InvokeModel",
+          "bedrock:GetFoundationModel"
+        ]
+        Resource = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0" #anthropic.claude-3-haiku-20240307-v1:0"
       }
     ]
   })
@@ -282,7 +285,7 @@ resource "aws_iam_policy" "proofing_bedrock_invoke" {
     Statement = [{
       Effect   = "Allow",
       Action   = "bedrock:InvokeModel",
-      Resource = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0"
+      Resource = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0"
     }]
   })
 }
@@ -699,8 +702,7 @@ locals {
   pdf_bucket = "metrosafetyprodfiles"                               # PDF_BUCKET
 
   # Model you call from salesforce_input.py
-  bedrock_model_arn = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0"
-
+  bedrock_model_arn = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0"
   # The checklist lambda that salesforce_input.py invokes
   checklist_lambda_arn = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-checklist"
 }
@@ -1040,7 +1042,7 @@ resource "aws_iam_policy" "proofing_bedrock_controlplane" {
         Action = [
           "bedrock:GetFoundationModel"
         ],
-        Resource = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0"
+        Resource = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0"
       }
     ]
   })
