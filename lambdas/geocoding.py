@@ -6,6 +6,24 @@ REGION = os.getenv("AWS_REGION", "eu-west-2")
 PLACE_INDEX = os.getenv("PLACE_INDEX_NAME")
 loc = boto3.client("location", region_name=REGION)
 
+COUNTRY_NAME_MAP = {
+    "GBR": "United Kingdom",
+    "GB": "United Kingdom",
+    "UK": "United Kingdom",
+    "IRL": "Ireland",
+    "IE": "Ireland",
+    "NLD": "Netherlands",
+    "NL": "Netherlands",
+    "BEL": "Belgium",
+    "BE": "Belgium",
+}
+
+def standardise_country(code):
+    if not code:
+        return None
+    c = str(code).strip().upper()
+    return COUNTRY_NAME_MAP.get(c, c)
+
 
 def build_search_args(address: str, event: dict) -> dict:
     args = {
@@ -29,7 +47,7 @@ def map_place_result(result: dict) -> dict:
     place = result.get("Place", {})
 
     return {
-        "country": place.get("Country"),
+        "country": standardise_country(place.get("Country")),
         "city": place.get("Municipality"),
         "postalCode": place.get("PostalCode"),
         "street": place.get("Street"),
