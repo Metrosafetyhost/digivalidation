@@ -16,7 +16,7 @@ s3      = boto3.client(
     region_name="eu-west-2",
     config=Config(signature_version="s3v4")
 )
-MODEL_ID = "anthropic.claude-3-sonnet-20240229-v1:0"
+MODEL_ID = "anthropic.claude-3-7-sonnet-20250219-v1:0"
 
 def _norm(s: str) -> str:
     s = (s or "").lower().strip()
@@ -26,13 +26,53 @@ def _norm(s: str) -> str:
 
 PHRASE_ALIASES: dict[str, dict[str, str]] = {
     "Emergency Light": {
+        # tube aliases
         "fluro tube": "Fluorescent Tube",
         "fluoro tube": "Fluorescent Tube",
-        "fluroescent tube": "Fluorescent Tube",  # common misspelling seen in my assessors 
+        "fluroescent tube": "Fluorescent Tube",
         "flourescent tube": "Fluorescent Tube",
         "florescent tube": "Fluorescent Tube",
-    }
+
+        # spotlight / spot variants (from your examples)
+        "led spotlight": "LED Spot Light",
+        "led spot light": "LED Spot Light",
+        "led spot": "LED Spot Light",
+        "ledspot": "LED Spot Light",
+
+        "small spot": "Spot Light",
+        "small spotlight": "Spot Light",
+        "spot": "Spot Light",
+        "spot light": "Spot Light",
+        "spotlight": "Spot Light",
+
+        # twin spot variants (from your examples)
+        "twin spot": "Twin Spots",
+        "twinspot": "Twin Spots",
+        "twin spots": "Twin Spots",
+
+        # square variants (from your examples)
+        "square light": "Square",
+        "square fitting": "Square",
+        "square unit": "Square",
+    },
+
+    "Call Point": {
+        "side key": "Key (Side)",
+        "fork key": "Key (Fork)",
+        "apollo key": "Key (Apollo)",
+
+        "key side": "Key (Side)",
+        "key fork": "Key (Fork)",
+        "key apollo": "Key (Apollo)",
+    },
 }
+
+# normalising alias key 
+PHRASE_ALIASES = { 
+    obj_type: {_norm(k): v for k, v in aliases.items()}
+    for obj_type, aliases in PHRASE_ALIASES.items()
+}
+
 
 def map_category(obj_type: str, raw_category: str, object_map: dict, threshold: float = 0.78) -> str:
     allowed = object_map.get(obj_type, [])
