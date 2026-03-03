@@ -65,6 +65,18 @@ PHRASE_ALIASES: dict[str, dict[str, str]] = {
         "key fork": "Key (Fork)",
         "key apollo": "Key (Apollo)",
     },
+
+     "Fire Alarm Panel": {
+        # key panel plastic red
+        "red plastic key": "Key Panel (Plastic RED)",
+        "plastic red key": "Key Panel (Plastic RED)",
+        "red key": "Key Panel (Plastic RED)",
+
+        # key panel 8227
+        "827 key": "Key Panel (827)",
+        "key 827": "Key Panel (827)",
+        "panel 827 key": "Key Panel (827)",
+    },
 }
 
 # normalising alias key 
