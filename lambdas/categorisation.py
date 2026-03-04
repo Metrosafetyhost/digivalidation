@@ -504,6 +504,83 @@ def validate_extraction(result: dict) -> dict:
 
     return out
 
+def _clean_name_component(s: str) -> str:
+    # No commas in Salesforce Asset Name (per internal convention)
+    s = (s or "").strip()
+    s = s.replace(",", " ")
+    # collapse whitespace
+    s = re.sub(r"\s+", " ", s).strip()
+    # strip trailing punctuation that commonly sneaks in
+    s = re.sub(r"[\s\-:;\.]+$", "", s).strip()
+    return s
+
+def extract_location_guess(capture_text: str) -> str:
+    """Best-effort deterministic location extraction from the capture text."""
+    if not capture_text:
+        return ""
+    # Prefer an explicit Location: field (common in AssetCapture)
+    m = re.search(r"(?im)^\s*Location\s*[:\-]\s*(.+?)\s*$", capture_text)
+    if m:
+        return _clean_name_component(m.group(1))
+    # Fallback: sometimes it's 'Located:' or 'Area:'
+    m = re.search(r"(?im)^\s*(Located|Area)\s*[:\-]\s*(.+?)\s*$", capture_text)
+    if m:
+        return _clean_name_component(m.group(2))
+    return ""
+
+def extract_header_object_for_testing_procedures(capture_text: str) -> str:
+    """If the input is a 'Testing Procedures' header-style capture, extract the object phrase."""
+    if not capture_text:
+        return ""
+    # Use the first non-empty line / header segment, stop at a known field label if present.
+    first = capture_text.strip().splitlines()[0].strip()
+    # Chop at common field labels to keep this header-ish.
+    first = re.split(r"\b(Location|Label|Type|Testing Instructions|Testing Instruction|Testing Procedures|Testing Procedure)\b\s*[:\-]", first, maxsplit=1)[0]
+    first = _clean_name_component(first)
+    # If the header includes delimiters like '-' ':' '.' keep only the left side as the object phrase.
+    first = re.split(r"\s*[-:;\.]\s*", first, maxsplit=1)[0]
+    return _clean_name_component(first)
+
+def build_asset_name(capture_text: str, extracted: dict) -> str:
+    """Deterministically build a Salesforce-safe Asset Name from extracted fields + raw text.
+
+    We intentionally do NOT rely on the LLM to produce Name, because Name is required in Salesforce.
+    """
+    t = (extracted or {}).get("Object_Type__c") or ""
+    lbl = (extracted or {}).get("Label__c") or ""
+    cat = (extracted or {}).get("Object_Category__c") or ""
+
+    t = _clean_name_component(t)
+    lbl = _clean_name_component(lbl)
+    cat = _clean_name_component(cat)
+
+    # Special case: the model may classify the capture as Testing Procedures.
+    if t == "Testing Procedures":
+        obj = extract_header_object_for_testing_procedures(capture_text)
+        base = f"Testing Procedures - {obj}" if obj else "Testing Procedures"
+        name = _clean_name_component(base)
+    else:
+        loc = extract_location_guess(capture_text)
+        parts = []
+        if loc:
+            parts.append(loc)
+        if t:
+            parts.append(t)
+        # Category is optional; include it only when it adds specificity.
+        if cat and cat.lower() not in {"unlisted"}:
+            parts.append(cat)
+        if lbl:
+            parts.append(lbl)
+
+        name = _clean_name_component(" ".join(parts))
+
+    if not name:
+        name = "TEMPORARY - NAME NOT FOUND"
+
+    # Salesforce Name is typically 255 chars; clamp to be safe.
+    return name[:255]
+
+
 # Extract "Step <number>: <text>" or "Step <number> - <text>" anywhere in the capture.
 RE_STEP_LINE = re.compile(r"(?:^|\b)(Step\s*\d+\s*[:\-]\s*.*)", re.IGNORECASE)
 
@@ -523,20 +600,18 @@ def classify_asset_text(text):
             "Object_Category__c": "",
             "Asset_Instructions__c": "BSRA completed",
             "Label__c": "",
-            "Name": "BSRA"
         }
     
     prompt = f"""
     You are classifying facility safety assets for Metro Safety. The input may be well structured
     (e.g., "Emergency Light - Location: 7th Floor ... Type: ... Test: ...") OR free text with no labels.
-    Your job is to extract or sensibly infer the following Salesforce fields and output ONLY a single JSON object.
+    Your job is to extract or sensibly infer the following Salesforce fields and output ONLY a single JSON object. Do NOT output Name; it is generated deterministically downstream.
 
     Return EXACTLY these keys:
     - "Object_Type__c"
     - "Object_Category__c"
     - "Asset_Instructions__c"
     - "Label__c"
-    - "Name"
     - "What3Words__c"
     - "TEST_RESULT__c"
 
@@ -545,7 +620,7 @@ def classify_asset_text(text):
     - For a chosen type, valid categories are ONLY those in CATEGORIES_BY_TYPE[type].
     - If the text does not clearly specify a category, set Object_Category__c to an empty string. Do not guess.
     - If the text does not clearly specify a type, set Object_Type__c to an empty string and also set Object_Category__c to an empty string.
-    - Uppercase Label__c. Never leave Name blank.
+    - Uppercase Label__c.
 
     ## ENUMS (closed world for choices)
     {ENUMS_JSON}
@@ -596,7 +671,7 @@ def classify_asset_text(text):
     (e.g., "panel 1", "fire alarm panel 2", "FAP 3"), then set Label__c to "FAP<number>" (e.g., "FAP1").
     Do NOT return the number alone for fire alarm panels.
 
-    5) NAME (Name)  — and the “Testing Procedures” override
+    5) TESTING PROCEDURES OVERRIDE (no Name output)
 
     A) When to apply the Testing Procedures HEADER override
     - Apply this override ONLY if the input begins with an object phrase and is immediately followed by a testing header phrase in the opening title/header segment (i.e., before any normal fields like “Label:”, “Type:”, “Location:”).
@@ -607,14 +682,11 @@ def classify_asset_text(text):
     If the HEADER override applies:
     - Set Object_Type__c = "Testing Procedures".
     - Set Object_Category__c = "".
-    - Set Name = "Testing Procedures - <Object>", where <Object> is the object named in the opening phrase (e.g., "Electric Pump", "Jockey Pump", "Installation Valve").
     - For both Label__c and Asset_Instructions__c, if a “Step <number>:” sentence exists (e.g., “Step 7: …”), use the FIRST such step line verbatim for BOTH fields. If no step line exists, use the first clear imperative testing sentence for both; otherwise "".
 
     Examples (override applies):
     - "Electric Pump activation test valve - Testing Instructions; Step 7: Open the test valve slowly …"
-    => Object_Type__c: "Testing Procedures"; Name: "Testing Procedures - Electric Pump"
     - "Diesel Pump – Testing Procedures: Step 3: Verify auto start from jockey pump pressure switch…"
-    => Object_Type__c: "Testing Procedures"; Name: "Testing Procedures - Diesel Pump": Label__c - Step 7
 
     B) Normal description (NO override)
     - If “testing instructions/procedures” appears later in a normal/freeform description (e.g., after "Label:", "Type:", "Location:", or mid-paragraph), DO NOT use the override.
@@ -622,14 +694,10 @@ def classify_asset_text(text):
     - Set Object_Category__c from an explicit subtype (e.g., "Wet System"); otherwise "".
     - Label__c: If a “Step <number>: …” line exists anywhere, use the FULL step line. Otherwise prefer a short code (e.g., FF\d+, EL\d+, etc., or [A-Z]{1,3}\d{1,3}); return null if none.
     - Asset_Instructions__c: Use the first explicit test step sentence if present; otherwise the first clear imperative testing sentence; otherwise "".
-    - Name: Build as "<Location Guess> <Object Type Acronym><Label__c>" (no commas).
-        Example: "Ground Floor Entrance Lobby Wall FAP1".
-        If Label__c is empty, use "<Location Guess> <Object Type Acronym>".
 
     Tie-breakers
     - Only apply the HEADER override when the testing phrase is clearly part of the opening header as defined above. If unsure, treat as normal description (no override).
     - Never invent an object type. If no valid object type is evident and the override doesn’t apply, set Object_Type__c = "" and Object_Category__c = "".
-    - Never leave Name null; if you cannot construct a valid Name by the above rules, set Name = "TEMPORARY - NAME NOT FOUND".
 
     - What3Words__c
     - Look for a marker such as "What3words", "What3Words", or "what3words" (case-insensitive).
@@ -667,7 +735,6 @@ def classify_asset_text(text):
       "Object_Category__c": "LED Square",
       "Asset_Instructions__c": "Activate FF1",
       "Label__c": "FF1",
-      "Name": "7th Floor, Crawford and Co office space kitchen store cupboard, EL, FF1"
     }}
 
     INPUT (unstructured)
@@ -679,7 +746,6 @@ def classify_asset_text(text):
       "Object_Category__c": "Round",
       "Asset_Instructions__c": "",
       "Label__c": "FK2",
-      "Name": "2nd Floor Corridor by Flat 12 & 13 Ceiling, EL, FK2"
     }}
 
     Now classify this input:
@@ -715,8 +781,12 @@ def classify_asset_text(text):
         out.get("Object_Category__c", ""),
         OBJECT_MAP
         )
-        # Enforce closed-world enums
+        # Enforce closed-world enums / normalisation (do not trust the model for required fields)
         out = validate_extraction(out)
+
+        # We ignore any Name the model might have returned.
+        out["Name"] = build_asset_name(text, out)
+
         return out
     except Exception as e:
         logger.error("Failed to parse classification response: %s", e)
