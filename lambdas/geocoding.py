@@ -6,24 +6,28 @@ REGION = os.getenv("AWS_REGION", "eu-west-2")
 PLACE_INDEX = os.getenv("PLACE_INDEX_NAME")
 loc = boto3.client("location", region_name=REGION)
 
-COUNTRY_NAME_MAP = {
-    "GBR": "United Kingdom",
-    "GB": "United Kingdom",
-    "UK": "United Kingdom",
-    "IRL": "Ireland",
-    "IE": "Ireland",
-    "NLD": "Netherlands",
-    "NL": "Netherlands",
-    "BEL": "Belgium",
-    "BE": "Belgium",
+# AWS typically returns ISO-3166-1 alpha-3 (e.g. GBR, IRL).
+# salesroce Country/Territory picklist expects ISO-3166-1 alpha-2 (e.g. GB, IE).
+ISO3_TO_ISO2 = {
+    "GBR": "GB",
+    "IRL": "IE",
+    "NLD": "NL",
+    "BEL": "BE",
+    "FRA": "FR",
+    "ESP": "ES",
+    "DEU": "DE",
+    # Add more as needed
 }
 
-def standardise_country(code):
-    if not code:
+def to_iso2(country_code: str):
+    if not country_code:
         return None
-    c = str(code).strip().upper()
-    return COUNTRY_NAME_MAP.get(c, c)
-
+    c = str(country_code).strip().upper()
+    if len(c) == 2:
+        return c
+    if len(c) == 3:
+        return ISO3_TO_ISO2.get(c)
+    return None
 
 def build_search_args(address: str, event: dict) -> dict:
     args = {
@@ -42,12 +46,14 @@ def build_search_args(address: str, event: dict) -> dict:
 
     return args
 
-
 def map_place_result(result: dict) -> dict:
     place = result.get("Place", {})
 
+    aws_country = place.get("Country")
+    iso2 = to_iso2(aws_country)
+
     return {
-        "country": standardise_country(place.get("Country")),
+        "countryCode": iso2,
         "city": place.get("Municipality"),
         "postalCode": place.get("PostalCode"),
         "street": place.get("Street"),
@@ -56,9 +62,7 @@ def map_place_result(result: dict) -> dict:
         "label": place.get("Label"),
     }
 
-
 def build_output_fields(mapped: dict) -> dict:
-    # Build "37A Waterloo Street" style street
     house = mapped.get("houseNumber")
     street = mapped.get("street")
 
@@ -68,20 +72,17 @@ def build_output_fields(mapped: dict) -> dict:
         street_out = (street or "").strip()
 
     return {
-        "country": mapped.get("country"),
+        "countryCode": mapped.get("countryCode"),
         "city": mapped.get("city"),
         "postalCode": mapped.get("postalCode"),
         "street": street_out,
-        # optional: keep confidence for debugging
         "confidence": mapped.get("confidence"),
     }
-
 
 def geocode_single_address(address: str, event: dict) -> list[dict]:
     search_args = build_search_args(address, event)
     resp = loc.search_place_index_for_text(**search_args)
     return [map_place_result(r) for r in resp.get("Results", [])]
-
 
 def process(event, context):
     payload = event
@@ -117,7 +118,7 @@ def process(event, context):
             "statusCode": 200,
             "body": json.dumps(
                 {
-                    "country": None,
+                    "countryCode": None,
                     "street": None,
                     "city": None,
                     "postalCode": None,
@@ -126,7 +127,5 @@ def process(event, context):
             ),
         }
 
-    best = results[0]
-    out = build_output_fields(best)
-
+    out = build_output_fields(results[0])
     return {"statusCode": 200, "body": json.dumps(out)}
