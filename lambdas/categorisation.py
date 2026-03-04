@@ -86,6 +86,25 @@ PHRASE_ALIASES = {
 }
 
 
+def extract_json_object(text: str) -> dict:
+    if not text:
+        raise ValueError("Empty model output")
+
+    s = text.strip()
+
+    # 1) If wrapped in ```json ... ``` or ``` ... ```
+    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", s, flags=re.DOTALL | re.IGNORECASE)
+    if fence:
+        return json.loads(fence.group(1))
+
+    # 2) Otherwise, find first JSON object in the text (best-effort)
+    obj = re.search(r"(\{.*\})", s, flags=re.DOTALL)
+    if obj:
+        return json.loads(obj.group(1))
+
+    raise ValueError(f"No JSON object found in model output: {s[:120]!r}")
+
+
 def map_category(obj_type: str, raw_category: str, object_map: dict, threshold: float = 0.78) -> str:
     allowed = object_map.get(obj_type, [])
     if not raw_category or not allowed:
@@ -774,8 +793,7 @@ def classify_asset_text(text):
     try:
         data = json.loads(raw)
         text_out = "".join(part.get("text", "") for part in data.get("content", []))
-        out = json.loads(text_out)
-
+        out = extract_json_object(text_out)
         out["Object_Category__c"] = map_category(
         out.get("Object_Type__c", ""),
         out.get("Object_Category__c", ""),
