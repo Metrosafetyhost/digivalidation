@@ -39,7 +39,7 @@ TARGETED_TEXT_MAX_CHARS_PER_CALL = int(os.environ.get("TARGETED_TEXT_MAX_CHARS_P
 TARGETED_MAX_PAGES_PER_PASS = int(os.environ.get("TARGETED_MAX_PAGES_PER_PASS", "8"))
 
 # Large-PDF throttling / TPM protection
-LARGE_PDF_PAGE_THRESHOLD = int(os.environ.get("LARGE_PDF_PAGE_THRESHOLD", "25"))
+LARGE_PDF_PAGE_THRESHOLD = int(os.environ.get("LARGE_PDF_PAGE_THRESHOLD", "35"))
 INTER_PASS_SLEEP_SECONDS = float(os.environ.get("INTER_PASS_SLEEP_SECONDS", "1.0"))
 
 
