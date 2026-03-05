@@ -34,8 +34,12 @@ MAX_RESPONSE_BYTES = int(os.environ.get("MAX_RESPONSE_BYTES", "5500000"))
 INCLUDE_EXTRACTED_TEXT_DEFAULT = os.environ.get("INCLUDE_EXTRACTED_TEXT_DEFAULT", "false").lower() == "true"
 EXTRACTED_TEXT_MAX_CHARS_PER_CALL = int(os.environ.get("EXTRACTED_TEXT_MAX_CHARS_PER_CALL", "8000"))
 
+# Targeted extraction for large PDFs
+TARGETED_TEXT_MAX_CHARS_PER_CALL = int(os.environ.get("TARGETED_TEXT_MAX_CHARS_PER_CALL", "12000"))
+TARGETED_MAX_PAGES_PER_PASS = int(os.environ.get("TARGETED_MAX_PAGES_PER_PASS", "8"))
+
 # Large-PDF throttling / TPM protection
-LARGE_PDF_PAGE_THRESHOLD = int(os.environ.get("LARGE_PDF_PAGE_THRESHOLD", "40"))
+LARGE_PDF_PAGE_THRESHOLD = int(os.environ.get("LARGE_PDF_PAGE_THRESHOLD", "25"))
 INTER_PASS_SLEEP_SECONDS = float(os.environ.get("INTER_PASS_SLEEP_SECONDS", "1.0"))
 
 
@@ -364,6 +368,68 @@ def extract_text_by_page(pdf_bytes: bytes, max_chars: int = 120_000) -> str:
     finally:
         doc.close()
 
+
+def extract_text_pages(pdf_bytes: bytes) -> list[str]:
+    """Return list where index i contains text for page i (0-based)."""
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        pages = []
+        for page in doc:
+            pages.append((page.get_text("text") or "").strip())
+        return pages
+    finally:
+        doc.close()
+
+
+def build_targeted_excerpt(
+    pages_text: list[str],
+    keywords: list[str],
+    max_chars: int = TARGETED_TEXT_MAX_CHARS_PER_CALL,
+    max_pages: int = TARGETED_MAX_PAGES_PER_PASS,
+) -> str:
+    """
+    Pick the most relevant pages by keyword hits, then concatenate page-tagged text
+    until max_chars is reached.
+    """
+    if not pages_text:
+        return ""
+
+    scored = []
+    for i, txt in enumerate(pages_text):
+        if not txt:
+            continue
+        t = txt.lower()
+        score = 0
+        for kw in keywords:
+            k = (kw or "").lower()
+            if k and k in t:
+                score += 1
+        if score > 0:
+            scored.append((score, i))
+
+    if not scored:
+        candidate_idxs = list(range(min(5, len(pages_text))))
+    else:
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        candidate_idxs = sorted([i for _, i in scored[:max_pages]])
+
+    out = []
+    total = 0
+    for idx in candidate_idxs:
+        txt = pages_text[idx]
+        if not txt:
+            continue
+        block = f"\n[Page {idx+1}]\n{txt}\n"
+        if total + len(block) > max_chars:
+            remaining = max_chars - total
+            if remaining > 0:
+                out.append(block[:remaining])
+            break
+        out.append(block)
+        total += len(block)
+
+    return "".join(out).strip()
+
 BASE_RULES = """
 You are extracting facts from a Fire Risk Assessment PDF.
 
@@ -398,7 +464,6 @@ def call_extract(
         {"type": "input_text", "text": BASE_RULES},
         {"type": "input_text", "text": f"Section instructions:\n{section_instructions}".strip()},
     ])
-
     if include_extracted_text and extracted_text:
         snippet = extracted_text[:extracted_text_max_chars]
         content.append({"type": "input_text", "text": f"Extracted text (page-tagged, truncated):\n{snippet}".strip()})
@@ -927,6 +992,7 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
             except Exception as e:
                 photo_annotation_error = str(e)
 
+    pages_text = extract_text_pages(pdf_bytes)
     extracted_text = extract_text_by_page(pdf_bytes)
 
     up = oai.files.create(
@@ -941,24 +1007,28 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
             "schema": schema_identity_address(),
             "instructions": "Extract: UPRN, building name, full address, address lines 1-4, postcode.",
             "use_extracted_text": True,
+            "keywords": ["uprn", "address", "postcode", "property", "site", "client", "building"],
         },
         {
             "name": "fire_strategy_systems",
             "schema": schema_fire_strategy_systems(),
             "instructions": "Extract: AWSS/sprinkler/misting info, evacuation policy, FRA completion date, producer/company, author/assessor.",
             "use_extracted_text": False,
+            "keywords": ["evacuation", "stay put", "simultaneous", "sprinkler", "awss", "misting", "fire strategy", "completion date", "assessor", "author", "producer"],
         },
         {
             "name": "geometry_below_ground",
             "schema": schema_geometry_below_ground(),
             "instructions": "Extract: storeys, height_m, basement_levels, below_ground_mentioned.",
             "use_extracted_text": False,
+            "keywords": ["storey", "storeys", "height", "m", "metre", "basement", "below ground", "lower ground"],
         },
         {
             "name": "occupancy_use",
             "schema": schema_occupancy_use(),
             "instructions": "Extract: total flats, uses, general needs, main occupancy classification, occupancy, other occupancies, residents per flat, uses in addition to residential.",
             "use_extracted_text": False,
+            "keywords": ["flats", "occupancy", "residents", "use", "general needs", "premises use", "other occupancies"],
         },
         {
             "name": "construction_external_walls",
@@ -968,12 +1038,14 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
                 "If a 'Construction information' table is present, use that as the primary source for Main External Wall Type / wall construction details."
             ),
             "use_extracted_text": True,
+            "keywords": ["construction information", "external wall", "wall type", "façade", "facade", "cladding", "insulation", "rainscreen", "acm", "hpl", "balcony", "attachments", "spandrel", "curtain wall"],
         },
         {
             "name": "classifications",
             "schema": schema_classifications(),
             "instructions": "Fill classification lists ONLY using explicit evidence",
             "use_extracted_text": False,
+            "keywords": ["classification", "structural frame", "infill", "external wall types", "balcony", "attachment", "use classification"],
         },
     ]
 
@@ -982,13 +1054,22 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
 
     for spec in pass_specs:
         try:
+            target_text = extracted_text
+            if not use_pdf_file_for_llm:
+                target_text = build_targeted_excerpt(
+                    pages_text=pages_text,
+                    keywords=spec.get("keywords", []),
+                    max_chars=TARGETED_TEXT_MAX_CHARS_PER_CALL,
+                    max_pages=TARGETED_MAX_PAGES_PER_PASS,
+                )
+
             out = call_extract_with_retry(
                 file_id=file_id,
-                extracted_text=extracted_text,
+                extracted_text=target_text,
                 schema_name=spec["name"],
                 schema=spec["schema"],
                 section_instructions=spec["instructions"],
-                include_extracted_text=(include_extracted_text and spec.get("use_extracted_text", False)),
+                include_extracted_text=(include_extracted_text and (spec.get("use_extracted_text", False) or (not use_pdf_file_for_llm))),
                 use_pdf_file=use_pdf_file_for_llm,
             )
             fields[spec["name"]] = out
