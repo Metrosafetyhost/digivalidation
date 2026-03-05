@@ -395,28 +395,13 @@ def process(event, context):
 
         # Q3 still via Bedrock
         if q_num == 3:
-            try:
-                prompt = build_user_message(q_num, parsed)
-                if not prompt:
-                    proofing_results["Q3"] = format_pass_fail(
-                        "",
-                        "No prompt could be built for Q3 (Totals consistency check)."
-                    )
-                else:
-                    ai_reply = send_to_bedrock(prompt)
-                    proofing_results["Q3"] = format_pass_fail(
-                        ai_reply,
-                        "Totals do not match between Section 1.1 and Significant Findings and Action Plan."
-                    )
-            except Exception as ex:
-                logger.warning(
-                    "Error while processing Q3 for WorkOrder %s: %s",
-                    work_order_id, ex, exc_info=True
-                )
-                proofing_results["Q3"] = format_pass_fail(
-                    f"ERROR: {ex}",
-                    "Exception occurred while running Q3 Bedrock check."
-                )
+            total  = (parsed or {}).get("remedial_total", 0)
+            sig_ct = (parsed or {}).get("sig_item_count", 0)
+
+            if total == sig_ct:
+                proofing_results["Q3"] = "PASS"
+            else:
+                proofing_results["Q3"] = f"FAIL: Totals do not match (Section 1.1={total}, SFAP={sig_ct})."
             continue
     # ——— 4) Log all results ———
     logger.info(
