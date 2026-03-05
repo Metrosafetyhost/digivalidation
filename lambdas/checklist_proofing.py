@@ -628,6 +628,36 @@ def send_to_bedrock(user_text):
         plain = response_text
     return plain.strip()
 
+def format_pass_fail(raw_text, fail_summary=""):
+    """
+    Ensure FAIL responses include:
+      1) a clear FAIL summary
+      2) the raw/original model output (or failing text)
+    PASS responses remain exactly 'PASS'.
+    """
+    txt = ("" if raw_text is None else str(raw_text)).strip()
+    if not txt:
+        summary = fail_summary or "Validation failed (empty response)."
+        return f"FAIL: {summary}\n\nRaw output:\n(empty)"
+
+    first_line = txt.splitlines()[0].strip()
+    first_upper = first_line.upper()
+
+    # PASS stays PASS (and we intentionally do not forward any extra model text)
+    if first_upper == "PASS" or first_upper.startswith("PASS"):
+        return "PASS"
+
+    # If already FAIL with details, keep it, but ensure we include raw output if it's just "FAIL"
+    if first_upper == "FAIL" or first_upper.startswith("FAIL"):
+        if first_upper == "FAIL" and (len(txt.splitlines()) == 1) and (":" not in first_line):
+            summary = fail_summary or "Validation failed."
+            return f"FAIL: {summary}\n\nRaw output:\n{txt}"
+        return txt
+
+    # No explicit PASS/FAIL -> treat as FAIL and attach raw
+    summary = fail_summary or "Validation failed."
+    return f"FAIL: {summary}\n\nRaw output:\n{txt}"
+
 def validate_water_assets(sections):
     """
     Locally validate Water Assets tables - Question 16: check each asset record for blank data fields (excluding photo rows),
@@ -748,11 +778,17 @@ def process(event, context):
             prompt         = build_user_message(q_num, parsed_content)
 
             if not prompt:
-                proofing_results[f"Q{q_num}"] = "(no prompt built)"
+                proofing_results[f"Q{q_num}"] = format_pass_fail(
+                    "",
+                    f"No prompt could be built for Q{q_num}."
+                )
                 continue
 
             if q_num == 11:
-                proofing_results[f"Q{q_num}"] = prompt
+                proofing_results[f"Q{q_num}"] = format_pass_fail(
+                    prompt,
+                    "Significant Findings and Action Plan appears incomplete (missing Observation/Target Date/Action Required)."
+                )
                 continue
 
             # otherwise, send to Bedrock as before
@@ -760,16 +796,30 @@ def process(event, context):
 
             if q_num == 5:
                 m = re.search(r"\b(PASS|FAIL)\b", ai_reply or "", flags=re.IGNORECASE)
-                proofing_results[f"Q{q_num}"] = (m.group(1).upper() if m else "FAIL")
+                # Preserve your existing single-word behaviour, but still enrich FAIL with raw output
+                if m and m.group(1).upper() == "PASS":
+                    proofing_results[f"Q{q_num}"] = "PASS"
+                else:
+                    proofing_results[f"Q{q_num}"] = format_pass_fail(
+                        ai_reply or "FAIL",
+                        "Water Systems vs Water Assets did not meet the matching rules (see raw model output)."
+                    )
             else:
-                proofing_results[f"Q{q_num}"] = ai_reply or "(empty response)"
+                # For all other Bedrock questions, wrap into PASS or enriched FAIL
+                proofing_results[f"Q{q_num}"] = format_pass_fail(
+                    ai_reply,
+                    f"Checklist validation failed for Q{q_num} (see raw model output)."
+                )
 
         except Exception as ex:
             logger.warning(
                 "Error while processing Q%d for WorkOrder %s: %s",
                 q_num, work_order_id, ex, exc_info=True
             )
-            proofing_results[f"Q{q_num}"] = f"ERROR: {ex}"
+            proofing_results[f"Q{q_num}"] = format_pass_fail(
+                f"ERROR: {ex}",
+                f"Exception occurred while running Q{q_num}."
+            )
 
     # ——— 4) Log all results ———
     logger.info(

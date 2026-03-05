@@ -272,6 +272,36 @@ def check_building_description(sections):
         # if it had no tables, but had paragraphs, that's okay
     return True, data_secs
 
+def format_pass_fail(raw_text, fail_summary=""):
+    """
+    Ensure FAIL responses include:
+      1) a clear FAIL summary
+      2) the raw/original model output (or failing text)
+    PASS responses remain exactly 'PASS'.
+    """
+    txt = ("" if raw_text is None else str(raw_text)).strip()
+    if not txt:
+        summary = fail_summary or "Validation failed (empty response)."
+        return f"FAIL: {summary}\n\nRaw output:\n(empty)"
+
+    first_line = txt.splitlines()[0].strip()
+    first_upper = first_line.upper()
+
+    # PASS stays PASS (and we intentionally do not forward any extra model text)
+    if first_upper == "PASS" or first_upper.startswith("PASS"):
+        return "PASS"
+
+    # If already FAIL with details, keep it, but ensure we include raw output if it's just "FAIL"
+    if first_upper == "FAIL" or first_upper.startswith("FAIL"):
+        if first_upper == "FAIL" and (len(txt.splitlines()) == 1) and (":" not in first_line):
+            summary = fail_summary or "Validation failed."
+            return f"FAIL: {summary}\n\nRaw output:\n{txt}"
+        return txt
+
+    # No explicit PASS/FAIL -> treat as FAIL and attach raw
+    summary = fail_summary or "Validation failed."
+    return f"FAIL: {summary}\n\nRaw output:\n{txt}"
+
 def process(event, context):
     """
     Handler for SNS event from Textract Callback.
@@ -344,19 +374,34 @@ def process(event, context):
                     if s.get("tables") and any(not t.get("rows") for t in s["tables"])
                 ]
                 logger.warning("Q4 missing table-content in: %s", empty)
-            proofing_results["Q4"] = "PASS" if all_ok else "FAIL"
+                proofing_results["Q4"] = format_pass_fail(
+                    "FAIL",
+                    f"Building Description missing table content in: {', '.join(empty) or 'unknown section(s)'}."
+                )
+            else:
+                proofing_results["Q4"] = "PASS"
             continue
 
         # Q9 inline (same style as Q4)
         if q_num == 9:
             # parsed is {"Q9": "PASS"|"FAIL", "value": "<Moderate>"|None}
-            proofing_results["Q9"] = parsed.get("Q9")
+            if parsed.get("Q9") == "PASS":
+                proofing_results["Q9"] = "PASS"
+            else:
+                proofing_results["Q9"] = format_pass_fail(
+                    "FAIL",
+                    "Life Safety Risk Rating at this Premises could not be extracted (expected a line containing 'is: <value>')."
+                )
             # if you want to keep the actual rating for later:
             proofing_results["Q9_value"] = parsed.get("value", "")
             continue
 
         if q_num == 11:
-            proofing_results["Q11"] = build_user_message(11, parsed)  # PASS or FAIL: details
+            raw = build_user_message(11, parsed)  # PASS or FAIL: details
+            proofing_results["Q11"] = format_pass_fail(
+                raw,
+                "Significant Findings and Action Plan appears incomplete (missing Observation/Target Date/Action Required)."
+            )
             continue
 
 
@@ -365,16 +410,25 @@ def process(event, context):
             try:
                 prompt = build_user_message(q_num, parsed)
                 if not prompt:
-                    proofing_results["Q3"] = "(no prompt built)"
+                    proofing_results["Q3"] = format_pass_fail(
+                        "",
+                        "No prompt could be built for Q3 (Totals consistency check)."
+                    )
                 else:
                     ai_reply = send_to_bedrock(prompt)
-                    proofing_results["Q3"] = ai_reply or "(empty response)"
+                    proofing_results["Q3"] = format_pass_fail(
+                        ai_reply,
+                        "Totals do not match between Section 1.1 and Significant Findings and Action Plan."
+                    )
             except Exception as ex:
                 logger.warning(
                     "Error while processing Q3 for WorkOrder %s: %s",
                     work_order_id, ex, exc_info=True
                 )
-                proofing_results["Q3"] = f"ERROR: {ex}"
+                proofing_results["Q3"] = format_pass_fail(
+                    f"ERROR: {ex}",
+                    "Exception occurred while running Q3 Bedrock check."
+                )
             continue
     # ——— 4) Log all results ———
     logger.info(
