@@ -34,6 +34,10 @@ MAX_RESPONSE_BYTES = int(os.environ.get("MAX_RESPONSE_BYTES", "5500000"))
 INCLUDE_EXTRACTED_TEXT_DEFAULT = os.environ.get("INCLUDE_EXTRACTED_TEXT_DEFAULT", "false").lower() == "true"
 EXTRACTED_TEXT_MAX_CHARS_PER_CALL = int(os.environ.get("EXTRACTED_TEXT_MAX_CHARS_PER_CALL", "8000"))
 
+# Large-PDF throttling / TPM protection
+LARGE_PDF_PAGE_THRESHOLD = int(os.environ.get("LARGE_PDF_PAGE_THRESHOLD", "40"))
+INTER_PASS_SLEEP_SECONDS = float(os.environ.get("INTER_PASS_SLEEP_SECONDS", "1.0"))
+
 
 # ----------------------------
 # Photo analysis (inlined from qa_photo_analysis.py)
@@ -331,6 +335,14 @@ def extract_cover_photo_png(pdf_bytes: bytes) -> bytes | None:
         doc.close()
 
 
+def get_pdf_page_count(pdf_bytes: bytes) -> int:
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        return doc.page_count
+    finally:
+        doc.close()
+
+
 def extract_text_by_page(pdf_bytes: bytes, max_chars: int = 120_000) -> str:
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     try:
@@ -376,12 +388,17 @@ def call_extract(
     section_instructions: str,
     include_extracted_text: bool = False,
     extracted_text_max_chars: int = EXTRACTED_TEXT_MAX_CHARS_PER_CALL,
+    use_pdf_file: bool = True,
 ) -> dict:
-    content = [
-        {"type": "input_file", "file_id": file_id},
+    content = []
+    if use_pdf_file:
+        content.append({"type": "input_file", "file_id": file_id})
+
+    content.extend([
         {"type": "input_text", "text": BASE_RULES},
         {"type": "input_text", "text": f"Section instructions:\n{section_instructions}".strip()},
-    ]
+    ])
+
     if include_extracted_text and extracted_text:
         snippet = extracted_text[:extracted_text_max_chars]
         content.append({"type": "input_text", "text": f"Extracted text (page-tagged, truncated):\n{snippet}".strip()})
@@ -480,6 +497,7 @@ def call_extract_with_retry(
     section_instructions: str,
     retries: int = 5,
     include_extracted_text: bool = False,
+    use_pdf_file: bool = True,
 ) -> dict:
     for attempt in range(retries):
         try:
@@ -490,6 +508,7 @@ def call_extract_with_retry(
                 schema=schema,
                 section_instructions=section_instructions,
                 include_extracted_text=include_extracted_text,
+                use_pdf_file=use_pdf_file,
             )
             return apply_schema_defaults(schema, result)
         except Exception as e:
@@ -838,6 +857,11 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
     obj = s3.get_object(Bucket=bucket, Key=pdf_key)
     pdf_bytes = obj["Body"].read()
 
+    page_count = get_pdf_page_count(pdf_bytes)
+    use_pdf_file_for_llm = page_count <= LARGE_PDF_PAGE_THRESHOLD
+    if not use_pdf_file_for_llm:
+        include_extracted_text = True
+
     cover_png_bytes = extract_cover_photo_png(pdf_bytes)
 
     cover_written = False
@@ -965,6 +989,7 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
                 schema=spec["schema"],
                 section_instructions=spec["instructions"],
                 include_extracted_text=(include_extracted_text and spec.get("use_extracted_text", False)),
+                use_pdf_file=use_pdf_file_for_llm,
             )
             fields[spec["name"]] = out
 
@@ -987,6 +1012,9 @@ def _run_pdfqa_logic(payload: dict, event: dict | None = None) -> dict:
                 cls["fourth_use_classification"] = _join_if_list(cls.get("fourth_use_classification"))
 
                 fields["classifications"] = cls
+
+            if INTER_PASS_SLEEP_SECONDS > 0:
+                time.sleep(INTER_PASS_SLEEP_SECONDS)
 
         except Exception as e:
             pass_errors[spec["name"]] = str(e)
