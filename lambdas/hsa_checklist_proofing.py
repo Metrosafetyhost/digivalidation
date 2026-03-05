@@ -267,33 +267,21 @@ def send_to_bedrock(user_text):
 
 def format_pass_fail(raw_text, fail_summary=""):
     """
-    Ensure FAIL responses include:
-      1) a clear FAIL summary
-      2) the raw/original model output (or failing text)
-    PASS responses remain exactly 'PASS'.
+    PASS -> exactly 'PASS'
+    FAIL -> 'FAIL: <fail_summary>' (no raw output included)
+    If raw_text is blank or not a PASS, it's treated as FAIL.
     """
     txt = ("" if raw_text is None else str(raw_text)).strip()
-    if not txt:
-        summary = fail_summary or "Validation failed (empty response)."
-        return f"FAIL: {summary}\n\nRaw output:\n(empty)"
-
-    first_line = txt.splitlines()[0].strip()
+    first_line = txt.splitlines()[0].strip() if txt else ""
     first_upper = first_line.upper()
 
-    # PASS stays PASS (and we intentionally do not forward any extra model text)
+    # PASS stays PASS
     if first_upper == "PASS" or first_upper.startswith("PASS"):
         return "PASS"
 
-    # If already FAIL with details, keep it, but ensure we include raw output if it's just "FAIL"
-    if first_upper == "FAIL" or first_upper.startswith("FAIL"):
-        if first_upper == "FAIL" and (len(txt.splitlines()) == 1) and (":" not in first_line):
-            summary = fail_summary or "Validation failed."
-            return f"FAIL: {summary}\n\nRaw output:\n{txt}"
-        return txt
-
-    # No explicit PASS/FAIL -> treat as FAIL and attach raw
+    # Everything else becomes FAIL with our controlled summary
     summary = fail_summary or "Validation failed."
-    return f"FAIL: {summary}\n\nRaw output:\n{txt}"
+    return f"FAIL: {summary}"
 
 def process(event, context):
     """
