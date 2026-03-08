@@ -790,13 +790,13 @@ def process(event, context):
                 else:
                     proofing_results[f"Q{q_num}"] = format_pass_fail(
                         ai_reply or "FAIL",
-                        "Water Systems vs Water Assets did not meet the matching rules (see raw model output)."
+                        "Water Systems vs Water Assets did not meet the matching rules."
                     )
             else:
                 # For all other Bedrock questions, wrap into PASS or enriched FAIL
                 proofing_results[f"Q{q_num}"] = format_pass_fail(
                     ai_reply,
-                    f"Checklist validation failed for Q{q_num} (see raw model output)."
+                    f"Checklist validation failed for Q{q_num}."
                 )
 
         except Exception as ex:

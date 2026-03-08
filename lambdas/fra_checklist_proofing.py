@@ -378,7 +378,7 @@ def process(event, context):
             else:
                 proofing_results["Q9"] = format_pass_fail(
                     "FAIL",
-                    "Life Safety Risk Rating at this Premises could not be extracted (expected a line containing 'is: <value>')."
+                    "Life Safety Risk Rating at this Premises could not be extracted (appears to be missing)."
                 )
             # if you want to keep the actual rating for later:
             proofing_results["Q9_value"] = parsed.get("value", "")
