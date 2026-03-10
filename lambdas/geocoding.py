@@ -21,9 +21,9 @@ ISO3_TO_ISO2 = {
 }
 
 BUILDING_KEYWORDS = {
-    "apartments", "apartment", "block", "building", "court", "estate",
-    "gardens", "heights", "house", "lodge", "manor", "mews", "place",
-    "plaza", "residence", "residences", "square", "terrace", "tower",
+    "apartments", "apartment", "block", "building", "estate",
+    "heights", "house", "lodge", "manor", "mews",
+    "plaza", "residence", "residences", "tower",
     "towers", "view", "villas", "works", "wharf", "centre", "center",
 }
 
@@ -45,7 +45,17 @@ UK_POSTCODE_RE = re.compile(
 LEADING_RANGE_RE = re.compile(r"^\s*\d+[\-/]\d+[A-Z]?\b")
 SINGLE_HOUSE_NUMBER_RE = re.compile(r"^\s*\d+[A-Z]?\b")
 NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+RANGE_PREFIX_RE = re.compile(r"^\s*(\d+\s*[-/]\s*\d+[A-Z]?)\b", re.IGNORECASE)
 
+def is_range_street_address(query: str) -> bool:
+    if not query:
+        return False
+
+    q = normalize_text(query)
+    has_leading_range = bool(LEADING_RANGE_RE.search(query))
+    has_street_word = any(word in q.split() for word in STREET_KEYWORDS)
+
+    return has_leading_range and has_street_word
 
 def to_iso2(country_code: str | None):
     if not country_code:
@@ -73,14 +83,22 @@ def looks_like_address(query: str) -> bool:
     q = normalize_text(query)
     has_house_number = bool(SINGLE_HOUSE_NUMBER_RE.search(query or ""))
     has_street_word = any(word in q.split() for word in STREET_KEYWORDS)
-    return has_house_number and has_street_word
+    has_postcode = bool(UK_POSTCODE_RE.search(query or ""))
+    has_range_street = is_range_street_address(query)
+
+    return has_range_street or ((has_house_number or has_postcode) and has_street_word)
 
 
 def looks_like_building(query: str) -> bool:
     q_tokens = tokens(query)
-    if LEADING_RANGE_RE.search(query or ""):
+    has_building_keyword = any(word in q_tokens for word in BUILDING_KEYWORDS)
+
+    # A leading numeric range on its own is NOT enough to call something a building.
+    # Example: "63-64 Margaret Street" should be treated as address-like.
+    if has_building_keyword:
         return True
-    return any(word in q_tokens for word in BUILDING_KEYWORDS)
+
+    return False
 
 
 def classify_input(query: str) -> str:
@@ -155,8 +173,14 @@ def map_place_result(result: dict) -> dict:
 def build_output_fields(mapped: dict, query: str, input_type: str, matched_by: str, fallback_used: bool) -> dict:
     house = mapped.get("houseNumber")
     street = mapped.get("street")
+    range_match = RANGE_PREFIX_RE.search(query or "")
 
-    if house and street:
+    street_out = None
+
+    if input_type == "address" and range_match and street:
+        range_text = re.sub(r"\s+", "", range_match.group(1))
+        street_out = f"{range_text} {street}".strip()
+    elif house and street:
         street_out = f"{house} {street}".strip()
     else:
         street_out = (street or "").strip() or None
@@ -193,7 +217,11 @@ def text_overlap_score(query: str, candidate: dict) -> float:
 
 
 def number_mismatch_penalty(query: str, candidate: dict) -> float:
-    # Penalise cases like "24-55 Magnus Heights" resolving to "24 Hampden Road".
+    # Penalise cases like "24-55 Magnus Heights" resolving to "24 Hampden Road",
+    # but do NOT penalise normal ranged street addresses like "63-64 
+    if is_range_street_address(query):
+        return 0.0
+
     leading_range = LEADING_RANGE_RE.search(query or "")
     house_number = str(candidate.get("houseNumber") or "").strip().lower()
     if not leading_range:
