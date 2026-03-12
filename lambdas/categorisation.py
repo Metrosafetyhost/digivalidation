@@ -324,7 +324,7 @@ OBJECT_MAP: dict[str, list[str]] = {
   "External Wall": [],
   "Extinguisher": [],
   "Eye Wash Kit": [],
-  "Fire Alarm Panel": ["Key (TOK)", "Key Panel (1001)", "Key Panel (134)", "Key Panel (801)", "Key Panel (827)", "Key Panel (901)", "Key Panel (Black Plastic Flag)", "Key Panel (Plastic RED)", "Key Panel (Plastic Tok)", "Key Panel (TOK 001)", "Key Panel (TOK 003)", "Key Panel (TOK 007)", "Unlisted"],
+  "Fire Alarm Panel": ["Key (TOK)", "Key Panel (1001)", "Key Panel (134)", "Key Panel (801)", "Key Panel (827)", "Key Panel (901)", "Key Panel (Black Plastic Flag)", "Key Panel (Plastic RED)", "Key Panel (Plastic Tok)", "Key Panel (TOK 001)", "Key Panel (TOK 003)", "Key Panel (TOK 007)", "Addressable", "Conventional", "Unlisted"],
   "Fire Blanket": [],
   "Fire Door - Communal": [],
   "Fire Door - Door and a Half": [],
