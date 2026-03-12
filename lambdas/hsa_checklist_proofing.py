@@ -369,8 +369,21 @@ def process(event, context):
                 )
                 continue
 
+            elif q_num == 3:
+                total  = (parsed or {}).get("remedial_total", 0)
+                sig_ct = (parsed or {}).get("sig_item_count", 0)
+
+                if total == sig_ct:
+                    proofing_results["Q3"] = "PASS"
+                else:
+                    proofing_results["Q3"] = (
+                        f"FAIL: Totals do not match "
+                        f"(Section 1.1={total}, SFAP={sig_ct})."
+                    )
+                continue
+
             else:
-                # Q3 & Q4 still go to AI
+                # Q4 still goes to AI
                 prompt = build_user_message(q_num, parsed)
                 if not prompt:
                     proofing_results[f"Q{q_num}"] = format_pass_fail(
@@ -379,12 +392,10 @@ def process(event, context):
                     )
                 else:
                     ai_reply = send_to_bedrock(prompt)
-                    fail_summary = (
-                        "Totals do not match between Section 1.1 and Significant Findings and Action Plan."
-                        if q_num == 3 else
+                    proofing_results[f"Q{q_num}"] = format_pass_fail(
+                        ai_reply,
                         "Property Site/Description appears missing or empty."
                     )
-                    proofing_results[f"Q{q_num}"] = format_pass_fail(ai_reply, fail_summary)
 
         except Exception as ex:
             logger.warning(
@@ -445,7 +456,7 @@ def process(event, context):
     html_body_text = "\n".join(html_body_lines)
 
     # ——— 6) Send the email via SES ———
-    source_email = "metroit@metrosafety.co.uk"
+    source_email = "luke.gasson@metrosafety.co.uk" #"metroit@metrosafety.co.uk"
     if not source_email:
         logger.error("SES_SOURCE_EMAIL not set in environment.")
         return {"statusCode": 500, "body": "Missing SES_SOURCE_EMAIL"}
