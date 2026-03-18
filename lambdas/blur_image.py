@@ -2,6 +2,7 @@ import json
 import boto3
 import os
 import io
+from urllib.parse import unquote_plus
 from PIL import Image, ImageFilter
 
 # Optional region config – or let the SDK pick it up from env/role
@@ -17,7 +18,7 @@ OUTPUT_BUCKET = os.getenv("OUTPUT_BUCKET")
 
 def _download_image_from_s3(bucket, key):
     response = s3.get_object(Bucket=bucket, Key=key)
-    return response["Body"].read()
+    return response["Body"].read(), response.get("ContentType", "image/jpeg")
 
 
 def _upload_image_to_s3(bucket, key, img_bytes, content_type="image/jpeg"):
@@ -44,80 +45,117 @@ def _blur_faces(image_bytes, face_bboxes):
         width, height = img.size
 
         for bbox in face_bboxes:
-            left = int(bbox["Left"] * width)
-            top = int(bbox["Top"] * height)
+            left = max(0, int(bbox["Left"] * width))
+            top = max(0, int(bbox["Top"] * height))
             box_width = int(bbox["Width"] * width)
             box_height = int(bbox["Height"] * height)
 
-            right = left + box_width
-            bottom = top + box_height
+            right = min(width, left + box_width)
+            bottom = min(height, top + box_height)
 
-            # Crop and blur the face region
-            face_region = img.crop((left, top, right, bottom))
-            blurred_face = face_region.filter(ImageFilter.GaussianBlur(radius=25))
-
-            # Paste blurred region back
-            img.paste(blurred_face, (left, top, right, bottom))
+            if right > left and bottom > top:
+                face_region = img.crop((left, top, right, bottom))
+                blurred_face = face_region.filter(ImageFilter.GaussianBlur(radius=25))
+                img.paste(blurred_face, (left, top, right, bottom))
 
         out_buffer = io.BytesIO()
         img.save(out_buffer, format="JPEG")
         out_buffer.seek(0)
-        return out_buffer.read()
+        return out_buffer.read(), "image/jpeg"
+
+
+def _build_blurred_key(key):
+    if "." in key:
+        base, ext = key.rsplit(".", 1)
+        return f"{base}_blurred.{ext}"
+    return f"{key}_blurred"
+
+
+def _extract_bucket_and_key(event):
+    """
+    Supports both:
+    1. Direct invocation:
+       { "bucket": "my-bucket", "key": "path/file.jpg" }
+
+    2. S3 event notification:
+       {
+         "Records": [
+           {
+             "s3": {
+               "bucket": {"name": "my-bucket"},
+               "object": {"key": "path%2Ffile.jpg"}
+             }
+           }
+         ]
+       }
+    """
+    if "bucket" in event and "key" in event:
+        return event["bucket"], event["key"]
+
+    if "Records" in event and len(event["Records"]) > 0:
+        record = event["Records"][0]
+        bucket = record["s3"]["bucket"]["name"]
+        key = unquote_plus(record["s3"]["object"]["key"])
+        return bucket, key
+
+    raise KeyError("Could not find 'bucket' and 'key' in event payload")
 
 
 def process(event, context):
-    """
-    Expected test event JSON (same style as your Nova function):
-
-    {
-      "bucket": "my-images-bucket",
-      "key": "images/sample-face.jpg"
-    }
-    """
     try:
-        bucket = event["bucket"]
-        key = event["key"]
+        bucket, key = _extract_bucket_and_key(event)
     except KeyError as e:
         return {
             "statusCode": 400,
-            "body": f"Missing field in event: {e}. Provide 'bucket' and 'key'."
+            "body": json.dumps({
+                "error": f"Missing field in event: {str(e)}. Provide 'bucket' and 'key', or use an S3 trigger event."
+            })
         }
 
     try:
+        # Prevent recursion if the S3 trigger also fires for blurred files
+        if key.lower().endswith("_blurred.jpg") or key.lower().endswith("_blurred.jpeg") or key.lower().endswith("_blurred.png"):
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "message": "Skipping already processed blurred image.",
+                    "bucket": bucket,
+                    "key": key
+                })
+            }
+
         # Download original image from S3
-        original_bytes = _download_image_from_s3(bucket, key)
+        original_bytes, original_content_type = _download_image_from_s3(bucket, key)
 
         # Detect faces with Rekognition
         face_bboxes = _detect_faces(original_bytes)
         face_count = len(face_bboxes)
 
+        # Decide output bucket (env var or same bucket)
+        output_bucket = OUTPUT_BUCKET or bucket
+        output_key = _build_blurred_key(key)
+
         if face_count == 0:
-            # No faces found – nothing blurred
+            # No faces found - still create the _blurred file by copying original bytes
+            _upload_image_to_s3(output_bucket, output_key, original_bytes, original_content_type)
+
             return {
                 "statusCode": 200,
                 "body": json.dumps({
-                    "message": "No faces detected, nothing blurred.",
-                    "bucket": bucket,
-                    "key": key,
+                    "message": "No faces detected. Original copied to blurred key.",
+                    "input_bucket": bucket,
+                    "input_key": key,
+                    "output_bucket": output_bucket,
+                    "output_key": output_key,
                     "faces_detected": 0
                 })
             }
 
         # Blur the faces
-        blurred_bytes = _blur_faces(original_bytes, face_bboxes)
-
-        # Decide output bucket (env var or same bucket)
-        output_bucket = OUTPUT_BUCKET or bucket
-
-        # Name output key as "<original>_blurred.ext"
-        if "." in key:
-            base, ext = key.rsplit(".", 1)
-            output_key = f"{base}_blurred.{ext}"
-        else:
-            output_key = f"{key}_blurred"
+        blurred_bytes, blurred_content_type = _blur_faces(original_bytes, face_bboxes)
 
         # Upload blurred image
-        _upload_image_to_s3(output_bucket, output_key, blurred_bytes)
+        _upload_image_to_s3(output_bucket, output_key, blurred_bytes, blurred_content_type)
 
         return {
             "statusCode": 200,

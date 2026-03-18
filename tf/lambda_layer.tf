@@ -1089,7 +1089,7 @@ resource "aws_iam_role_policy_attachment" "attach_pdf_qa_write_covers" {
   policy_arn = aws_iam_policy.pdf_qa_write_covers.arn
 }
 
-#blur image sata block 
+# blur image data block
 data "aws_iam_role" "blur_image_role" {
   name = "bedrock-lambda-blur_image"
 }
@@ -1097,18 +1097,18 @@ data "aws_iam_role" "blur_image_role" {
 data "aws_iam_policy_document" "blur_image_s3_and_rekognition" {
   # S3: read original and write blurred copy
   statement {
-    sid    = "AllowListBucketPabiltotesting"
+    sid    = "AllowListBucketMetroSafetyProd"
     effect = "Allow"
     actions = [
       "s3:ListBucket"
     ]
     resources = [
-      "arn:aws:s3:::pabiltotesting"
+      "arn:aws:s3:::metrosafetyprod"
     ]
   }
 
   statement {
-    sid    = "AllowRWObjectsPabiltotesting"
+    sid    = "AllowRWObjectsMetroSafetyProd"
     effect = "Allow"
     actions = [
       "s3:GetObject",
@@ -1116,11 +1116,11 @@ data "aws_iam_policy_document" "blur_image_s3_and_rekognition" {
       "s3:PutObject"
     ]
     resources = [
-      "arn:aws:s3:::pabiltotesting/*"
+      "arn:aws:s3:::metrosafetyprod/*"
     ]
   }
 
-  # Rekognition: DetectFaces (cannot be resource-scoped)
+  # Rekognition: DetectFaces
   statement {
     sid    = "AllowDetectFaces"
     effect = "Allow"
@@ -1133,7 +1133,7 @@ data "aws_iam_policy_document" "blur_image_s3_and_rekognition" {
 
 resource "aws_iam_policy" "blur_image_s3_and_rekognition" {
   name        = "BlurImageS3AndRekognition"
-  description = "Allow blur_image Lambda to read/write pabiltotesting and call Rekognition DetectFaces"
+  description = "Allow blur_image Lambda to read/write metrosafetyprod and call Rekognition DetectFaces"
   policy      = data.aws_iam_policy_document.blur_image_s3_and_rekognition.json
 }
 
