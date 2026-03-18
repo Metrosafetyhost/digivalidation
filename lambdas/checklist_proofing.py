@@ -628,10 +628,11 @@ def send_to_bedrock(user_text):
         plain = response_text
     return plain.strip()
 
-def format_pass_fail(raw_text, fail_summary=""):
+def format_pass_fail(raw_text, fail_summary="", include_raw_output=False):
     """
     PASS -> exactly 'PASS'
-    FAIL -> 'FAIL: <fail_summary>' (no raw output included)
+    FAIL -> 'FAIL: <fail_summary>'
+    If include_raw_output=True, append the raw model output for failed AI checks.
     If raw_text is blank or not a PASS, it's treated as FAIL.
     """
     txt = ("" if raw_text is None else str(raw_text)).strip()
@@ -644,6 +645,8 @@ def format_pass_fail(raw_text, fail_summary=""):
 
     # Everything else becomes FAIL with our controlled summary
     summary = fail_summary or "Validation failed."
+    if include_raw_output and txt:
+        return f"FAIL: {summary}<br><br><strong>Raw AI Output:</strong><br>{'<br>'.join(txt.splitlines())}"
     return f"FAIL: {summary}"
 
 def validate_water_assets(sections):
@@ -790,13 +793,15 @@ def process(event, context):
                 else:
                     proofing_results[f"Q{q_num}"] = format_pass_fail(
                         ai_reply or "FAIL",
-                        "Water Systems vs Water Assets did not meet the matching rules."
+                        "Water Systems vs Water Assets did not meet the matching rules.",
+                        include_raw_output=True
                     )
             else:
                 # For all other Bedrock questions, wrap into PASS or enriched FAIL
                 proofing_results[f"Q{q_num}"] = format_pass_fail(
                     ai_reply,
-                    f"Checklist validation failed for Q{q_num}."
+                    f"Checklist validation failed for Q{q_num}.",
+                    include_raw_output=True
                 )
 
         except Exception as ex:
