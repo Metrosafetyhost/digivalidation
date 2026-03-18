@@ -265,10 +265,11 @@ def send_to_bedrock(user_text):
         plain = response_text
     return plain.strip()
 
-def format_pass_fail(raw_text, fail_summary=""):
+def format_pass_fail(raw_text, fail_summary="", include_raw_output=False):
     """
     PASS -> exactly 'PASS'
-    FAIL -> 'FAIL: <fail_summary>' (no raw output included)
+    FAIL -> 'FAIL: <fail_summary>'
+    If include_raw_output=True, append the raw model output for failed AI checks.
     If raw_text is blank or not a PASS, it's treated as FAIL.
     """
     txt = ("" if raw_text is None else str(raw_text)).strip()
@@ -281,6 +282,8 @@ def format_pass_fail(raw_text, fail_summary=""):
 
     # Everything else becomes FAIL with our controlled summary
     summary = fail_summary or "Validation failed."
+    if include_raw_output and txt:
+        return f"FAIL: {summary}<br><br><strong>Raw AI Output:</strong><br>{'<br>'.join(txt.splitlines())}"
     return f"FAIL: {summary}"
 
 def process(event, context):
@@ -394,7 +397,8 @@ def process(event, context):
                     ai_reply = send_to_bedrock(prompt)
                     proofing_results[f"Q{q_num}"] = format_pass_fail(
                         ai_reply,
-                        "Property Site/Description appears missing or empty."
+                        "Property Site/Description appears missing or empty.",
+                        include_raw_output=True
                     )
 
         except Exception as ex:
