@@ -75,6 +75,8 @@ EMAIL_QUESTIONS = {
     # 16:"Section 7.0 Water Assets – data fields and comments are present",
 }
 
+ACTIVE_QUESTIONS = [2, 4, 5, 11]
+
 def extract_json_data(json_content, question_number):
     payload = json.loads(json_content)
 
@@ -775,9 +777,9 @@ def process(event, context):
         )
         return {"statusCode": 500, "body": "Cannot fetch Textract JSON"}
 
-    # ——— 3) Loop through Q1–Q15, always sending to Bedrock ———
+    # ——— 3) Loop through active questions only ———
     proofing_results = {}
-    for q_num in range(1, 15):
+    for q_num in ACTIVE_QUESTIONS:
         try:
             parsed_content = extract_json_data(content, q_num)
             prompt         = build_user_message(q_num, parsed_content)
@@ -835,12 +837,11 @@ def process(event, context):
         json.dumps(proofing_results, indent=2)
     )
 
-    question_keys = ["Q2", "Q3", "Q4", "Q5", "Q9", "Q11"]
+    question_keys = [f"Q{q_num}" for q_num in ACTIVE_QUESTIONS]
     results = [
         proofing_results.get(key, "").strip().upper().splitlines()[0]
         for key in question_keys
     ]
-    # Check if each one exactly equals "PASS"
     digital_outcome = "PASS" if all(r == "PASS" for r in results) else "FAIL"
 
     # ——— 5) Build a structured plaintext email body ———
