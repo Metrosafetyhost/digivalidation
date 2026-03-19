@@ -1094,6 +1094,44 @@ data "aws_iam_role" "blur_image_role" {
   name = "bedrock-lambda-blur_image"
 }
 
+data "aws_lambda_function" "blur_image" {
+  function_name = "bedrock-lambda-blur_image"
+}
+
+resource "aws_lambda_permission" "allow_metrosafetyprod_invoke_blur_image" {
+  statement_id  = "AllowExecutionFromS3MetroSafetyProd"
+  action        = "lambda:InvokeFunction"
+  function_name = data.aws_lambda_function.blur_image.function_name
+  principal     = "s3.amazonaws.com"
+  source_arn    = "arn:aws:s3:::metrosafetyprod"
+}
+
+resource "aws_s3_bucket_notification" "metrosafetyprod_blur_trigger" {
+  bucket = "metrosafetyprod"
+
+  lambda_function {
+    lambda_function_arn = data.aws_lambda_function.blur_image.arn
+    events              = ["s3:ObjectCreated:*"]
+    filter_suffix       = ".jpg"
+  }
+
+  lambda_function {
+    lambda_function_arn = data.aws_lambda_function.blur_image.arn
+    events              = ["s3:ObjectCreated:*"]
+    filter_suffix       = ".jpeg"
+  }
+
+  lambda_function {
+    lambda_function_arn = data.aws_lambda_function.blur_image.arn
+    events              = ["s3:ObjectCreated:*"]
+    filter_suffix       = ".png"
+  }
+
+  depends_on = [
+    aws_lambda_permission.allow_metrosafetyprod_invoke_blur_image
+  ]
+}
+
 data "aws_iam_policy_document" "blur_image_s3_and_rekognition" {
   # S3: read original and write blurred copy
   statement {
