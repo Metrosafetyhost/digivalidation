@@ -1133,7 +1133,6 @@ resource "aws_s3_bucket_notification" "metrosafetyprod_blur_trigger" {
 }
 
 data "aws_iam_policy_document" "blur_image_s3_and_rekognition" {
-  # S3: read original and write blurred copy
   statement {
     sid    = "AllowListBucketMetroSafetyProd"
     effect = "Allow"
@@ -1158,12 +1157,12 @@ data "aws_iam_policy_document" "blur_image_s3_and_rekognition" {
     ]
   }
 
-  # Rekognition: DetectFaces
   statement {
-    sid    = "AllowDetectFaces"
+    sid    = "AllowRekognitionBlurDetections"
     effect = "Allow"
     actions = [
-      "rekognition:DetectFaces"
+      "rekognition:DetectFaces",
+      "rekognition:DetectText"
     ]
     resources = ["*"]
   }
