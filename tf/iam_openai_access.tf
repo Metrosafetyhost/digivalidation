@@ -39,3 +39,13 @@ resource "aws_iam_role_policy" "allow_get_dewrra_secret_pdf_qa" {
     }]
   })
 }
+
+resource "aws_secretsmanager_secret" "sf_callback_secret" {
+  name = var.sf_callback_secret_name
+  tags = { app = "salesforce-callback" }
+}
+
+resource "aws_secretsmanager_secret_version" "sf_callback_secret" {
+  secret_id     = aws_secretsmanager_secret.sf_callback_secret.id
+  secret_string = var.sf_callback_secret
+}

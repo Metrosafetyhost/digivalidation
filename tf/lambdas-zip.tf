@@ -114,6 +114,17 @@ module "lambdas_zip" {
       }
     }
 
+    blur_image = {
+      handler     = "process"
+      timeout     = 240
+      memory_size = 512
+
+      lambda_environment = {
+        SF_CALLBACK_URL        = var.sf_callback_url
+        SF_CALLBACK_SECRET_ARN = aws_secretsmanager_secret.sf_callback_secret.arn
+      }
+  }
+
     # All other lambdas 
     basic_event            = { handler = "process", timeout = 240, memory_size = 512 }
     bedrock                = { handler = "process", timeout = 240, memory_size = 512 }
@@ -129,6 +140,5 @@ module "lambdas_zip" {
     emails                 = { handler = "process", timeout = 240, memory_size = 512 }
     nova_water             = { handler = "process", timeout = 900, memory_size = 512 }
     waterRiskCaseIngest    = { handler = "process", timeout = 900, memory_size = 512 }
-    blur_image             = { handler = "process", timeout = 240, memory_size = 512 }
   }
 }

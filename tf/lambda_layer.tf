@@ -1098,6 +1098,20 @@ data "aws_lambda_function" "blur_image" {
   function_name = "bedrock-lambda-blur_image"
 }
 
+resource "aws_iam_role_policy" "allow_get_sf_callback_secret_blur_image" {
+  name = "AllowGetSFCallbackSecret"
+  role = data.aws_iam_role.blur_image_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect   = "Allow",
+      Action   = ["secretsmanager:GetSecretValue"],
+      Resource = aws_secretsmanager_secret.sf_callback_secret.arn
+    }]
+  })
+}
+
 resource "aws_lambda_permission" "allow_metrosafetyprod_invoke_blur_image" {
   statement_id  = "AllowExecutionFromS3MetroSafetyProd"
   action        = "lambda:InvokeFunction"

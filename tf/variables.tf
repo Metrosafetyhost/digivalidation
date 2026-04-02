@@ -81,3 +81,16 @@ variable "openai_layer_arn" {
   type    = string
   default = "arn:aws:lambda:eu-west-2:837329614132:layer:openai-py-313-arm64:1"
 }
+
+variable "sf_callback_url" {
+  type = string
+}
+
+variable "sf_callback_secret_name" {
+  type = string
+}
+
+variable "sf_callback_secret" {
+  type      = string
+  sensitive = true
+}
