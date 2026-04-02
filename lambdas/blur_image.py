@@ -4,8 +4,7 @@ import os
 import io
 import re
 from urllib.parse import unquote_plus
-from PIL import Image, ImageFilter, ImageOps
-import requests
+from PIL import Image, ImageFilter
 
 REGION = os.getenv("AWS_REGION", "eu-west-2")
 
@@ -20,44 +19,6 @@ MIN_TEXT_CONFIDENCE = float(os.getenv("MIN_TEXT_CONFIDENCE", "80"))
 MIN_PLATE_CHARS = int(os.getenv("MIN_PLATE_CHARS", "5"))
 MAX_PLATE_CHARS = int(os.getenv("MAX_PLATE_CHARS", "10"))
 
-# env vars
-SF_CALLBACK_URL = os.getenv("SF_CALLBACK_URL")
-SF_CALLBACK_SECRET_ARN = os.getenv("SF_CALLBACK_SECRET_ARN")
-SF_OAUTH_SECRET_ARN = os.getenv("SF_OAUTH_SECRET_ARN")
-
-secretsmanager = boto3.client("secretsmanager", region_name=REGION)
-
-def _get_secret(secret_arn):
-    if not secret_arn:
-        return None
-    response = secretsmanager.get_secret_value(SecretId=secret_arn)
-    return response["SecretString"]
-
-SF_CALLBACK_SECRET = _get_secret(SF_CALLBACK_SECRET_ARN)
-
-def _get_json_secret(secret_arn):
-    if not secret_arn:
-        return None
-    response = secretsmanager.get_secret_value(SecretId=secret_arn)
-    return json.loads(response["SecretString"])
-
-SF_OAUTH = _get_json_secret(SF_OAUTH_SECRET_ARN)
-
-def _get_salesforce_access_token():
-    if not SF_OAUTH:
-        return None
-
-    response = requests.post(
-        SF_OAUTH["token_url"],
-        data={
-            "grant_type": "client_credentials",
-            "client_id": SF_OAUTH["client_id"],
-            "client_secret": SF_OAUTH["client_secret"],
-        },
-        timeout=10,
-    )
-    response.raise_for_status()
-    return response.json()["access_token"]
 
 def _download_image_from_s3(bucket, key):
     response = s3.get_object(Bucket=bucket, Key=key)
@@ -72,34 +33,6 @@ def _upload_image_to_s3(bucket, key, img_bytes, content_type="image/jpeg"):
         ContentType=content_type,
     )
 
-
-def _extract_content_version_id_from_key(key):
-    filename = key.split("/")[-1]
-    if "_" not in filename:
-        return None
-    return filename.split("_", 1)[0]
-
-def _notify_salesforce(content_version_id, blurred_key):
-    if not SF_CALLBACK_URL or not SF_CALLBACK_SECRET or not content_version_id:
-        return
-
-    access_token = _get_salesforce_access_token()
-    if not access_token:
-        raise Exception("Could not retrieve Salesforce access token")
-
-    payload = {
-        "contentVersionId": content_version_id,
-        "blurredKey": blurred_key,
-        "sharedSecret": SF_CALLBACK_SECRET
-    }
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-
-    response = requests.post(SF_CALLBACK_URL, json=payload, headers=headers, timeout=10)
-    response.raise_for_status()
 
 def _detect_faces(image_bytes):
     response = rekognition.detect_faces(
@@ -174,7 +107,6 @@ def _detect_number_plates(image_bytes):
 def _blur_regions(image_bytes, bboxes):
     with Image.open(io.BytesIO(image_bytes)) as img:
         img = img.convert("RGB")
-
         width, height = img.size
 
         for bbox in bboxes:
@@ -192,25 +124,10 @@ def _blur_regions(image_bytes, bboxes):
                 img.paste(blurred_region, (left, top, right, bottom))
 
         out_buffer = io.BytesIO()
-        img.save(out_buffer, format="JPEG", quality=95)
+        img.save(out_buffer, format="JPEG")
         out_buffer.seek(0)
         return out_buffer.read(), "image/jpeg"
 
-def _normalize_image_orientation(image_bytes):
-    with Image.open(io.BytesIO(image_bytes)) as img:
-        img = ImageOps.exif_transpose(img)
-
-        out_buffer = io.BytesIO()
-
-        # Keep output predictable for Rekognition + later processing
-        if img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
-        elif img.mode == "L":
-            img = img.convert("RGB")
-
-        img.save(out_buffer, format="JPEG", quality=95)
-        out_buffer.seek(0)
-        return out_buffer.read(), "image/jpeg"
 
 def _build_blurred_key(key):
     if "." in key:
@@ -273,12 +190,9 @@ def process(event, context):
 
         original_bytes, original_content_type = _download_image_from_s3(bucket, key)
 
-        # Normalize orientation first so detection and blur use the same image layout
-        normalized_bytes, normalized_content_type = _normalize_image_orientation(original_bytes)
-
-        # Detect regions on the normalized image
-        face_bboxes = _detect_faces(normalized_bytes)
-        plate_bboxes = _detect_number_plates(normalized_bytes)
+        # Detect regions
+        face_bboxes = _detect_faces(original_bytes)
+        plate_bboxes = _detect_number_plates(original_bytes)
 
         all_bboxes = face_bboxes + plate_bboxes
 
@@ -289,9 +203,7 @@ def process(event, context):
         output_key = _build_blurred_key(key)
 
         if not all_bboxes:
-            _upload_image_to_s3(output_bucket, output_key, normalized_bytes, normalized_content_type)
-            content_version_id = _extract_content_version_id_from_key(key)
-            _notify_salesforce(content_version_id, output_key)
+            _upload_image_to_s3(output_bucket, output_key, original_bytes, original_content_type)
 
             return {
                 "statusCode": 200,
@@ -306,12 +218,9 @@ def process(event, context):
                 })
             }
 
-        blurred_bytes, blurred_content_type = _blur_regions(normalized_bytes, all_bboxes)
+        blurred_bytes, blurred_content_type = _blur_regions(original_bytes, all_bboxes)
 
         _upload_image_to_s3(output_bucket, output_key, blurred_bytes, blurred_content_type)
-
-        content_version_id = _extract_content_version_id_from_key(key)
-        _notify_salesforce(content_version_id, output_key)
 
         return {
             "statusCode": 200,
