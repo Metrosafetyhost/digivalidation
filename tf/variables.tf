@@ -89,8 +89,3 @@ variable "sf_callback_url" {
 variable "sf_callback_secret_name" {
   type = string
 }
-
-variable "sf_callback_secret" {
-  type      = string
-  sensitive = true
-}

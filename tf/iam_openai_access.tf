@@ -45,7 +45,3 @@ resource "aws_secretsmanager_secret" "sf_callback_secret" {
   tags = { app = "salesforce-callback" }
 }
 
-resource "aws_secretsmanager_secret_version" "sf_callback_secret" {
-  secret_id     = aws_secretsmanager_secret.sf_callback_secret.id
-  secret_string = var.sf_callback_secret
-}
