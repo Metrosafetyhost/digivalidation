@@ -122,6 +122,7 @@ module "lambdas_zip" {
       lambda_environment = {
         SF_CALLBACK_URL        = var.sf_callback_url
         SF_CALLBACK_SECRET_ARN = aws_secretsmanager_secret.sf_callback_secret.arn
+        SF_OAUTH_SECRET_ARN    = aws_secretsmanager_secret.sf_oauth_secret.arn
       }
   }
 

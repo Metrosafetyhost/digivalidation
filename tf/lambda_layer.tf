@@ -1112,6 +1112,20 @@ resource "aws_iam_role_policy" "allow_get_sf_callback_secret_blur_image" {
   })
 }
 
+resource "aws_iam_role_policy" "allow_get_sf_oauth_secret_blur_image" {
+  name = "AllowGetSFOAuthSecret"
+  role = data.aws_iam_role.blur_image_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect   = "Allow",
+      Action   = ["secretsmanager:GetSecretValue"],
+      Resource = aws_secretsmanager_secret.sf_oauth_secret.arn
+    }]
+  })
+}
+
 resource "aws_lambda_permission" "allow_metrosafetyprod_invoke_blur_image" {
   statement_id  = "AllowExecutionFromS3MetroSafetyProd"
   action        = "lambda:InvokeFunction"

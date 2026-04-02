@@ -23,6 +23,7 @@ MAX_PLATE_CHARS = int(os.getenv("MAX_PLATE_CHARS", "10"))
 # env vars
 SF_CALLBACK_URL = os.getenv("SF_CALLBACK_URL")
 SF_CALLBACK_SECRET_ARN = os.getenv("SF_CALLBACK_SECRET_ARN")
+SF_OAUTH_SECRET_ARN = os.getenv("SF_OAUTH_SECRET_ARN")
 
 secretsmanager = boto3.client("secretsmanager", region_name=REGION)
 
@@ -33,6 +34,30 @@ def _get_secret(secret_arn):
     return response["SecretString"]
 
 SF_CALLBACK_SECRET = _get_secret(SF_CALLBACK_SECRET_ARN)
+
+def _get_json_secret(secret_arn):
+    if not secret_arn:
+        return None
+    response = secretsmanager.get_secret_value(SecretId=secret_arn)
+    return json.loads(response["SecretString"])
+
+SF_OAUTH = _get_json_secret(SF_OAUTH_SECRET_ARN)
+
+def _get_salesforce_access_token():
+    if not SF_OAUTH:
+        return None
+
+    response = requests.post(
+        SF_OAUTH["token_url"],
+        data={
+            "grant_type": "client_credentials",
+            "client_id": SF_OAUTH["client_id"],
+            "client_secret": SF_OAUTH["client_secret"],
+        },
+        timeout=10,
+    )
+    response.raise_for_status()
+    return response.json()["access_token"]
 
 def _download_image_from_s3(bucket, key):
     response = s3.get_object(Bucket=bucket, Key=key)
@@ -58,13 +83,22 @@ def _notify_salesforce(content_version_id, blurred_key):
     if not SF_CALLBACK_URL or not SF_CALLBACK_SECRET or not content_version_id:
         return
 
+    access_token = _get_salesforce_access_token()
+    if not access_token:
+        raise Exception("Could not retrieve Salesforce access token")
+
     payload = {
         "contentVersionId": content_version_id,
         "blurredKey": blurred_key,
         "sharedSecret": SF_CALLBACK_SECRET
     }
 
-    response = requests.post(SF_CALLBACK_URL, json=payload, timeout=10)
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(SF_CALLBACK_URL, json=payload, headers=headers, timeout=10)
     response.raise_for_status()
 
 def _detect_faces(image_bytes):

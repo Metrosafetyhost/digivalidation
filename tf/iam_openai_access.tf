@@ -45,3 +45,7 @@ resource "aws_secretsmanager_secret" "sf_callback_secret" {
   tags = { app = "salesforce-callback" }
 }
 
+resource "aws_secretsmanager_secret" "sf_oauth_secret" {
+  name = "sf-oauth-callback-prep"
+  tags = { app = "salesforce-oauth-callback" }
+}
