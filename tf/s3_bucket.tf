@@ -38,3 +38,12 @@ resource "aws_iam_user_policy_attachment" "salesforce_prep_s3_policy" {
   user       = aws_iam_user.salesforce_prep_s3.name
   policy_arn = aws_iam_policy.salesforce_prep_s3_policy.arn
 }
+
+output "salesforce_prep_s3_access_key_id" {
+  value = aws_iam_access_key.salesforce_prep_s3.id
+}
+
+output "salesforce_prep_s3_secret_access_key" {
+  value     = aws_iam_access_key.salesforce_prep_s3.secret
+  sensitive = true
+}
