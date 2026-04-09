@@ -46,6 +46,6 @@ resource "aws_secretsmanager_secret" "sf_callback_secret" {
 }
 
 resource "aws_secretsmanager_secret" "sf_oauth_secret" {
-  name = "sf-oauth-callback-prep"
+  name = "blurring-sf-callback-oauth"
   tags = { app = "salesforce-oauth-callback" }
 }

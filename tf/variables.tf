@@ -84,10 +84,10 @@ variable "openai_layer_arn" {
 
 variable "sf_callback_url" {
   type = string
-  default = "https://metrosafety--prep.sandbox.my.salesforce.com/services/apexrest/image-processing-complete/"
+  default = "https://metrosafety.my.salesforce.com/services/apexrest/image-processing-complete/"
 }
 
 variable "sf_callback_secret_name" {
   type = string
-  default = "sf-callback-secret"
+  default = "blurring-sf-callback-secret"
 }
