@@ -433,22 +433,32 @@ def load_payload(event):
         items = body.get("sectionContents", [])
         logger.info(f"Payload contentType: {content_type}, records received: {len(items)}")
         
-        proofing_requests = {}
+        proofing_requests = []
         table_data = {}
         for entry in items:
             record_id = entry.get("recordId")
             content = entry.get("content")
+            field_api_name = entry.get("fieldApiName")
             if not record_id or not content:
                 logger.warning(f"Skipping entry with missing recordId or content: {entry}")
                 continue
-            proofing_requests[record_id] = content.strip()
+
+            clean_entry = {
+                "recordId": record_id,
+                "content": content.strip()
+            }
+
+            if field_api_name:
+                clean_entry["fieldApiName"] = field_api_name
+
+            proofing_requests.append(clean_entry)
             table_data[record_id] = {"content": content.strip(), "record_id": record_id}
         
         return body.get("workOrderId"), content_type, proofing_requests, table_data
 
     except Exception as e:
         logger.error(f"Unexpected error in load_payload: {e}")
-        return None, None, {}, {}
+        return None, None, [], {}
     
 def apply_glossary(text):
     """
@@ -653,14 +663,22 @@ def process(event, context):
         return {"statusCode":400,"body":json.dumps({"error":"No proofing items found"})}
 
     logs, flag, proofed = [], False, []
-    for rid, cont in proof_reqs.items():
+    for entry in proof_reqs:
+        rid = entry.get("recordId")
+        cont = entry.get("content")
+        field_api_name = entry.get("fieldApiName")
+
         if ct == "FormQuestion":
             html, le = proof_table_content(cont, rid)
             for e in le:
                 logs.append(e)
                 if e["original"]!=e["proofed"]:
                     flag = True
-            proofed.append({"recordId":rid,"content":html})
+
+            proofed_entry = {"recordId": rid, "content": html}
+            if field_api_name:
+                proofed_entry["fieldApiName"] = field_api_name
+            proofed.append(proofed_entry)
         else:
             txt  = proof_plain_text(cont, rid)
             orig = protect_html(cont)
@@ -670,19 +688,22 @@ def process(event, context):
                 flag = True
                 logs.append({
                     "recordId": rid,
-                    "header":    "",
+                    "header":    field_api_name if field_api_name else "",
                     "original":  orig,
                     "proofed":   corr
                 })
             else:
                 logs.append({
                     "recordId": rid,
-                    "header":    "",
+                    "header":    field_api_name if field_api_name else "",
                     "original":  "No changes needed: " + orig,
                     "proofed":   "No changes made."
                 })
 
-            proofed.append({"recordId": rid, "content": txt})
+            proofed_entry = {"recordId": rid, "content": txt}
+            if field_api_name:
+                proofed_entry["fieldApiName"] = field_api_name
+            proofed.append(proofed_entry)
 
     status = "Proofed" if flag else "Original"
     csv_key = update_logs_csv(logs, f"{workorder_id}_logs", "logs")
@@ -729,7 +750,7 @@ def process(event, context):
         logger.info("About to evaluate Textract marker for workOrder %s", workorder_id)
 
         if marker_is_fresh(PDF_BUCKET, marker_key, ttl_minutes=10):
-            logger.info("Skipping Textract – marker younger than 10 minutes.")
+            logger.info("Skipping Textract – marker younger than 10 minutes.")
         else:
 
             logger.info("Invoking Textract for %s", workorder_id)
