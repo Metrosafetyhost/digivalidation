@@ -314,8 +314,15 @@ def proof_plain_text(text, record_id):
         inp_words = plain_text.split()
         out_words = corrected.split()
         grew_too_much = len(out_words) > max(1, int(len(inp_words) * 1.2))
-        looks_like_advice = any(sym in corrected for sym in ["•", "-", ":", "Here are", "tips", "suggestions"])
-
+        looks_like_advice = (
+            corrected.startswith("Here are")
+            or corrected.startswith("Tips")
+            or corrected.startswith("Suggestions")
+            or "\n-" in corrected
+            or "\n•" in corrected
+            or corrected.strip().startswith("•")
+            or corrected.strip().startswith("- ")
+        )
         if grew_too_much or (short_input and looks_like_advice):
             logger.warning(
                 f"Plain-text proof rejected for record {record_id}: grew_too_much={grew_too_much}, "
