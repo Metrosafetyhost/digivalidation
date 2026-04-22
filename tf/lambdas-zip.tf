@@ -24,6 +24,7 @@ module "lambdas_zip" {
     "pdfqa_api",
     "blur_image",
     "geocoding",
+    "pdf_merge",
   ]
 
   # these are the Python files that get zipped
@@ -47,6 +48,7 @@ module "lambdas_zip" {
     "pdfqa_api.py",
     "blur_image.py",
     "geocoding.py",
+    "pdf_merge.py",
 
   ]
 
@@ -141,5 +143,6 @@ module "lambdas_zip" {
     emails                 = { handler = "process", timeout = 240, memory_size = 512 }
     nova_water             = { handler = "process", timeout = 900, memory_size = 512 }
     waterRiskCaseIngest    = { handler = "process", timeout = 900, memory_size = 512 }
+    pdf_merge              = {handler  = "process", timeout = 240, memory_size = 512 }
   }
 }
