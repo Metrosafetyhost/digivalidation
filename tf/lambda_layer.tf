@@ -1257,38 +1257,38 @@ resource "aws_location_place_index" "geocoding" {
   data_source = "Here" # or "Esri"
 }
 
-# data "aws_iam_role" "pdf_merge_role" {
-#   name = "bedrock-lambda-pdf_merge"
-# }
+data "aws_iam_role" "pdf_merge_role" {
+  name = "bedrock-lambda-pdf_merge"
+}
 
-# data "aws_iam_policy_document" "pdf_merge_s3_read_write_metrosafetyprod" {
-#   statement {
-#     sid       = "AllowListBucketMetroSafetyProd"
-#     effect    = "Allow"
-#     actions   = ["s3:ListBucket"]
-#     resources = ["arn:aws:s3:::metrosafetyprod"]
-#   }
+data "aws_iam_policy_document" "pdf_merge_s3_read_write_metrosafetyprod" {
+  statement {
+    sid       = "AllowListBucketMetroSafetyProd"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::metrosafetyprod"]
+  }
 
-#   statement {
-#     sid       = "AllowReadWriteObjectsMetroSafetyProd"
-#     effect    = "Allow"
-#     actions   = [
-#       "s3:GetObject",
-#       "s3:HeadObject",
-#       "s3:PutObject",
-#       "s3:DeleteObject"
-#     ]
-#     resources = ["arn:aws:s3:::metrosafetyprod/*"]
-#   }
-# }
+  statement {
+    sid       = "AllowReadWriteObjectsMetroSafetyProd"
+    effect    = "Allow"
+    actions   = [
+      "s3:GetObject",
+      "s3:HeadObject",
+      "s3:PutObject",
+      "s3:DeleteObject"
+    ]
+    resources = ["arn:aws:s3:::metrosafetyprod/*"]
+  }
+}
 
-# resource "aws_iam_policy" "pdf_merge_s3_read_write_metrosafetyprod" {
-#   name        = "PdfMergeS3ReadWriteMetroSafetyProd"
-#   description = "Allow pdf_merge Lambda to list, read, write and delete objects in metrosafetyprod"
-#   policy      = data.aws_iam_policy_document.pdf_merge_s3_read_write_metrosafetyprod.json
-# }
+resource "aws_iam_policy" "pdf_merge_s3_read_write_metrosafetyprod" {
+  name        = "PdfMergeS3ReadWriteMetroSafetyProd"
+  description = "Allow pdf_merge Lambda to list, read, write and delete objects in metrosafetyprod"
+  policy      = data.aws_iam_policy_document.pdf_merge_s3_read_write_metrosafetyprod.json
+}
 
-# resource "aws_iam_role_policy_attachment" "attach_pdf_merge_s3_read_write_metrosafetyprod" {
-#   role       = data.aws_iam_role.pdf_merge_role.name
-#   policy_arn = aws_iam_policy.pdf_merge_s3_read_write_metrosafetyprod.arn
-# }
+resource "aws_iam_role_policy_attachment" "attach_pdf_merge_s3_read_write_metrosafetyprod" {
+  role       = data.aws_iam_role.pdf_merge_role.name
+  policy_arn = aws_iam_policy.pdf_merge_s3_read_write_metrosafetyprod.arn
+}
