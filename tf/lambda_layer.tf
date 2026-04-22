@@ -1261,16 +1261,16 @@ data "aws_iam_role" "pdf_merge_role" {
   name = "bedrock-lambda-pdf_merge"
 }
 
-data "aws_iam_policy_document" "pdf_merge_s3_read_write_metrosafetyprod" {
+data "aws_iam_policy_document" "pdf_merge_s3_read_write_metrosafetyprodfiles" {
   statement {
-    sid       = "AllowListBucketMetroSafetyProd"
+    sid       = "AllowListBucketMetroSafetyProdFiles"
     effect    = "Allow"
     actions   = ["s3:ListBucket"]
-    resources = ["arn:aws:s3:::metrosafetyprod"]
+    resources = ["arn:aws:s3:::metrosafetyprodfiles"]
   }
 
   statement {
-    sid       = "AllowReadWriteObjectsMetroSafetyProd"
+    sid       = "AllowReadWriteObjectsMetroSafetyProdFiles"
     effect    = "Allow"
     actions   = [
       "s3:GetObject",
@@ -1278,17 +1278,17 @@ data "aws_iam_policy_document" "pdf_merge_s3_read_write_metrosafetyprod" {
       "s3:PutObject",
       "s3:DeleteObject"
     ]
-    resources = ["arn:aws:s3:::metrosafetyprod/*"]
+    resources = ["arn:aws:s3:::metrosafetyprodfiles/*"]
   }
 }
 
-resource "aws_iam_policy" "pdf_merge_s3_read_write_metrosafetyprod" {
-  name        = "PdfMergeS3ReadWriteMetroSafetyProd"
-  description = "Allow pdf_merge Lambda to list, read, write and delete objects in metrosafetyprod"
-  policy      = data.aws_iam_policy_document.pdf_merge_s3_read_write_metrosafetyprod.json
+resource "aws_iam_policy" "pdf_merge_s3_read_write_metrosafetyprodfiles" {
+  name        = "PdfMergeS3ReadWriteMetroSafetyProdFiles"
+  description = "Allow pdf_merge Lambda to list, read, write and delete objects in metrosafetyprodfiles"
+  policy      = data.aws_iam_policy_document.pdf_merge_s3_read_write_metrosafetyprodfiles.json
 }
 
-resource "aws_iam_role_policy_attachment" "attach_pdf_merge_s3_read_write_metrosafetyprod" {
+resource "aws_iam_role_policy_attachment" "attach_pdf_merge_s3_read_write_metrosafetyprodfiles" {
   role       = data.aws_iam_role.pdf_merge_role.name
-  policy_arn = aws_iam_policy.pdf_merge_s3_read_write_metrosafetyprod.arn
-}
+  policy_arn = aws_iam_policy.pdf_merge_s3_read_write_metrosafetyprodfiles.arn
+}x
