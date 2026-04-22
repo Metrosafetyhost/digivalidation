@@ -1291,4 +1291,4 @@ resource "aws_iam_policy" "pdf_merge_s3_read_write_metrosafetyprodfiles" {
 resource "aws_iam_role_policy_attachment" "attach_pdf_merge_s3_read_write_metrosafetyprodfiles" {
   role       = data.aws_iam_role.pdf_merge_role.name
   policy_arn = aws_iam_policy.pdf_merge_s3_read_write_metrosafetyprodfiles.arn
-}x
+}
