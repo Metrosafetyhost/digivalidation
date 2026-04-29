@@ -214,3 +214,31 @@ resource "aws_lambda_permission" "apigw_lambda_geocoding" {
   source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
 }
 
+# Integration for PDF Merge Lambda
+data "aws_lambda_function" "pdf_merge" {
+  function_name = "bedrock-lambda-pdf_merge"
+}
+
+resource "aws_apigatewayv2_integration" "pdf_merge_integration" {
+  api_id                 = aws_apigatewayv2_api.lambda_api.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = data.aws_lambda_function.pdf_merge.invoke_arn
+  payload_format_version = "2.0"
+}
+
+# Route for POST /pdf_merge
+resource "aws_apigatewayv2_route" "pdf_merge_route" {
+  api_id    = aws_apigatewayv2_api.lambda_api.id
+  route_key = "POST /pdf_merge"
+  target    = "integrations/${aws_apigatewayv2_integration.pdf_merge_integration.id}"
+}
+
+# Permission to allow API Gateway to invoke the PDF Merge Lambda
+resource "aws_lambda_permission" "apigw_lambda_pdf_merge" {
+  statement_id  = "AllowExecutionFromAPIGatewayPdfMerge"
+  action        = "lambda:InvokeFunction"
+  function_name = data.aws_lambda_function.pdf_merge.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
+}
+
