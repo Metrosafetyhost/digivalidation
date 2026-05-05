@@ -1276,7 +1276,6 @@ data "aws_iam_policy_document" "pdf_merge_s3_read_write_metrosafetyprodfiles" {
       "s3:GetObject",
       "s3:HeadObject",
       "s3:PutObject",
-      "s3:DeleteObject"
     ]
     resources = ["arn:aws:s3:::metrosafetyprodfiles/*"]
   }
