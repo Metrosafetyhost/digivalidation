@@ -60,11 +60,21 @@ def merge_pdfs(payload):
         report_local = "/tmp/report.pdf"
         output_local = "/tmp/merged.pdf"
 
-        print(f"Downloading front PDF from s3://{bucket}/{front_key}")
-        s3.download_file(bucket, front_key, front_local)
+        try:
+            print(f"Downloading front PDF from s3://{bucket}/{front_key}")
+            s3.download_file(bucket, front_key, front_local)
+        except Exception as e:
+            raise Exception(
+                f"Failed to download front PDF s3://{bucket}/{front_key}: {e}"
+            )
 
-        print(f"Downloading report PDF from s3://{bucket}/{report_key}")
-        s3.download_file(bucket, report_key, report_local)
+        try:
+            print(f"Downloading report PDF from s3://{bucket}/{report_key}")
+            s3.download_file(bucket, report_key, report_local)
+        except Exception as e:
+            raise Exception(
+                f"Failed to download report PDF s3://{bucket}/{report_key}: {e}"
+            )
 
         front_doc = pymupdf.open(front_local)
         report_doc = pymupdf.open(report_local)
@@ -104,10 +114,13 @@ def merge_pdfs(payload):
     finally:
         if front_doc is not None:
             front_doc.close()
+
         if report_doc is not None:
             report_doc.close()
+
         if merged_doc is not None:
             merged_doc.close()
+
 
 def generate_presigned_report_url(payload):
     bucket = payload["bucket"]
@@ -121,7 +134,10 @@ def generate_presigned_report_url(payload):
     print(f"Checking object exists: s3://{bucket}/{key}")
     s3.head_object(Bucket=bucket, Key=key)
 
-    print(f"Generating presigned URL for s3://{bucket}/{key} with expiry {expires_in} seconds")
+    print(
+        f"Generating presigned URL for s3://{bucket}/{key} "
+        f"with expiry {expires_in} seconds"
+    )
 
     presigned_url = s3.generate_presigned_url(
         ClientMethod="get_object",
@@ -129,7 +145,9 @@ def generate_presigned_report_url(payload):
             "Bucket": bucket,
             "Key": key,
             "ResponseContentType": "application/pdf",
-            "ResponseContentDisposition": f'attachment; filename="{download_file_name}"'
+            "ResponseContentDisposition": (
+                f'attachment; filename="{download_file_name}"'
+            )
         },
         ExpiresIn=expires_in,
         HttpMethod="GET"
