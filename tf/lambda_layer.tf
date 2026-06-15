@@ -1291,3 +1291,48 @@ resource "aws_iam_role_policy_attachment" "attach_pdf_merge_s3_read_write_metros
   role       = data.aws_iam_role.pdf_merge_role.name
   policy_arn = aws_iam_policy.pdf_merge_s3_read_write_metrosafetyprodfiles.arn
 }
+
+# fire_validation S3 read access for testFolder in metrosafetyprodfiles
+
+resource "aws_iam_policy" "fire_validation_s3_read_testfolder" {
+  name        = "FireValidationS3ReadTestFolder"
+  description = "Allow fire_validation Lambda to read HTML reports from metrosafetyprodfiles/testFolder/"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Sid    = "AllowListTestFolder"
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket"
+        ]
+        Resource = "arn:aws:s3:::metrosafetyprodfiles"
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              "testFolder",
+            ]
+          }
+        }
+      },
+      {
+        Sid    = "AllowReadTestFolderObjects"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject"
+        ]
+        Resource = "arn:aws:s3:::metrosafetyprodfiles/testFolder/*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "attach_fire_validation_s3_read_testfolder" {
+  role       = "bedrock-lambda-fire_validation"
+  policy_arn = aws_iam_policy.fire_validation_s3_read_testfolder.arn
+
+  depends_on = [
+    module.lambdas_zip
+  ]
+}
