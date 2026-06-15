@@ -25,6 +25,7 @@ module "lambdas_zip" {
     "blur_image",
     "geocoding",
     "pdf_merge",
+    "fire_validation",
   ]
 
   # these are the Python files that get zipped
@@ -49,7 +50,7 @@ module "lambdas_zip" {
     "blur_image.py",
     "geocoding.py",
     "pdf_merge.py",
-
+    "fire_validation.py",
   ]
 
   runtime       = "python3.13"
@@ -126,9 +127,8 @@ module "lambdas_zip" {
         SF_CALLBACK_SECRET_ARN = aws_secretsmanager_secret.sf_callback_secret.arn
         SF_OAUTH_SECRET_ARN    = aws_secretsmanager_secret.sf_oauth_secret.arn
       }
-  }
-
-    # All other lambdas 
+    }
+    # All other lambdas
     basic_event            = { handler = "process", timeout = 240, memory_size = 512 }
     bedrock                = { handler = "process", timeout = 240, memory_size = 512 }
     categorisation         = { handler = "process", timeout = 240, memory_size = 512 }
@@ -143,6 +143,7 @@ module "lambdas_zip" {
     emails                 = { handler = "process", timeout = 240, memory_size = 512 }
     nova_water             = { handler = "process", timeout = 900, memory_size = 512 }
     waterRiskCaseIngest    = { handler = "process", timeout = 900, memory_size = 512 }
-    pdf_merge              = {handler  = "process", timeout = 240, memory_size = 512 }
+    pdf_merge              = { handler = "process", timeout = 240, memory_size = 512 }
+    fire_validation = { handler     = "process", timeout     = 240, memory_size = 512 }
   }
 }
