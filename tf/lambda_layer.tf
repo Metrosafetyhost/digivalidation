@@ -1267,6 +1267,12 @@ data "aws_iam_policy_document" "pdf_merge_s3_read_write_metrosafetyprodfiles" {
     effect    = "Allow"
     actions   = ["s3:ListBucket"]
     resources = ["arn:aws:s3:::metrosafetyprodfiles"]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["WorkOrders/*"]
+    }
   }
 
   statement {
