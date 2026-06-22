@@ -14,11 +14,16 @@ s3 = boto3.client('s3', region_name=REGION)
 
 # Claude / Bedrock settings.
 # Set ENABLE_CLAUDE=true on the Lambda when you are ready to call Claude.
-ENABLE_CLAUDE = os.getenv('ENABLE_CLAUDE', 'true').lower() == 'true'
+ENABLE_CLAUDE = os.getenv('ENABLE_CLAUDE', 'false').lower() == 'true'
 CLAUDE_MODEL_ID = os.getenv(
     'CLAUDE_MODEL_ID',
     'anthropic.claude-3-7-sonnet-20250219-v1:0',
 )
+
+# Debug output setting.
+# false = cleaner final response
+# true = include full parsed sections, cases and evidence packs
+RETURN_DEBUG_DATA = os.getenv('RETURN_DEBUG_DATA', 'false').lower() == 'true'
 
 
 def _response(status_code, payload):
@@ -1149,23 +1154,53 @@ def _build_water_evidence_packs(parsed_report, cases):
     ]
 
 
+def _extract_answer_status(answer_text):
+    """
+    Pulls a simple status out of Claude's human-readable answer.
+
+    Claude is not required to return JSON, but this gives the Lambda
+    a useful top-level status for filtering/sorting.
+    """
+
+    text = _clean_text(answer_text).lower()
+
+    if 'status: pass' in text or text.startswith('pass'):
+        return 'pass'
+
+    if 'status: fail' in text or text.startswith('fail'):
+        return 'fail'
+
+    if 'status: warning' in text or text.startswith('warning'):
+        return 'warning'
+
+    if (
+        'status: not applicable' in text
+        or 'status: n/a' in text
+        or text.startswith('not applicable')
+    ):
+        return 'not_applicable'
+
+    return 'answered'
+
+
 def _call_claude_for_question(evidence_pack):
     """
     Calls Claude 3.7 Sonnet on AWS Bedrock.
 
-    Required Lambda env vars:
-    - ENABLE_CLAUDE=true
-    - AWS_REGION=eu-west-2
+    This version expects a human-readable answer, not strict JSON.
 
-    Optional Lambda env var:
-    - CLAUDE_MODEL_ID=anthropic.claude-3-7-sonnet-20250219-v1:0
+    The answer should explain:
+    - whether it is pass/fail/warning/not applicable
+    - why that decision was reached
+    - what evidence was used
     """
 
     if not ENABLE_CLAUDE:
         return {
             'questionId': evidence_pack['questionId'],
+            'question': evidence_pack['question'],
             'status': 'not_run',
-            'summary': 'Claude validation is disabled. Set ENABLE_CLAUDE=true to enable Bedrock calls.',
+            'answer': 'Claude validation is disabled. Set ENABLE_CLAUDE=true to enable Bedrock calls.',
         }
 
     bedrock = boto3.client('bedrock-runtime', region_name=REGION)
@@ -1173,42 +1208,40 @@ def _call_claude_for_question(evidence_pack):
     prompt = f"""
 You are validating a Metro Safety report.
 
-You must answer only using the evidence provided.
+Answer the validation question using only the evidence provided.
 Do not assume facts that are not present.
 Do not use outside knowledge.
-Return strict JSON only.
-Do not wrap the JSON in markdown.
 
-Important evidence rule:
+Important evidence rules:
 - For Significant Findings / Action Plan questions, use the Cases JSON as the source of truth.
 - Do not rely on HTML action-plan text where Cases JSON is provided.
 - Section numbers are evidence references only; do not assume a section's meaning from its number.
 
+Write the answer in this exact human-readable format:
+
+Status: Pass / Fail / Warning / Not applicable
+
+Why:
+Explain why this is a pass, fail, warning, or not applicable.
+- If it is a pass, explain what evidence proves it passes.
+- If it is a fail, explain exactly what is missing, incorrect, or incomplete.
+- If it is a warning, explain what is present but may need review.
+- If it is not applicable, explain why.
+
+Answer:
+Give a clear short answer to the validation question.
+
+Issues found:
+- List any issues found.
+- If there are no issues, say "No issues found."
+
+Evidence used:
+- Briefly list the evidence you used.
+- Include section titles and section numbers where useful.
+- If using Cases JSON, say "Cases JSON" clearly.
+
 Validation question:
 {evidence_pack['question']}
-
-Return this exact JSON shape:
-{{
-  "questionId": {evidence_pack['questionId']},
-  "status": "pass | fail | warning | not_applicable",
-  "confidence": "high | medium | low",
-  "summary": "Short summary of the finding",
-  "issues": [
-    {{
-      "severity": "high | medium | low",
-      "message": "What is wrong",
-      "recommendedFix": "How to fix it"
-    }}
-  ],
-  "evidenceUsed": [
-    {{
-      "source": "frontMatter | section | table | cases_json",
-      "sectionNumber": "Section number if available",
-      "sectionTitle": "Section title if available",
-      "detail": "Short evidence description"
-    }}
-  ]
-}}
 
 Evidence:
 {json.dumps(evidence_pack['evidence'], ensure_ascii=False)}
@@ -1216,7 +1249,7 @@ Evidence:
 
     request_body = {
         'anthropic_version': 'bedrock-2023-05-31',
-        'max_tokens': 1500,
+        'max_tokens': 2000,
         'temperature': 0,
         'messages': [
             {
@@ -1245,20 +1278,20 @@ Evidence:
     except (KeyError, IndexError, TypeError):
         return {
             'questionId': evidence_pack['questionId'],
+            'question': evidence_pack['question'],
             'status': 'error',
-            'summary': 'Claude response did not contain the expected content text.',
+            'answer': 'Claude response did not contain the expected content text.',
             'rawClaudeResponse': response_body,
         }
 
-    try:
-        return json.loads(claude_text)
-    except json.JSONDecodeError:
-        return {
-            'questionId': evidence_pack['questionId'],
-            'status': 'error',
-            'summary': 'Claude did not return valid JSON.',
-            'rawClaudeResponse': claude_text,
-        }
+    answer = claude_text.strip()
+
+    return {
+        'questionId': evidence_pack['questionId'],
+        'question': evidence_pack['question'],
+        'status': _extract_answer_status(answer),
+        'answer': answer,
+    }
 
 
 def _run_validations(parsed_report, cases, case_count, report_type):
@@ -1277,16 +1310,20 @@ def _run_validations(parsed_report, cases, case_count, report_type):
     else:
         evidence_packs = []
 
-    claude_results = []
+    question_answers = []
 
     for evidence_pack in evidence_packs:
-        claude_results.append(_call_claude_for_question(evidence_pack))
+        question_answers.append(_call_claude_for_question(evidence_pack))
 
-    return {
+    output = {
         'deterministicResults': validation_results,
-        'claudeResults': claude_results,
-        'evidencePacks': evidence_packs,
+        'questionAnswers': question_answers,
     }
+
+    if RETURN_DEBUG_DATA:
+        output['evidencePacks'] = evidence_packs
+
+    return output
 
 
 def process(event, context):
@@ -1326,11 +1363,13 @@ def process(event, context):
             'caseCount': case_count,
             'receivedCaseCount': len(cases),
             'summary': parsed_report['summary'],
-            'frontMatter': parsed_report['frontMatter'],
-            'sections': parsed_report['sections'],
-            'cases': cases,
             'validationResults': validation_results,
         }
+
+        if RETURN_DEBUG_DATA:
+            result['frontMatter'] = parsed_report['frontMatter']
+            result['sections'] = parsed_report['sections']
+            result['cases'] = cases
 
         return _response(200, result)
 
