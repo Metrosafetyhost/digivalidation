@@ -1342,3 +1342,39 @@ resource "aws_iam_role_policy_attachment" "attach_fire_validation_s3_read_testfo
     module.lambdas_zip
   ]
 }
+
+resource "aws_iam_policy" "fire_validation_bedrock_invoke" {
+  name        = "FireValidationBedrockInvokePolicy"
+  description = "Allow fire_validation Lambda to invoke Claude on Amazon Bedrock"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowInvokeClaude"
+        Effect = "Allow"
+        Action = [
+          "bedrock:InvokeModel"
+        ]
+        Resource = [
+          "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0"
+        ]
+      },
+      {
+        Sid    = "AllowGetFoundationModelForDebugging"
+        Effect = "Allow"
+        Action = [
+          "bedrock:GetFoundationModel"
+        ]
+        Resource = [
+          "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "attach_fire_validation_bedrock_invoke" {
+  role       = "bedrock-lambda-fire_validation"
+  policy_arn = aws_iam_policy.fire_validation_bedrock_invoke.arn
+}
