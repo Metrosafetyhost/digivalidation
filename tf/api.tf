@@ -242,3 +242,35 @@ resource "aws_lambda_permission" "apigw_lambda_pdf_merge" {
   source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
 }
 
+# Integration for new DigiValidation / file validation Lambda
+# This adds a brand-new route under the existing ProofingLambdaAPI + prod stage.
+# It does not reuse the old /digivalidation integration.
+
+data "aws_lambda_function" "new_digivalidation" {
+  function_name = "bedrock-lambda-fire_validation"
+}
+
+resource "aws_apigatewayv2_integration" "new_digivalidation_integration" {
+  api_id                 = aws_apigatewayv2_api.lambda_api.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = data.aws_lambda_function.new_digivalidation.invoke_arn
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "new_digivalidation_route" {
+  api_id    = aws_apigatewayv2_api.lambda_api.id
+  route_key = "POST /new_digivalidation"
+  target    = "integrations/${aws_apigatewayv2_integration.new_digivalidation_integration.id}"
+}
+
+resource "aws_lambda_permission" "apigw_lambda_new_digivalidation" {
+  statement_id  = "AllowExecutionFromAPIGatewayNewDigiValidation"
+  action        = "lambda:InvokeFunction"
+  function_name = data.aws_lambda_function.new_digivalidation.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
+}
+
+output "new_digivalidation_api_url" {
+  value = "${aws_apigatewayv2_api.lambda_api.api_endpoint}/${aws_apigatewayv2_stage.lambda_stage.name}/new_digivalidation"
+}
