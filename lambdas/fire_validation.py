@@ -14,7 +14,7 @@ s3 = boto3.client('s3', region_name=REGION)
 
 # Claude / Bedrock settings.
 # Set ENABLE_CLAUDE=true on the Lambda when you are ready to call Claude.
-ENABLE_CLAUDE = os.getenv('ENABLE_CLAUDE', 'false').lower() == 'true'
+ENABLE_CLAUDE = os.getenv('ENABLE_CLAUDE', 'true').lower() == 'true'
 CLAUDE_MODEL_ID = os.getenv(
     'CLAUDE_MODEL_ID',
     'anthropic.claude-3-7-sonnet-20250219-v1:0',
