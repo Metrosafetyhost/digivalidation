@@ -1,3 +1,18 @@
+"""
+Luke Gasson - Metro Safety Asset Text Categorisation Lambda
+
+Purpose:
+    Classifies asset description text into Salesforce-ready object type,
+    category, label, name, floor and testing instruction fields.
+
+Notes:
+    - Uses Amazon Bedrock for text classification.
+    - Normalises model output against Salesforce picklist values.
+    - Adds extra handling for common alias, label and floor-format variations.
+
+Author: Luke Gasson
+"""
+
 import json
 import boto3
 import logging
@@ -5,11 +20,11 @@ from botocore.client import Config
 import re
 from difflib import SequenceMatcher
 
-# initialise logging
+# Lambda logging setup
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# AWS clients
+# AWS clients used by the classifier
 bedrock = boto3.client('bedrock-runtime', region_name='eu-west-2')
 s3      = boto3.client(
     "s3",
@@ -26,14 +41,14 @@ def _norm(s: str) -> str:
 
 PHRASE_ALIASES: dict[str, dict[str, str]] = {
     "Emergency Light": {
-        # tube aliases
+        # Emergency-light tube aliases
         "fluro tube": "Fluorescent Tube",
         "fluoro tube": "Fluorescent Tube",
         "fluroescent tube": "Fluorescent Tube",
         "flourescent tube": "Fluorescent Tube",
         "florescent tube": "Fluorescent Tube",
 
-        # spotlight / spot variants (from your examples)
+        # Spotlight and spot-light input variants
         "led spotlight": "LED Spot Light",
         "led spot light": "LED Spot Light",
         "led spot": "LED Spot Light",
@@ -45,12 +60,12 @@ PHRASE_ALIASES: dict[str, dict[str, str]] = {
         "spot light": "Spot Light",
         "spotlight": "Spot Light",
 
-        # twin spot variants (from your examples)
+        # Twin-spot input variants
         "twin spot": "Twin Spots",
         "twinspot": "Twin Spots",
         "twin spots": "Twin Spots",
 
-        # square variants (from your examples)
+        # Square-fitting input variants
         "square light": "Square",
         "square fitting": "Square",
         "square unit": "Square",
@@ -67,19 +82,19 @@ PHRASE_ALIASES: dict[str, dict[str, str]] = {
     },
 
      "Fire Alarm Panel": {
-        # key panel plastic red
+        # Plastic red panel-key aliases
         "red plastic key": "Key Panel (Plastic RED)",
         "plastic red key": "Key Panel (Plastic RED)",
         "red key": "Key Panel (Plastic RED)",
 
-        # key panel 8227
+        # 827 panel-key aliases
         "827 key": "Key Panel (827)",
         "key 827": "Key Panel (827)",
         "panel 827 key": "Key Panel (827)",
     },
 }
 
-# normalising alias key 
+# Pre-normalise alias lookup keys.
 PHRASE_ALIASES = { 
     obj_type: {_norm(k): v for k, v in aliases.items()}
     for obj_type, aliases in PHRASE_ALIASES.items()
@@ -91,12 +106,12 @@ def extract_json_object(text: str) -> dict:
 
     s = text.strip()
 
-    # 1) If wrapped in ```json ... ``` or ``` ... ```
+    # 1) Handle responses wrapped in JSON/code fences.
     fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", s, flags=re.DOTALL | re.IGNORECASE)
     if fence:
         return json.loads(fence.group(1))
 
-    # 2) Otherwise, find first JSON object in the text (best-effort)
+    # 2) Otherwise, extract the first JSON object from the response.
     obj = re.search(r"(\{.*\})", s, flags=re.DOTALL)
     if obj:
         return json.loads(obj.group(1))
@@ -771,12 +786,12 @@ def process(event, context):
         try:
             out = classify_asset_text(txt)
 
-            # Floor canonicalisation (unchanged)
+            # Floor canonicalisation
             floor = extract_floor(txt)
             floor = to_picklist_or_none(floor)
             logger.info("Floor extracted: %s | from text: %s", floor, txt[:200])
 
-            out["Floor__c"] = floor  # append floor as before
+            out["Floor__c"] = floor
             results.append(out)
         except Exception as ex:
             logger.warning("process: classification error for input '%s': %s", txt, ex, exc_info=True)
@@ -784,7 +799,6 @@ def process(event, context):
 
     logger.info("<< process: returning results: %s", results)
 
-    # 4) Return bare JSON array
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "application/json"},

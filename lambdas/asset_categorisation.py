@@ -1,4 +1,18 @@
-# lambda_function.py
+"""
+Luke Gasson - Metro Safety Asset Photo Categorisation Lambda
+
+Purpose:
+    Classifies uploaded site asset photos and returns Salesforce-ready asset,
+    condition, pricing, supplier and building-context fields.
+
+Notes:
+    - Works with S3 object prefixes from Salesforce ContentVersion records.
+    - Uses an OpenAI vision model for asset identification and field extraction.
+    - Keeps the response order aligned with the incoming request order.
+
+Author: Luke Gasson
+"""
+
 import os
 import json
 import base64
@@ -7,7 +21,7 @@ from botocore.exceptions import ClientError
 from openai import OpenAI
 
 # ---------------------------
-# Config (matches your style)
+# Runtime configuration
 # ---------------------------
 S3_BUCKET = os.environ.get("ASSET_BUCKET", "metrosafetyprod")
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
@@ -19,12 +33,12 @@ def _load_openai_key():
         val = sm.get_secret_value(SecretId=arn)
         s = val.get("SecretString")
         return s if s is not None else base64.b64decode(val["SecretBinary"]).decode()
-    return os.environ.get("OPENAI_API_KEY")  # fallback
+    return os.environ.get("OPENAI_API_KEY")  # local/dev fallback
 
 OPENAI_API_KEY = _load_openai_key()
 
 # ---------------------------
-# Prompts (tweak as you like)
+# Model prompt and output contract
 # ---------------------------
 SYSTEM_PROMPT = (
     "You are a safety asset classifier for UK sites. "
@@ -132,10 +146,10 @@ SYSTEM_PROMPT = (
     "- Is concise, practical, commercially useful, and tailored to the identified asset\n"
 )
 
-USER_INSTRUCTION =  "Respond ONLY with a compact single JSON object containing all fields listed in the system prompt" #Respond ONLY with a single JSON object containing all fields listed in the system prompt. Use full, detailed text for Obsequio_cross_sell_long__c. Do not include any text outside the JSON."
+USER_INSTRUCTION = "Respond ONLY with a compact single JSON object containing all fields listed in the system prompt"
 
 # ---------------------------
-# Clients
+# AWS and OpenAI clients
 # ---------------------------
 s3 = boto3.client("s3")
 oai = OpenAI(api_key=OPENAI_API_KEY)
@@ -314,7 +328,7 @@ OBJECT_MAP: dict[str, list[str]] = {
 }
 
 # ---------------------------
-# Helpers
+# Helper functions
 # ---------------------------
 def find_key_by_prefix(prefix: str) -> str | None:
     """
@@ -517,7 +531,7 @@ def parse_incoming(event):
     return payload
 
 # ---------------------------
-# Handler
+# Lambda entry point
 # ---------------------------
 def process(event, context):
     print("=== Incoming Event ===")
