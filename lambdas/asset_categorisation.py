@@ -16,6 +16,9 @@ Author: Luke Gasson
 import os
 import json
 import base64
+import logging
+import time
+import traceback
 import boto3
 from botocore.exceptions import ClientError
 from openai import OpenAI
@@ -25,6 +28,75 @@ from openai import OpenAI
 # ---------------------------
 S3_BUCKET = os.environ.get("ASSET_BUCKET", "metrosafetyprod")
 MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+
+logger = logging.getLogger()
+logger.setLevel(LOG_LEVEL)
+
+SENSITIVE_HEADER_NAMES = {
+    "authorization",
+    "cookie",
+    "x-api-key",
+    "x-amz-security-token",
+}
+
+def log_event(level: str, message: str, **fields):
+    """
+    Emit one structured JSON log line for CloudWatch Logs Insights.
+    Do not log API keys, presigned URLs, or full image payloads.
+    """
+    payload = {"message": message, **fields}
+    logger.log(getattr(logging, level.upper(), logging.INFO), json.dumps(payload, default=str))
+
+def safe_headers(headers: dict | None) -> dict:
+    safe = {}
+    for k, v in (headers or {}).items():
+        if str(k).lower() in SENSITIVE_HEADER_NAMES:
+            safe[k] = "***REDACTED***"
+        else:
+            safe[k] = v
+    return safe
+
+def safe_event_summary(event: dict) -> dict:
+    """
+    Keep the useful request information, but avoid dumping huge/noisy API Gateway payloads.
+    """
+    if not isinstance(event, dict):
+        return {"event_type": type(event).__name__}
+
+    body = event.get("body")
+    body_summary = {"present": body is not None}
+    if body is not None:
+        body_summary["length"] = len(body) if isinstance(body, str) else None
+        try:
+            decoded_body = body
+            if event.get("isBase64Encoded") and isinstance(body, str):
+                decoded_body = base64.b64decode(body).decode("utf-8")
+            parsed_body = json.loads(decoded_body) if isinstance(decoded_body, str) else decoded_body
+            if isinstance(parsed_body, list):
+                body_summary["item_count"] = len(parsed_body)
+                body_summary["content_version_ids"] = [
+                    (item or {}).get("ContentVersionId") for item in parsed_body if isinstance(item, dict)
+                ]
+                body_summary["has_building_address"] = [
+                    bool((item or {}).get("BuildingAddress")) for item in parsed_body if isinstance(item, dict)
+                ]
+            else:
+                body_summary["parsed_type"] = type(parsed_body).__name__
+        except Exception as e:
+            body_summary["parse_error"] = str(e)
+
+    return {
+        "resource": event.get("resource"),
+        "path": event.get("path"),
+        "httpMethod": event.get("httpMethod"),
+        "requestId": (event.get("requestContext") or {}).get("requestId"),
+        "sourceIp": ((event.get("requestContext") or {}).get("identity") or {}).get("sourceIp"),
+        "userAgent": ((event.get("requestContext") or {}).get("identity") or {}).get("userAgent"),
+        "headers": safe_headers(event.get("headers")),
+        "body": body_summary,
+        "isBase64Encoded": event.get("isBase64Encoded"),
+    }
 
 def _load_openai_key():
     arn = os.environ.get("OPENAI_SECRET_ARN")
@@ -334,26 +406,65 @@ def find_key_by_prefix(prefix: str) -> str | None:
     """
     Return the most recently modified S3 key whose name starts with the given prefix.
     """
+    started = time.time()
+    log_event("INFO", "s3_lookup_started", bucket=S3_BUCKET, prefix=prefix)
     try:
         paginator = s3.get_paginator("list_objects_v2")
         latest_key, latest_ts = None, 0.0
+        page_count = 0
+        object_count = 0
+
         for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix):
-            for obj in page.get("Contents", []):
+            page_count += 1
+            contents = page.get("Contents", [])
+            object_count += len(contents)
+            for obj in contents:
                 ts = obj["LastModified"].timestamp()
                 if ts > latest_ts:
                     latest_ts = ts
                     latest_key = obj["Key"]
+
+        log_event(
+            "INFO",
+            "s3_lookup_finished",
+            bucket=S3_BUCKET,
+            prefix=prefix,
+            found=bool(latest_key),
+            latest_key=latest_key,
+            pages_scanned=page_count,
+            objects_matched=object_count,
+            duration_ms=round((time.time() - started) * 1000, 2),
+        )
         return latest_key
     except ClientError as e:
-        print(f"S3 list error for prefix {prefix}: {e}")
+        log_event(
+            "ERROR",
+            "s3_lookup_failed",
+            bucket=S3_BUCKET,
+            prefix=prefix,
+            error_code=e.response.get("Error", {}).get("Code"),
+            error_message=str(e),
+            duration_ms=round((time.time() - started) * 1000, 2),
+        )
         return None
 
 def presign(key: str, seconds: int = 900) -> str:
-    return s3.generate_presigned_url(
+    started = time.time()
+    url = s3.generate_presigned_url(
         ClientMethod="get_object",
         Params={"Bucket": S3_BUCKET, "Key": key},
         ExpiresIn=seconds,
     )
+    log_event(
+        "INFO",
+        "s3_presign_created",
+        bucket=S3_BUCKET,
+        key=key,
+        expires_in_seconds=seconds,
+        url_length=len(url),
+        duration_ms=round((time.time() - started) * 1000, 2),
+    )
+    return url
 
 # EXACT picklist values from Salesforce (API values must match these)
 ASSET_CONDITION_VALUES = [
@@ -396,6 +507,16 @@ def normalize_asset_condition(text: str) -> str:
     return "C2 - Minor Defects Only"
 
 def call_openai(image_url: str, building_address: str) -> dict:
+    started = time.time()
+    log_event(
+        "INFO",
+        "openai_request_started",
+        model=MODEL,
+        has_api_key=bool(OPENAI_API_KEY),
+        has_building_address=bool(building_address),
+        object_map_keys=len(OBJECT_MAP),
+    )
+
     resp = oai.chat.completions.create(
         model=MODEL,
         messages=[
@@ -411,6 +532,20 @@ def call_openai(image_url: str, building_address: str) -> dict:
     )
     text = resp.choices[0].message.content.strip()
 
+    usage = getattr(resp, "usage", None)
+    log_event(
+        "INFO",
+        "openai_response_received",
+        model=MODEL,
+        response_id=getattr(resp, "id", None),
+        finish_reason=getattr(resp.choices[0], "finish_reason", None),
+        response_chars=len(text),
+        prompt_tokens=getattr(usage, "prompt_tokens", None) if usage else None,
+        completion_tokens=getattr(usage, "completion_tokens", None) if usage else None,
+        total_tokens=getattr(usage, "total_tokens", None) if usage else None,
+        duration_ms=round((time.time() - started) * 1000, 2),
+    )
+
     # Strip common code fences
     if text.startswith("```"):
         parts = text.split("```")
@@ -421,7 +556,21 @@ def call_openai(image_url: str, building_address: str) -> dict:
     try:
         data = json.loads(text)
         data["Asset_Condition__c"] = normalize_asset_condition(data.get("Asset_Condition__c"))
-    except Exception:
+        log_event(
+            "INFO",
+            "openai_json_parsed",
+            returned_keys=len(data),
+            object_type=data.get("Object_Type_AI__c"),
+            object_category=data.get("Object_Category_AI__c"),
+            confidence=data.get("Confidence__c"),
+        )
+    except Exception as e:
+        log_event(
+            "ERROR",
+            "openai_json_parse_failed",
+            error_message=str(e),
+            raw_response_excerpt=text[:1000],
+        )
         data = {"_raw_response": text}
 
     # Ensure all keys present; coerce Confidence__c
@@ -519,26 +668,65 @@ def parse_incoming(event):
     Expect: [{ "ContentVersionId": "<prefix>" }, ...]
     """
     payload = event
+    log_event("INFO", "parse_started", event_type=type(event).__name__)
+
     if isinstance(event, dict) and "body" in event:
         body = event["body"]
+        log_event(
+            "INFO",
+            "api_gateway_body_detected",
+            body_length=len(body) if isinstance(body, str) else None,
+            is_base64_encoded=bool(event.get("isBase64Encoded")),
+        )
         if event.get("isBase64Encoded"):
             body = base64.b64decode(body).decode("utf-8")
         payload = json.loads(body)
+
     if isinstance(payload, str):
+        log_event("INFO", "string_payload_detected", payload_length=len(payload))
         payload = json.loads(payload)
+
     if not isinstance(payload, list):
         raise ValueError("Payload must be a JSON array.")
+
+    log_event(
+        "INFO",
+        "parse_finished",
+        item_count=len(payload),
+        content_version_ids=[(item or {}).get("ContentVersionId") for item in payload if isinstance(item, dict)],
+    )
     return payload
 
 # ---------------------------
 # Lambda entry point
 # ---------------------------
 def process(event, context):
-    print("=== Incoming Event ===")
-    print(json.dumps(event, indent=2))
+    request_started = time.time()
+    aws_request_id = getattr(context, "aws_request_id", None)
+
+    log_event(
+        "INFO",
+        "lambda_invocation_started",
+        aws_request_id=aws_request_id,
+        function_name=getattr(context, "function_name", None),
+        function_version=getattr(context, "function_version", None),
+        memory_limit_mb=getattr(context, "memory_limit_in_mb", None),
+        bucket=S3_BUCKET,
+        model=MODEL,
+        has_openai_api_key=bool(OPENAI_API_KEY),
+        event=safe_event_summary(event),
+    )
+
     try:
         items = parse_incoming(event)
     except Exception as e:
+        log_event(
+            "ERROR",
+            "bad_request",
+            aws_request_id=aws_request_id,
+            error_message=str(e),
+            traceback=traceback.format_exc(),
+        )
         return {
             "statusCode": 400,
             "headers": {"Content-Type": "application/json"},
@@ -546,28 +734,84 @@ def process(event, context):
         }
 
     results = []
-    for item in items:
+    for index, item in enumerate(items):
+        item_started = time.time()
         prefix = (item or {}).get("ContentVersionId")
+        building_address = (item or {}).get("BuildingAddress")
+
+        log_event(
+            "INFO",
+            "item_processing_started",
+            aws_request_id=aws_request_id,
+            index=index,
+            prefix=prefix,
+            has_building_address=bool(building_address),
+        )
+
         if not prefix:
-            results.append(make_error_result("Missing ContentVersionId"))
+            msg = "Missing ContentVersionId"
+            log_event("ERROR", "item_failed", aws_request_id=aws_request_id, index=index, error_message=msg)
+            results.append(make_error_result(msg))
             continue
 
         key = find_key_by_prefix(prefix)
         if not key:
-            results.append(make_error_result(f"No S3 object for prefix '{prefix}'"))
+            msg = f"No S3 object for prefix '{prefix}'"
+            log_event("ERROR", "item_failed", aws_request_id=aws_request_id, index=index, prefix=prefix, error_message=msg)
+            results.append(make_error_result(msg))
             continue
 
         try:
             url = presign(key)
-            building_address = item.get("BuildingAddress")
             fields = call_openai(url, building_address)
             results.append(fields)
+            log_event(
+                "INFO",
+                "item_processing_finished",
+                aws_request_id=aws_request_id,
+                index=index,
+                prefix=prefix,
+                s3_key=key,
+                object_type=fields.get("Object_Type_AI__c"),
+                object_category=fields.get("Object_Category_AI__c"),
+                confidence=fields.get("Confidence__c"),
+                has_error="_error" in fields,
+                has_raw_response="_raw_response" in fields,
+                duration_ms=round((time.time() - item_started) * 1000, 2),
+            )
         except Exception as e:
-            results.append(make_error_result(f"Inference failed: {e}"))
+            msg = f"Inference failed: {e}"
+            log_event(
+                "ERROR",
+                "item_failed",
+                aws_request_id=aws_request_id,
+                index=index,
+                prefix=prefix,
+                s3_key=key,
+                error_message=msg,
+                traceback=traceback.format_exc(),
+                duration_ms=round((time.time() - item_started) * 1000, 2),
+            )
+            results.append(make_error_result(msg))
+
+    error_count = sum(1 for r in results if "_error" in r or "_raw_response" in r)
+    response_body = json.dumps(results)
+
+    log_event(
+        "INFO" if error_count == 0 else "ERROR",
+        "lambda_invocation_finished",
+        aws_request_id=aws_request_id,
+        status_code=200,
+        item_count=len(results),
+        error_count=error_count,
+        response_body_chars=len(response_body),
+        response_preview=response_body[:4000],
+        duration_ms=round((time.time() - request_started) * 1000, 2),
+    )
 
     # Return array in SAME ORDER to match Apex's index-based mapping
     return {
         "statusCode": 200,
         "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(results)
+        "body": response_body
     }
