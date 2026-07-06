@@ -26,6 +26,7 @@ module "lambdas_zip" {
     "geocoding",
     "pdf_merge",
     "fire_validation",
+    "archive_viewer",
   ]
 
   # these are the Python files that get zipped
@@ -51,6 +52,7 @@ module "lambdas_zip" {
     "geocoding.py",
     "pdf_merge.py",
     "fire_validation.py",
+    "archive_viewer.py",
   ]
 
   runtime       = "python3.13"
@@ -128,6 +130,17 @@ module "lambdas_zip" {
         SF_OAUTH_SECRET_ARN    = aws_secretsmanager_secret.sf_oauth_secret.arn
       }
     }
+
+    archive_viewer = {
+    handler     = "process"
+    timeout     = 30
+    memory_size = 256
+
+    lambda_environment = {
+      ARCHIVE_BUCKET = "metrosafety-salesforce-archive"
+      ARCHIVE_PREFIX = "salesforce/workorders"
+    }
+  }
     # All other lambdas
     basic_event            = { handler = "process", timeout = 240, memory_size = 512 }
     bedrock                = { handler = "process", timeout = 240, memory_size = 512 }
@@ -144,6 +157,6 @@ module "lambdas_zip" {
     nova_water             = { handler = "process", timeout = 900, memory_size = 512 }
     waterRiskCaseIngest    = { handler = "process", timeout = 900, memory_size = 512 }
     pdf_merge              = { handler = "process", timeout = 240, memory_size = 512 }
-    fire_validation = { handler     = "process", timeout     = 240, memory_size = 512 }
+    fire_validation        = { handler = "process", timeout = 240, memory_size = 512 }
   }
 }

@@ -1378,3 +1378,32 @@ resource "aws_iam_role_policy_attachment" "attach_fire_validation_bedrock_invoke
   role       = "bedrock-lambda-fire_validation"
   policy_arn = aws_iam_policy.fire_validation_bedrock_invoke.arn
 }
+
+
+resource "aws_iam_policy" "archive_viewer_s3_read" {
+  name        = "${var.namespace}-${var.env}-archive-viewer-s3-read"
+  description = "Allow archive_viewer Lambda to read archived Salesforce Work Order manifests"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowReadArchivedWorkOrderManifests"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject"
+        ]
+        Resource = "arn:aws:s3:::metrosafety-salesforce-archive/salesforce/workorders/*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "attach_archive_viewer_s3_read" {
+  role       = "bedrock-lambda-archive_viewer"
+  policy_arn = aws_iam_policy.archive_viewer_s3_read.arn
+
+  depends_on = [
+    module.lambdas_zip
+  ]
+}
