@@ -1388,6 +1388,21 @@ resource "aws_iam_policy" "archive_viewer_s3_read" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid    = "AllowListArchiveBucketWorkOrdersPrefix"
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket"
+        ]
+        Resource = "arn:aws:s3:::metrosafety-salesforce-archive"
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              "salesforce/workorders/*"
+            ]
+          }
+        }
+      },
+      {
         Sid    = "AllowReadArchivedWorkOrderManifests"
         Effect = "Allow"
         Action = [
