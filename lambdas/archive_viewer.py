@@ -1,6 +1,7 @@
 import json
 import os
 import boto3
+from botocore.exceptions import ClientError
 
 s3 = boto3.client("s3")
 
@@ -18,6 +19,14 @@ def _response(status_code, body):
     }
 
 
+def _get_json_from_s3(key):
+    obj = s3.get_object(
+        Bucket=ARCHIVE_BUCKET,
+        Key=key
+    )
+    return json.loads(obj["Body"].read().decode("utf-8"))
+
+
 def process(event, context):
     try:
         path_params = event.get("pathParameters") or {}
@@ -28,24 +37,39 @@ def process(event, context):
                 "error": "Missing workOrderId"
             })
 
-        key = f"{ARCHIVE_PREFIX}/{work_order_id}/manifest.json"
+        raw_path = event.get("rawPath", "")
 
-        obj = s3.get_object(
-            Bucket=ARCHIVE_BUCKET,
-            Key=key
-        )
+        if raw_path.endswith("/risk-assessment-questions"):
+            filename = "risk_assessment_questions.json"
+        else:
+            filename = "manifest.json"
 
-        manifest = json.loads(obj["Body"].read().decode("utf-8"))
+        key = f"{ARCHIVE_PREFIX}/{work_order_id}/{filename}"
 
-        return _response(200, manifest)
+        data = _get_json_from_s3(key)
 
-    except s3.exceptions.NoSuchKey:
-        return _response(404, {
-            "error": "Archive manifest not found"
+        return _response(200, data)
+
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code")
+
+        if error_code in ["NoSuchKey", "NoSuchBucket", "404"]:
+            return _response(404, {
+                "error": "Archive file not found"
+            })
+
+        if error_code == "AccessDenied":
+            return _response(403, {
+                "error": "Lambda does not have permission to read the archive file"
+            })
+
+        return _response(500, {
+            "error": "S3 error while retrieving archive file",
+            "details": str(e)
         })
 
     except Exception as e:
         return _response(500, {
-            "error": "Failed to retrieve archive manifest",
+            "error": "Failed to retrieve archive file",
             "details": str(e)
         })
