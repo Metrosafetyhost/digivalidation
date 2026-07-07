@@ -308,3 +308,9 @@ resource "aws_lambda_permission" "apigw_lambda_archive_viewer" {
 output "archive_viewer_api_url" {
   value = "${aws_apigatewayv2_api.lambda_api.api_endpoint}/${aws_apigatewayv2_stage.lambda_stage.name}/archive/workorders/{workOrderId}"
 }
+
+resource "aws_apigatewayv2_route" "archive_viewer_risk_assessment_questions_route" {
+  api_id    = aws_apigatewayv2_api.lambda_api.id
+  route_key = "GET /archive/workorders/{workOrderId}/risk-assessment-questions"
+  target    = "integrations/${aws_apigatewayv2_integration.archive_viewer_integration.id}"
+}
