@@ -314,3 +314,9 @@ resource "aws_apigatewayv2_route" "archive_viewer_risk_assessment_questions_rout
   route_key = "GET /archive/workorders/{workOrderId}/risk-assessment-questions"
   target    = "integrations/${aws_apigatewayv2_integration.archive_viewer_integration.id}"
 }
+
+resource "aws_apigatewayv2_route" "archive_viewer_answers_route" {
+  api_id    = aws_apigatewayv2_api.lambda_api.id
+  route_key = "GET /archive/workorders/{workOrderId}/answers"
+  target    = "integrations/${aws_apigatewayv2_integration.archive_viewer_integration.id}"
+}
