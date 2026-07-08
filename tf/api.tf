@@ -326,3 +326,9 @@ resource "aws_apigatewayv2_route" "archive_viewer_forms_route" {
   route_key = "GET /archive/workorders/{workOrderId}/forms"
   target    = "integrations/${aws_apigatewayv2_integration.archive_viewer_integration.id}"
 }
+
+resource "aws_apigatewayv2_route" "archive_viewer_work_order_files_route" {
+  api_id    = aws_apigatewayv2_api.lambda_api.id
+  route_key = "GET /archive/workorders/{workOrderId}/work-order-files"
+  target    = "integrations/${aws_apigatewayv2_integration.archive_viewer_integration.id}"
+}

@@ -45,6 +45,8 @@ def process(event, context):
             filename = "forms.json"
         elif raw_path.endswith("/answers"):
             filename = "answers.json"
+        elif raw_path.endswith("/work-order-files"):
+            filename = "work_order_files.json"
         else:
             filename = "manifest.json"
 
