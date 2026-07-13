@@ -332,3 +332,37 @@ resource "aws_apigatewayv2_route" "archive_viewer_work_order_files_route" {
   route_key = "GET /archive/workorders/{workOrderId}/work-order-files"
   target    = "integrations/${aws_apigatewayv2_integration.archive_viewer_integration.id}"
 }
+
+resource "aws_apigatewayv2_integration" "s3_file_viewer" {
+  api_id = aws_apigatewayv2_api.lambda_api.id
+
+  integration_type       = "AWS_PROXY"
+  integration_uri        = module.lambdas_zip.lambda_function_arns["s3_file_viewer"]
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "list_work_order_files" {
+  api_id = aws_apigatewayv2_api.lambda_api.id
+
+  route_key = "GET /files/workorders/{workOrderId}"
+  target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+}
+
+resource "aws_apigatewayv2_route" "open_work_order_file" {
+  api_id = aws_apigatewayv2_api.lambda_api.id
+
+  route_key = "GET /files/workorders/{workOrderId}/open"
+  target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+}
+
+resource "aws_lambda_permission" "apigw_lambda_s3_file_viewer" {
+  statement_id  = "AllowExecutionFromAPIGatewayS3FileViewer"
+  action        = "lambda:InvokeFunction"
+  function_name = module.lambdas_zip.lambda_function_names["s3_file_viewer"]
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
+
+  depends_on = [
+    module.lambdas_zip
+  ]
+}

@@ -27,6 +27,7 @@ module "lambdas_zip" {
     "pdf_merge",
     "fire_validation",
     "archive_viewer",
+    "s3_file_viewer",
   ]
 
   # these are the Python files that get zipped
@@ -53,6 +54,7 @@ module "lambdas_zip" {
     "pdf_merge.py",
     "fire_validation.py",
     "archive_viewer.py",
+    "s3_file_viewer.py",
   ]
 
   runtime       = "python3.13"
@@ -132,14 +134,27 @@ module "lambdas_zip" {
     }
 
     archive_viewer = {
-    handler     = "process"
-    timeout     = 30
-    memory_size = 256
+      handler     = "process"
+      timeout     = 30
+      memory_size = 256
 
-    lambda_environment = {
-      ARCHIVE_BUCKET = "metrosafety-salesforce-archive"
-      ARCHIVE_PREFIX = "salesforce/workorders"
+      lambda_environment = {
+        ARCHIVE_BUCKET = "metrosafety-salesforce-archive"
+        ARCHIVE_PREFIX = "salesforce/workorders"
+      }
+
+    s3_file_viewer = {
+      handler     = "process"
+      timeout     = 30
+      memory_size = 256
+
+      lambda_environment = {
+        FILE_BUCKET           = "metrosafetyprodfiles"
+        WORK_ORDER_PREFIX     = "WorkOrders"
+        PRESIGNED_URL_SECONDS = "300"
+      }
     }
+    
   }
     # All other lambdas
     basic_event            = { handler = "process", timeout = 240, memory_size = 512 }

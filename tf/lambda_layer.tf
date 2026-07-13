@@ -1422,3 +1422,52 @@ resource "aws_iam_role_policy_attachment" "attach_archive_viewer_s3_read" {
     module.lambdas_zip
   ]
 }
+
+resource "aws_iam_policy" "s3_file_viewer_read" {
+  name        = "${var.namespace}-${var.env}-s3-file-viewer-read"
+  description = "Allow the S3 file viewer to list and open Work Order files"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Sid    = "ListWorkOrderObjects"
+        Effect = "Allow"
+
+        Action = [
+          "s3:ListBucket"
+        ]
+
+        Resource = "arn:aws:s3:::metrosafetyprodfiles"
+
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              "WorkOrders/*"
+            ]
+          }
+        }
+      },
+      {
+        Sid    = "ReadWorkOrderObjects"
+        Effect = "Allow"
+
+        Action = [
+          "s3:GetObject"
+        ]
+
+        Resource = "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "attach_s3_file_viewer_read" {
+  role       = "bedrock-lambda-s3_file_viewer"
+  policy_arn = aws_iam_policy.s3_file_viewer_read.arn
+
+  depends_on = [
+    module.lambdas_zip
+  ]
+}
