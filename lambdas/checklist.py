@@ -287,7 +287,8 @@ def process(event, context):
 
             # ─── (3) Write combined JSON to S3: processed/<pdfName>.json ─────────
             output_bucket = os.environ.get("CHECKLIST_OUTPUT_BUCKET", "textract-output-digival")
-            pdf_base      = document_key.split("/")[-1].replace(".pdf", ".json")
+            document_name = document_key.rsplit("/", 1)[-1]
+            pdf_base      = document_name.rsplit(".", 1)[0] + ".json"
             processed_key = f"processed/{pdf_base}"
             combined_body = {"document": document_key, "sections": secs}
 
@@ -371,7 +372,8 @@ def process(event, context):
         logger.info("Grouped into %d sections for %s", len(secs), document_key)
 
         
-        pdf_base      = document_key.split("/")[-1].replace(".pdf", ".json")
+        document_name = document_key.rsplit("/", 1)[-1]
+        pdf_base      = document_name.rsplit(".", 1)[0] + ".json"
         processed_key = f"processed/{pdf_base}"
         combined_body = {"document": document_key, "sections": secs}
 

@@ -513,6 +513,43 @@ def marker_is_fresh(bucket: str, key: str, ttl_minutes: int = 10) -> bool:
             return False
         logger.error(f"Error checking marker {key}: {e}")
         return False
+
+
+def is_pdf_object(bucket: str, key: str) -> bool:
+    """Identify a PDF from its file signature, regardless of its S3 filename."""
+    try:
+        response = s3_client.get_object(
+            Bucket=bucket,
+            Key=key,
+            Range="bytes=0-4"
+        )
+        return response["Body"].read() == b"%PDF-"
+    except Exception as exc:
+        logger.warning("Could not inspect s3://%s/%s as a PDF: %s", bucket, key, exc)
+        return False
+
+
+def create_textract_pdf_copy(bucket: str, source_obj: dict, workorder_id: str) -> str:
+    """Copy an uploaded PDF to a predictable key that always ends in .pdf."""
+    source_key = source_obj["Key"]
+    etag = source_obj.get("ETag", "latest").strip('"')
+    safe_key = f"TextractInput/{workorder_id}/{etag}.pdf"
+
+    s3_client.copy_object(
+        Bucket=bucket,
+        CopySource={"Bucket": bucket, "Key": source_key},
+        Key=safe_key,
+        ContentType="application/pdf",
+        MetadataDirective="REPLACE"
+    )
+
+    logger.info(
+        "Created Textract PDF copy: s3://%s/%s (original: %s)",
+        bucket,
+        safe_key,
+        source_key
+    )
+    return safe_key
     
 def make_diff(original: str, proofed: str) -> str:
     """
@@ -763,28 +800,23 @@ def process(event, context):
             logger.info("Invoking Textract for %s", workorder_id)
 
             logger.info("Creating new marker %s", marker_key)
-            resp     = s3_client.list_objects_v2(Bucket=PDF_BUCKET, Prefix=prefix)
-            contents = resp.get("Contents", [])
+            paginator = s3_client.get_paginator("list_objects_v2")
+            contents = []
+            for page in paginator.paginate(Bucket=PDF_BUCKET, Prefix=prefix):
+                contents.extend(page.get("Contents", []))
+
             valid_objs = [
                 obj for obj in contents
                 if not obj["Key"].endswith(".textract_ran")
                    and not obj["Key"].lower().endswith((".xlsx", ".xls", ".csv"))
+                   and is_pdf_object(PDF_BUCKET, obj["Key"])
             ]
             if not valid_objs:
-                logger.error("No suitable document found under %s", prefix)
-                return {"statusCode": 400, "body": "No document file to process."}
+                logger.error("No PDF document found under %s", prefix)
+                return {"statusCode": 400, "body": "No PDF document to process."}
 
             newest  = max(valid_objs, key=lambda o: o["LastModified"])
-            doc_key = newest["Key"]
-
-            # write a fresh marker
-            s3_client.put_object(
-                Bucket=PDF_BUCKET,
-                Key=marker_key,
-                Body=b"",
-                Tagging="marker=textract_ran"
-            )
-            logger.info("Wrote marker %s; invoking Textract…", marker_key)
+            doc_key = create_textract_pdf_copy(PDF_BUCKET, newest, workorder_id)
 
             # fire off your proofing lambda
             payload = {
@@ -797,11 +829,25 @@ def process(event, context):
                 "resourceName":   resourceName,
                 "workTypeRef":    workTypeRef,
             }
-            lambda_client.invoke(
+            invoke_response = lambda_client.invoke(
                 FunctionName=PROOFING_CHECKLIST_ARN,
                 InvocationType="Event",
                 Payload=json.dumps(payload).encode("utf-8")
             )
+
+            if invoke_response.get("StatusCode") != 202:
+                raise RuntimeError(
+                    f"Checklist Lambda invocation was not accepted: {invoke_response.get('StatusCode')}"
+                )
+
+            # Only suppress duplicate runs after the checklist Lambda accepted the request.
+            s3_client.put_object(
+                Bucket=PDF_BUCKET,
+                Key=marker_key,
+                Body=b"",
+                Tagging="marker=textract_ran"
+            )
+            logger.info("Wrote marker %s after invoking Textract workflow", marker_key)
 
     # 4) return proofed JSON every time
     return {
