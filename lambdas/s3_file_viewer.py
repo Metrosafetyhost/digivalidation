@@ -30,6 +30,10 @@ PRESIGNED_URL_SECONDS = int(
     )
 )
 
+BUILDING_ASSESSMENT_PATH = (
+    "/Compliance Documents/Fire/Assessment/"
+)
+
 IGNORED_FILE_NAMES = {
     ".textract_ran",
     "textract_ran",
@@ -51,6 +55,7 @@ def get_path_parameter(
     parameter_name: str
 ) -> str | None:
     path_parameters = event.get("pathParameters") or {}
+
     return path_parameters.get(parameter_name)
 
 
@@ -70,8 +75,12 @@ def get_query_parameter(
     return unquote(value)
 
 
-def list_files(prefix: str) -> list[dict]:
+def list_files(
+    prefix: str,
+    required_path: str | None = None
+) -> list[dict]:
     paginator = s3.get_paginator("list_objects_v2")
+
     files = []
 
     for page in paginator.paginate(
@@ -86,6 +95,13 @@ def list_files(prefix: str) -> list[dict]:
                 continue
 
             if filename in IGNORED_FILE_NAMES:
+                continue
+
+            if (
+                required_path
+                and required_path.lower()
+                not in key.lower()
+            ):
                 continue
 
             files.append({
@@ -126,17 +142,26 @@ def normalise_building_prefix(
             "The building prefix cannot be blank"
         )
 
-    if not prefix.startswith(
-        f"{BUILDING_PREFIX}/"
-    ):
+    expected_start = f"{BUILDING_PREFIX}//"
+
+    if not prefix.startswith(expected_start):
         raise ValueError(
-            "The supplied prefix is not a building path"
+            "The supplied prefix is not a valid "
+            "building path"
         )
 
-    if not prefix.endswith("/"):
-        prefix += "/"
-
     return prefix
+
+
+def is_building_assessment_key(
+    key: str,
+    building_prefix: str
+) -> bool:
+    return (
+        key.startswith(building_prefix)
+        and BUILDING_ASSESSMENT_PATH.lower()
+        in key.lower()
+    )
 
 
 def process_work_order_request(
@@ -220,11 +245,15 @@ def process_building_request(
                 "error": "Missing key"
             })
 
-        if not key.startswith(building_prefix):
+        if not is_building_assessment_key(
+            key,
+            building_prefix
+        ):
             return response(403, {
                 "error": (
                     "The requested object does not "
-                    "belong to this building folder"
+                    "belong to this Building's Fire "
+                    "Assessment folder"
                 )
             })
 
@@ -239,10 +268,14 @@ def process_building_request(
                 PRESIGNED_URL_SECONDS
         })
 
-    files = list_files(building_prefix)
+    files = list_files(
+        prefix=building_prefix,
+        required_path=BUILDING_ASSESSMENT_PATH
+    )
 
     return response(200, {
         "buildingPrefix": building_prefix,
+        "requiredPath": BUILDING_ASSESSMENT_PATH,
         "recordCount": len(files),
         "files": files
     })
@@ -256,12 +289,18 @@ def process(event, context):
             or ""
         )
 
-        print("ORIGINAL RAW PATH:", repr(raw_path))
+        print(
+            "ORIGINAL RAW PATH:",
+            repr(raw_path)
+        )
 
         if raw_path.startswith("/prod/"):
             raw_path = raw_path[len("/prod"):]
 
-        print("ROUTING PATH:", repr(raw_path))
+        print(
+            "ROUTING PATH:",
+            repr(raw_path)
+        )
 
         if raw_path.startswith(
             "/files/buildings"
@@ -278,6 +317,7 @@ def process(event, context):
                 event,
                 raw_path
             )
+
         return response(404, {
             "error": "Unsupported file viewer route",
             "rawPath": raw_path,
