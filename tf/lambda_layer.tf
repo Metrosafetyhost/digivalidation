@@ -70,7 +70,7 @@ resource "aws_iam_role_policy_attachment" "lambda_s3" {
 # 1) Define a standalone policy that allows ListBucket + GetObject on "metrosafetyprodfiles"
 resource "aws_iam_policy" "lambda_s3_read_metrosafetyprodfiles" {
   name        = "LambdaS3ReadMetroSafetyProdFiles"
-  description = "Allow Lambda to ListBucket and GetObject on metrosafetyprodfiles"
+  description = "Allow salesforce_input Lambda to read production files and create Textract input copies"
 
   policy = jsonencode({
     Version = "2012-10-17",
@@ -93,6 +93,16 @@ resource "aws_iam_policy" "lambda_s3_read_metrosafetyprodfiles" {
         ],
         Resource = [
           "arn:aws:s3:::metrosafetyprodfiles/*"
+        ]
+      },
+      {
+        Sid    = "AllowPutObjectsIntoTextractInput",
+        Effect = "Allow",
+        Action = [
+          "s3:PutObject"
+        ],
+        Resource = [
+          "arn:aws:s3:::metrosafetyprodfiles/TextractInput/*"
         ]
       }
     ]
