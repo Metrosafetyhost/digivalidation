@@ -256,8 +256,12 @@ def process(event, context):
             or ""
         )
 
-        print("RAW PATH:", repr(raw_path))
-        print("EVENT VERSION:", event.get("version"))
+        print("ORIGINAL RAW PATH:", repr(raw_path))
+
+        if raw_path.startswith("/prod/"):
+            raw_path = raw_path[len("/prod"):]
+
+        print("ROUTING PATH:", repr(raw_path))
 
         if raw_path.startswith(
             "/files/buildings"
@@ -274,7 +278,6 @@ def process(event, context):
                 event,
                 raw_path
             )
-
         return response(404, {
             "error": "Unsupported file viewer route",
             "rawPath": raw_path,
