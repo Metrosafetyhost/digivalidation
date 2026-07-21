@@ -256,6 +256,9 @@ def process(event, context):
             or ""
         )
 
+        print("RAW PATH:", repr(raw_path))
+        print("EVENT VERSION:", event.get("version"))
+
         if raw_path.startswith(
             "/files/buildings"
         ):
@@ -273,7 +276,13 @@ def process(event, context):
             )
 
         return response(404, {
-            "error": "Unsupported file viewer route"
+            "error": "Unsupported file viewer route",
+            "rawPath": raw_path,
+            "path": event.get("path"),
+            "requestContext": (
+                event.get("requestContext", {})
+                .get("http", {})
+            )
         })
 
     except ValueError as error:
