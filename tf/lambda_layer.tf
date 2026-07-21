@@ -1435,14 +1435,14 @@ resource "aws_iam_role_policy_attachment" "attach_archive_viewer_s3_read" {
 
 resource "aws_iam_policy" "s3_file_viewer_read" {
   name        = "${var.namespace}-${var.env}-s3-file-viewer-read"
-  description = "Allow the S3 file viewer to list and open Work Order files"
+  description = "Allow the S3 file viewer to list and open Work Order and Building files"
 
   policy = jsonencode({
     Version = "2012-10-17"
 
     Statement = [
       {
-        Sid    = "ListWorkOrderObjects"
+        Sid    = "ListFileViewerObjects"
         Effect = "Allow"
 
         Action = [
@@ -1454,20 +1454,24 @@ resource "aws_iam_policy" "s3_file_viewer_read" {
         Condition = {
           StringLike = {
             "s3:prefix" = [
-              "WorkOrders/*"
+              "WorkOrders/*",
+              "Buildings/*"
             ]
           }
         }
       },
       {
-        Sid    = "ReadWorkOrderObjects"
+        Sid    = "ReadFileViewerObjects"
         Effect = "Allow"
 
         Action = [
           "s3:GetObject"
         ]
 
-        Resource = "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*"
+        Resource = [
+          "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*",
+          "arn:aws:s3:::metrosafetyprodfiles/Buildings/*"
+        ]
       }
     ]
   })
