@@ -370,3 +370,17 @@ resource "aws_apigatewayv2_route" "open_work_order_file" {
   target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
 }
 
+resource "aws_apigatewayv2_route" "list_building_documents" {
+  api_id = aws_apigatewayv2_api.lambda_api.id
+
+  route_key = "GET /files/buildings"
+  target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+}
+
+resource "aws_apigatewayv2_route" "open_building_document" {
+  api_id = aws_apigatewayv2_api.lambda_api.id
+
+  route_key = "GET /files/buildings/open"
+  target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+}
+
