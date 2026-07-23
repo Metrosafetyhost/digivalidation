@@ -30,9 +30,10 @@ PRESIGNED_URL_SECONDS = int(
     )
 )
 
-BUILDING_ASSESSMENT_PATH = (
-    "/Compliance Documents/Fire/Assessment/"
-)
+# Blank means the Building viewer begins at the
+# resolved Building folder instead of assuming that
+# Compliance Documents exists.
+DEFAULT_BUILDING_FOLDER = ""
 
 IGNORED_FILE_NAMES = {
     ".textract_ran",
@@ -40,7 +41,10 @@ IGNORED_FILE_NAMES = {
 }
 
 
-def response(status_code: int, body: dict) -> dict:
+def response(
+    status_code: int,
+    body: dict
+) -> dict:
     return {
         "statusCode": status_code,
         "headers": {
@@ -54,7 +58,9 @@ def get_path_parameter(
     event: dict,
     parameter_name: str
 ) -> str | None:
-    path_parameters = event.get("pathParameters") or {}
+    path_parameters = (
+        event.get("pathParameters") or {}
+    )
 
     return path_parameters.get(parameter_name)
 
@@ -79,7 +85,15 @@ def list_files(
     prefix: str,
     required_path: str | None = None
 ) -> list[dict]:
-    paginator = s3.get_paginator("list_objects_v2")
+    """
+    Existing Work Order file-listing process.
+
+    This intentionally continues to retrieve all files
+    below the supplied Work Order prefix.
+    """
+    paginator = s3.get_paginator(
+        "list_objects_v2"
+    )
 
     files = []
 
@@ -121,7 +135,9 @@ def list_files(
     return files
 
 
-def create_presigned_url(key: str) -> str:
+def create_presigned_url(
+    key: str
+) -> str:
     return s3.generate_presigned_url(
         ClientMethod="get_object",
         Params={
@@ -142,7 +158,9 @@ def normalise_building_prefix(
             "The building prefix cannot be blank"
         )
 
-    expected_start = f"{BUILDING_PREFIX}//"
+    expected_start = (
+        f"{BUILDING_PREFIX}//"
+    )
 
     if not prefix.startswith(expected_start):
         raise ValueError(
@@ -153,21 +171,214 @@ def normalise_building_prefix(
     return prefix
 
 
-def is_building_assessment_key(
-    key: str,
+def resolve_building_root(
     building_prefix: str
-) -> bool:
-    return (
-        key.startswith(building_prefix)
-        and BUILDING_ASSESSMENT_PATH.lower()
-        in key.lower()
+) -> str:
+    """
+    Resolves a partial Building prefix such as:
+
+    Buildings//062654 |
+
+    into the complete S3 folder such as:
+
+    Buildings//062654 | 8A Boundary Row SE1 8HP/
+    """
+    paginator = s3.get_paginator(
+        "list_objects_v2"
     )
+
+    matches = set()
+
+    for page in paginator.paginate(
+        Bucket=FILE_BUCKET,
+        Prefix=building_prefix,
+        Delimiter="/"
+    ):
+        for item in page.get(
+            "CommonPrefixes",
+            []
+        ):
+            matches.add(item["Prefix"])
+
+    sorted_matches = sorted(matches)
+
+    if not sorted_matches:
+        raise ValueError(
+            "No AWS folder was found for this Building"
+        )
+
+    if len(sorted_matches) > 1:
+        raise ValueError(
+            "More than one AWS folder matches this "
+            "Building Number"
+        )
+
+    return sorted_matches[0]
+
+
+def normalise_folder_path(
+    folder_path: str | None
+) -> str:
+    path = (
+        folder_path
+        if folder_path is not None
+        else DEFAULT_BUILDING_FOLDER
+    )
+
+    path = path.strip()
+    path = path.replace("\\", "/")
+    path = path.lstrip("/")
+
+    parts = [
+        part
+        for part in path.split("/")
+        if part
+    ]
+
+    if any(
+        part in {".", ".."}
+        for part in parts
+    ):
+        raise ValueError(
+            "The folder path is invalid"
+        )
+
+    if not parts:
+        return ""
+
+    return "/".join(parts) + "/"
+
+
+def list_folder(
+    building_root: str,
+    folder_path: str
+) -> tuple[list[dict], list[dict]]:
+    """
+    Returns only the immediate folders and files inside
+    the selected Building path.
+
+    Delimiter="/" makes S3 behave like a folder browser
+    instead of returning every nested file at once.
+    """
+    full_prefix = (
+        building_root +
+        folder_path
+    )
+
+    paginator = s3.get_paginator(
+        "list_objects_v2"
+    )
+
+    folders_by_path = {}
+    files = []
+
+    for page in paginator.paginate(
+        Bucket=FILE_BUCKET,
+        Prefix=full_prefix,
+        Delimiter="/"
+    ):
+        for item in page.get(
+            "CommonPrefixes",
+            []
+        ):
+            folder_prefix = item["Prefix"]
+
+            relative_path = folder_prefix[
+                len(building_root):
+            ]
+
+            folder_name = (
+                relative_path
+                .rstrip("/")
+                .rsplit("/", 1)[-1]
+            )
+
+            folders_by_path[relative_path] = {
+                "name": folder_name,
+                "path": relative_path
+            }
+
+        for item in page.get("Contents", []):
+            key = item["Key"]
+            filename = key.rsplit("/", 1)[-1]
+
+            if (
+                key == full_prefix
+                or key.endswith("/")
+            ):
+                continue
+
+            if filename in IGNORED_FILE_NAMES:
+                continue
+
+            files.append({
+                "key": key,
+                "name": filename,
+                "sizeBytes": item["Size"],
+                "lastModified": (
+                    item["LastModified"].isoformat()
+                )
+            })
+
+    folders = sorted(
+        folders_by_path.values(),
+        key=lambda item: item["name"].lower()
+    )
+
+    files.sort(
+        key=lambda item: item["lastModified"],
+        reverse=True
+    )
+
+    return folders, files
+
+
+def build_breadcrumbs(
+    folder_path: str
+) -> list[dict]:
+    """
+    Always includes Building Documents so the user can
+    return to the Building root from any folder.
+    """
+    breadcrumbs = [{
+        "key": "building-root",
+        "name": "Building Documents",
+        "path": ""
+    }]
+
+    path_parts = [
+        part
+        for part in folder_path.split("/")
+        if part
+    ]
+
+    for index, name in enumerate(path_parts):
+        path = (
+            "/".join(
+                path_parts[:index + 1]
+            ) +
+            "/"
+        )
+
+        breadcrumbs.append({
+            "key": path,
+            "name": name,
+            "path": path
+        })
+
+    return breadcrumbs
 
 
 def process_work_order_request(
     event: dict,
     raw_path: str
 ) -> dict:
+    """
+    Existing Work Order POC.
+
+    The Work Order route and behaviour remain separate
+    from the new Building folder-navigation process.
+    """
     work_order_id = get_path_parameter(
         event,
         "workOrderId"
@@ -179,18 +390,24 @@ def process_work_order_request(
         })
 
     expected_prefix = (
-        f"{WORK_ORDER_PREFIX}/{work_order_id}/"
+        f"{WORK_ORDER_PREFIX}/"
+        f"{work_order_id}/"
     )
 
     if raw_path.endswith("/open"):
-        key = get_query_parameter(event, "key")
+        key = get_query_parameter(
+            event,
+            "key"
+        )
 
         if not key:
             return response(400, {
                 "error": "Missing key"
             })
 
-        if not key.startswith(expected_prefix):
+        if not key.startswith(
+            expected_prefix
+        ):
             return response(403, {
                 "error": (
                     "The requested object does not "
@@ -233,27 +450,34 @@ def process_building_request(
             "error": "Missing buildingPrefix"
         })
 
-    building_prefix = normalise_building_prefix(
-        supplied_prefix
+    building_prefix = (
+        normalise_building_prefix(
+            supplied_prefix
+        )
+    )
+
+    building_root = resolve_building_root(
+        building_prefix
     )
 
     if raw_path.endswith("/open"):
-        key = get_query_parameter(event, "key")
+        key = get_query_parameter(
+            event,
+            "key"
+        )
 
         if not key:
             return response(400, {
                 "error": "Missing key"
             })
 
-        if not is_building_assessment_key(
-            key,
-            building_prefix
+        if not key.startswith(
+            building_root
         ):
             return response(403, {
                 "error": (
                     "The requested object does not "
-                    "belong to this Building's Fire "
-                    "Assessment folder"
+                    "belong to this Building"
                 )
             })
 
@@ -268,20 +492,46 @@ def process_building_request(
                 PRESIGNED_URL_SECONDS
         })
 
-    files = list_files(
-        prefix=building_prefix,
-        required_path=BUILDING_ASSESSMENT_PATH
+    folder_path = normalise_folder_path(
+        get_query_parameter(
+            event,
+            "folderPath"
+        )
+    )
+
+    folders, files = list_folder(
+        building_root,
+        folder_path
+    )
+
+    breadcrumbs = build_breadcrumbs(
+        folder_path
+    )
+
+    current_folder_name = (
+        breadcrumbs[-1]["name"]
+        if breadcrumbs
+        else "Building Documents"
     )
 
     return response(200, {
         "buildingPrefix": building_prefix,
-        "requiredPath": BUILDING_ASSESSMENT_PATH,
+        "buildingRoot": building_root,
+        "currentPath": folder_path,
+        "currentFolderName":
+            current_folder_name,
+        "breadcrumbs": breadcrumbs,
+        "folders": folders,
+        "folderCount": len(folders),
         "recordCount": len(files),
         "files": files
     })
 
 
-def process(event, context):
+def process(
+    event,
+    context
+):
     try:
         raw_path = (
             event.get("rawPath")
@@ -319,11 +569,15 @@ def process(event, context):
             )
 
         return response(404, {
-            "error": "Unsupported file viewer route",
+            "error":
+                "Unsupported file viewer route",
             "rawPath": raw_path,
             "path": event.get("path"),
             "requestContext": (
-                event.get("requestContext", {})
+                event.get(
+                    "requestContext",
+                    {}
+                )
                 .get("http", {})
             )
         })
@@ -374,6 +628,7 @@ def process(event, context):
 
     except Exception as error:
         return response(500, {
-            "error": "Failed to retrieve S3 files",
+            "error":
+                "Failed to retrieve S3 files",
             "details": str(error)
         })
