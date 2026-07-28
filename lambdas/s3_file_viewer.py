@@ -35,10 +35,6 @@ COMPLIANCE_DOCUMENTS_FOLDER = (
     "Compliance Documents/"
 )
 
-COMPLIANCE_DOCUMENTS_MARKER = (
-    "/Compliance Documents/"
-)
-
 MAX_FILE_NAME_LENGTH = 255
 
 IGNORED_FILE_NAMES = {
@@ -107,7 +103,8 @@ def get_path_parameter(
     parameter_name: str
 ) -> str | None:
     path_parameters = (
-        event.get("pathParameters") or {}
+        event.get("pathParameters")
+        or {}
     )
 
     return path_parameters.get(
@@ -226,6 +223,189 @@ def normalise_building_prefix(
     return prefix
 
 
+def get_building_lookup_token(
+    building_prefix: str
+) -> str:
+    """
+    Salesforce supplies a value such as:
+
+        Buildings//018278 |
+
+    The stable lookup token is:
+
+        018278 |
+
+    The name, address and postcode stored after
+    this token are not required to match.
+    """
+    normalised_prefix = (
+        normalise_building_prefix(
+            building_prefix
+        )
+    )
+
+    expected_start = (
+        f"{BUILDING_PREFIX}//"
+    )
+
+    lookup_token = (
+        normalised_prefix[
+            len(expected_start):
+        ]
+    ).strip()
+
+    if not lookup_token:
+        raise ValueError(
+            "The Building lookup value "
+            "could not be determined"
+        )
+
+    return lookup_token
+
+
+def get_building_parent_prefixes() -> tuple[str, ...]:
+    """
+    Check the current expected S3 structure first.
+
+    Additional variants are included for older
+    or inconsistent historical object keys.
+    """
+    return (
+        f"{BUILDING_PREFIX}//",
+        f"{BUILDING_PREFIX}/",
+    )
+
+
+def find_building_matches_under_parent(
+    parent_prefix: str,
+    lookup_token: str
+) -> set[str]:
+    """
+    Search only the immediate folders beneath
+    the supplied Buildings parent prefix.
+
+    Delimiter="/" is correct here because this
+    function is identifying Building folders,
+    not counting nested documents.
+    """
+    paginator = s3.get_paginator(
+        "list_objects_v2"
+    )
+
+    matches = set()
+
+    for page in paginator.paginate(
+        Bucket=FILE_BUCKET,
+        Prefix=parent_prefix,
+        Delimiter="/"
+    ):
+        for common_prefix in page.get(
+            "CommonPrefixes",
+            []
+        ):
+            folder_prefix = (
+                common_prefix.get(
+                    "Prefix",
+                    ""
+                )
+            )
+
+            if not folder_prefix:
+                continue
+
+            folder_name = (
+                folder_prefix[
+                    len(parent_prefix):
+                ]
+            )
+
+            if folder_name.startswith(
+                lookup_token
+            ):
+                matches.add(
+                    folder_prefix
+                )
+
+    return matches
+
+
+def find_building_roots(
+    building_prefix: str
+) -> set[str]:
+    """
+    Resolve the complete S3 Building folder from
+    the stable Building Number prefix.
+
+    Example input:
+
+        Buildings//018278 |
+
+    Example resolved root:
+
+        Buildings//018278 | In Store FC Travel
+        Shop, Asda Store EH54 6NB/
+    """
+    lookup_token = (
+        get_building_lookup_token(
+            building_prefix
+        )
+    )
+
+    all_matches = set()
+
+    for index, parent_prefix in enumerate(
+        get_building_parent_prefixes()
+    ):
+        matches = (
+            find_building_matches_under_parent(
+                parent_prefix,
+                lookup_token
+            )
+        )
+
+        if index == 0 and len(matches) == 1:
+            return matches
+
+        all_matches.update(
+            matches
+        )
+
+    return all_matches
+
+
+def find_building_root(
+    building_prefix: str
+) -> str:
+    building_roots = (
+        find_building_roots(
+            building_prefix
+        )
+    )
+
+    if not building_roots:
+        raise ValueError(
+            "No AWS documents or Building folder "
+            "were found for this Building."
+        )
+
+    if len(building_roots) > 1:
+        roots_text = ", ".join(
+            sorted(building_roots)
+        )
+
+        raise ValueError(
+            "Multiple S3 Building folders were "
+            "found for this Building Number. "
+            "The system could not safely choose "
+            "one. Found: " +
+            roots_text
+        )
+
+    return next(
+        iter(building_roots)
+    )
+
+
 def normalise_folder_path(
     folder_path: str | None
 ) -> str:
@@ -272,7 +452,8 @@ def normalise_folder_path(
         )
 
     normalised_path = (
-        "/".join(path_parts) + "/"
+        "/".join(path_parts)
+        + "/"
     )
 
     compliance_lower = (
@@ -377,9 +558,9 @@ def is_configured_folder(
     ):
         for child_name in child_names:
             child_path = (
-                parent_path +
-                child_name +
-                "/"
+                parent_path
+                + child_name
+                + "/"
             )
 
             if child_path == folder_path:
@@ -403,83 +584,6 @@ def is_configured_upload_destination(
             )
         )
         == 0
-    )
-
-
-def find_building_roots(
-    building_prefix: str
-) -> set[str]:
-    paginator = s3.get_paginator(
-        "list_objects_v2"
-    )
-
-    building_roots = set()
-
-    marker_lower = (
-        COMPLIANCE_DOCUMENTS_MARKER.lower()
-    )
-
-    for page in paginator.paginate(
-        Bucket=FILE_BUCKET,
-        Prefix=building_prefix
-    ):
-        for item in page.get(
-            "Contents",
-            []
-        ):
-            key = item["Key"]
-            key_lower = key.lower()
-
-            marker_position = (
-                key_lower.find(
-                    marker_lower
-                )
-            )
-
-            if marker_position == -1:
-                continue
-
-            building_root = (
-                key[:marker_position] +
-                "/"
-            )
-
-            building_roots.add(
-                building_root
-            )
-
-    return building_roots
-
-
-def find_building_root(
-    building_prefix: str
-) -> str:
-    building_roots = (
-        find_building_roots(
-            building_prefix
-        )
-    )
-
-    if not building_roots:
-        raise ValueError(
-            "No existing Compliance Documents "
-            "folder was found for this Building."
-        )
-
-    if len(building_roots) > 1:
-        roots_text = ", ".join(
-            sorted(building_roots)
-        )
-
-        raise ValueError(
-            "Multiple S3 Building folders were "
-            "found for this Building Number. "
-            "Found: " +
-            roots_text
-        )
-
-    return next(
-        iter(building_roots)
     )
 
 
@@ -524,7 +628,8 @@ def s3_prefix_has_contents(
         result.get(
             "KeyCount",
             0
-        ) > 0
+        )
+        > 0
     )
 
 
@@ -533,8 +638,8 @@ def building_folder_exists(
     folder_path: str
 ) -> bool:
     return s3_prefix_has_contents(
-        building_root +
-        folder_path
+        building_root
+        + folder_path
     )
 
 
@@ -543,8 +648,8 @@ def folder_has_child_folders(
     folder_path: str
 ) -> bool:
     full_prefix = (
-        building_root +
-        folder_path
+        building_root
+        + folder_path
     )
 
     result = s3.list_objects_v2(
@@ -564,6 +669,12 @@ def folder_has_child_folders(
 def list_files(
     prefix: str
 ) -> list[dict]:
+    """
+    Existing Work Order listing behaviour.
+
+    This intentionally lists all objects beneath
+    the supplied Work Order prefix.
+    """
     paginator = s3.get_paginator(
         "list_objects_v2"
     )
@@ -611,34 +722,39 @@ def list_files(
 
     return files
 
-def count_files_in_folder(
+
+def count_documents_under_folder(
     building_root: str,
     folder_path: str
 ) -> int:
+    """
+    Count every real document beneath the folder,
+    including documents in nested subfolders.
+
+    Delimiter="/" is deliberately not used here.
+    The full S3 prefix still restricts the count
+    to the resolved Building and folder.
+    """
     full_prefix = (
-        building_root +
-        folder_path
+        building_root
+        + folder_path
     )
 
     paginator = s3.get_paginator(
         "list_objects_v2"
     )
 
-    file_count = 0
+    document_count = 0
 
     for page in paginator.paginate(
         Bucket=FILE_BUCKET,
-        Prefix=full_prefix,
-        Delimiter="/"
+        Prefix=full_prefix
     ):
         for item in page.get(
             "Contents",
             []
         ):
             key = item["Key"]
-
-            if key == full_prefix:
-                continue
 
             if key.endswith("/"):
                 continue
@@ -647,20 +763,31 @@ def count_files_in_folder(
                 key.rsplit("/", 1)[-1]
             )
 
-            if file_name in IGNORED_FILE_NAMES:
+            if file_name in (
+                IGNORED_FILE_NAMES
+            ):
                 continue
 
-            file_count += 1
+            document_count += 1
 
-    return file_count
+    return document_count
+
 
 def list_building_folder(
     building_root: str,
     folder_path: str
 ) -> tuple[list[dict], list[dict]]:
+    """
+    Return only the immediate folders and files
+    for the folder currently being viewed.
+
+    Delimiter="/" remains necessary here because
+    the UI is navigating one folder level at a
+    time.
+    """
     full_prefix = (
-        building_root +
-        folder_path
+        building_root
+        + folder_path
     )
 
     paginator = s3.get_paginator(
@@ -702,7 +829,8 @@ def list_building_folder(
                 relative_folder_path
             ] = {
                 "name": folder_name,
-                "path": relative_folder_path
+                "path":
+                    relative_folder_path
             }
 
         for item in page.get(
@@ -721,7 +849,9 @@ def list_building_folder(
                 key.rsplit("/", 1)[-1]
             )
 
-            if filename in IGNORED_FILE_NAMES:
+            if filename in (
+                IGNORED_FILE_NAMES
+            ):
                 continue
 
             files.append({
@@ -743,13 +873,13 @@ def list_building_folder(
 
     merged_folders = {}
 
-    # Always include configured folders,
-    # even when they are empty in S3.
+    # Always display configured folders,
+    # even when S3 has no object beneath them.
     for folder_name in configured_names:
         child_path = (
-            folder_path +
-            folder_name +
-            "/"
+            folder_path
+            + folder_name
+            + "/"
         )
 
         configured_children = (
@@ -759,30 +889,30 @@ def list_building_folder(
         )
 
         has_child_folders = (
-            len(configured_children) > 0
+            len(
+                configured_children
+            )
+            > 0
         )
 
-        document_count = 0
-
-        if not has_child_folders:
-            document_count = (
-                count_files_in_folder(
-                    building_root,
-                    child_path
-                )
+        document_count = (
+            count_documents_under_folder(
+                building_root,
+                child_path
             )
+        )
 
         merged_folders[
             child_path
         ] = {
-            "name": folder_name,
-            "path": child_path,
-            "isConfigured": True,
+            "name":
+                folder_name,
+            "path":
+                child_path,
+            "isConfigured":
+                True,
             "hasContents":
-                (
-                    has_child_folders
-                    or document_count > 0
-                ),
+                document_count > 0,
             "documentCount":
                 document_count,
             "hasChildFolders":
@@ -791,14 +921,17 @@ def list_building_folder(
                 not has_child_folders
         }
 
-    # Include any additional folders that
-    # already exist in S3.
+    # Include unexpected folders that physically
+    # exist in S3 but are not in the configuration.
     for (
         discovered_path,
         discovered_folder
     ) in discovered_folders.items():
 
-        if discovered_path in merged_folders:
+        if (
+            discovered_path
+            in merged_folders
+        ):
             continue
 
         has_child_folders = (
@@ -808,30 +941,26 @@ def list_building_folder(
             )
         )
 
-        document_count = 0
-
-        if not has_child_folders:
-            document_count = (
-                count_files_in_folder(
-                    building_root,
-                    discovered_path
-                )
+        document_count = (
+            count_documents_under_folder(
+                building_root,
+                discovered_path
             )
+        )
 
         merged_folders[
             discovered_path
         ] = {
             "name":
-                discovered_folder["name"],
+                discovered_folder[
+                    "name"
+                ],
             "path":
                 discovered_path,
             "isConfigured":
                 False,
             "hasContents":
-                (
-                    has_child_folders
-                    or document_count > 0
-                ),
+                document_count > 0,
             "documentCount":
                 document_count,
             "hasChildFolders":
@@ -842,7 +971,8 @@ def list_building_folder(
 
     configured_order = {
         name: index
-        for index, name in enumerate(
+        for index, name
+        in enumerate(
             configured_names
         )
     }
@@ -895,8 +1025,8 @@ def build_breadcrumbs(
         breadcrumb_path = (
             "/".join(
                 accumulated_parts
-            ) +
-            "/"
+            )
+            + "/"
         )
 
         breadcrumbs.append({
@@ -904,8 +1034,10 @@ def build_breadcrumbs(
                 f"{index}-"
                 f"{breadcrumb_path}"
             ),
-            "name": part,
-            "path": breadcrumb_path
+            "name":
+                part,
+            "path":
+                breadcrumb_path
         })
 
     return breadcrumbs
@@ -936,8 +1068,8 @@ def is_key_in_building_documents(
     building_root: str
 ) -> bool:
     allowed_prefix = (
-        building_root +
-        COMPLIANCE_DOCUMENTS_FOLDER
+        building_root
+        + COMPLIANCE_DOCUMENTS_FOLDER
     )
 
     return key.startswith(
@@ -955,6 +1087,8 @@ def validate_upload_folder(
         )
     )
 
+    # Configured final folders are valid upload
+    # destinations even when currently empty.
     if (
         is_configured_upload_destination(
             folder_path
@@ -962,6 +1096,7 @@ def validate_upload_folder(
     ):
         return folder_path
 
+    # Unconfigured folders must physically exist.
     if not building_folder_exists(
         building_root,
         folder_path
@@ -1107,7 +1242,8 @@ def process_building_request(
 
         if not key:
             return response(400, {
-                "error": "Missing key"
+                "error":
+                    "Missing key"
             })
 
         if not (
@@ -1307,9 +1443,9 @@ def process_building_upload_request(
     )
 
     object_key = (
-        building_root +
-        folder_path +
-        safe_file_name
+        building_root
+        + folder_path
+        + safe_file_name
     )
 
     if object_exists(
