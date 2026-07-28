@@ -611,6 +611,48 @@ def list_files(
 
     return files
 
+def count_files_in_folder(
+    building_root: str,
+    folder_path: str
+) -> int:
+    full_prefix = (
+        building_root +
+        folder_path
+    )
+
+    paginator = s3.get_paginator(
+        "list_objects_v2"
+    )
+
+    file_count = 0
+
+    for page in paginator.paginate(
+        Bucket=FILE_BUCKET,
+        Prefix=full_prefix,
+        Delimiter="/"
+    ):
+        for item in page.get(
+            "Contents",
+            []
+        ):
+            key = item["Key"]
+
+            if key == full_prefix:
+                continue
+
+            if key.endswith("/"):
+                continue
+
+            file_name = (
+                key.rsplit("/", 1)[-1]
+            )
+
+            if file_name in IGNORED_FILE_NAMES:
+                continue
+
+            file_count += 1
+
+    return file_count
 
 def list_building_folder(
     building_root: str,
@@ -660,8 +702,7 @@ def list_building_folder(
                 relative_folder_path
             ] = {
                 "name": folder_name,
-                "path":
-                    relative_folder_path
+                "path": relative_folder_path
             }
 
         for item in page.get(
@@ -680,9 +721,7 @@ def list_building_folder(
                 key.rsplit("/", 1)[-1]
             )
 
-            if filename in (
-                IGNORED_FILE_NAMES
-            ):
+            if filename in IGNORED_FILE_NAMES:
                 continue
 
             files.append({
@@ -704,6 +743,8 @@ def list_building_folder(
 
     merged_folders = {}
 
+    # Always include configured folders,
+    # even when they are empty in S3.
     for folder_name in configured_names:
         child_path = (
             folder_path +
@@ -717,10 +758,19 @@ def list_building_folder(
             )
         )
 
-        was_discovered = (
-            child_path
-            in discovered_folders
+        has_child_folders = (
+            len(configured_children) > 0
         )
+
+        document_count = 0
+
+        if not has_child_folders:
+            document_count = (
+                count_files_in_folder(
+                    building_root,
+                    child_path
+                )
+            )
 
         merged_folders[
             child_path
@@ -729,25 +779,26 @@ def list_building_folder(
             "path": child_path,
             "isConfigured": True,
             "hasContents":
-                was_discovered,
+                (
+                    has_child_folders
+                    or document_count > 0
+                ),
+            "documentCount":
+                document_count,
             "hasChildFolders":
-                len(
-                    configured_children
-                ) > 0,
+                has_child_folders,
             "isUploadDestination":
-                len(
-                    configured_children
-                ) == 0
+                not has_child_folders
         }
 
+    # Include any additional folders that
+    # already exist in S3.
     for (
         discovered_path,
         discovered_folder
     ) in discovered_folders.items():
-        if (
-            discovered_path
-            in merged_folders
-        ):
+
+        if discovered_path in merged_folders:
             continue
 
         has_child_folders = (
@@ -757,17 +808,32 @@ def list_building_folder(
             )
         )
 
+        document_count = 0
+
+        if not has_child_folders:
+            document_count = (
+                count_files_in_folder(
+                    building_root,
+                    discovered_path
+                )
+            )
+
         merged_folders[
             discovered_path
         ] = {
             "name":
-                discovered_folder[
-                    "name"
-                ],
+                discovered_folder["name"],
             "path":
                 discovered_path,
-            "isConfigured": False,
-            "hasContents": True,
+            "isConfigured":
+                False,
+            "hasContents":
+                (
+                    has_child_folders
+                    or document_count > 0
+                ),
+            "documentCount":
+                document_count,
             "hasChildFolders":
                 has_child_folders,
             "isUploadDestination":
@@ -776,8 +842,7 @@ def list_building_folder(
 
     configured_order = {
         name: index
-        for index, name
-        in enumerate(
+        for index, name in enumerate(
             configured_names
         )
     }
