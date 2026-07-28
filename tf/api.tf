@@ -384,3 +384,9 @@ resource "aws_apigatewayv2_route" "open_building_document" {
   target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
 }
 
+resource "aws_apigatewayv2_route" "create_building_upload_url" {
+  api_id = aws_apigatewayv2_api.lambda_api.id
+
+  route_key = "POST /files/buildings/upload-url"
+  target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+}

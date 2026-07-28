@@ -1435,7 +1435,7 @@ resource "aws_iam_role_policy_attachment" "attach_archive_viewer_s3_read" {
 
 resource "aws_iam_policy" "s3_file_viewer_read" {
   name        = "${var.namespace}-${var.env}-s3-file-viewer-read"
-  description = "Allow the S3 file viewer to list and open Work Order and Building files"
+  description = "Allow the S3 file viewer to list, open and upload Building files"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -1470,6 +1470,18 @@ resource "aws_iam_policy" "s3_file_viewer_read" {
 
         Resource = [
           "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*",
+          "arn:aws:s3:::metrosafetyprodfiles/Buildings/*"
+        ]
+      },
+      {
+        Sid    = "UploadBuildingObjects"
+        Effect = "Allow"
+
+        Action = [
+          "s3:PutObject"
+        ]
+
+        Resource = [
           "arn:aws:s3:::metrosafetyprodfiles/Buildings/*"
         ]
       }
