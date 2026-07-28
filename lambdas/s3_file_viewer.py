@@ -31,33 +31,13 @@ PRESIGNED_URL_SECONDS = int(
     )
 )
 
-BUILDING_ASSESSMENT_PATH = (
-    "/Compliance Documents/Fire/Assessment/"
+COMPLIANCE_DOCUMENTS_FOLDER = (
+    "Compliance Documents/"
 )
 
 COMPLIANCE_DOCUMENTS_MARKER = (
     "/Compliance Documents/"
 )
-
-ALLOWED_DISCIPLINES = {
-    "ALL",
-    "Asbestos",
-    "Electricity",
-    "Fire",
-    "Gas",
-    "Health & Safety",
-    "Legionella",
-    "Lifts",
-    "Other",
-    "Third Party",
-}
-
-ALLOWED_CATEGORIES = {
-    "Assessment",
-    "Maintenance, Training",
-    "Plans, Procedures, Policies etc.",
-    "Testing",
-}
 
 MAX_FILE_NAME_LENGTH = 255
 
@@ -67,7 +47,10 @@ IGNORED_FILE_NAMES = {
 }
 
 
-def response(status_code: int, body: dict) -> dict:
+def response(
+    status_code: int,
+    body: dict
+) -> dict:
     return {
         "statusCode": status_code,
         "headers": {
@@ -85,7 +68,9 @@ def get_path_parameter(
         event.get("pathParameters") or {}
     )
 
-    return path_parameters.get(parameter_name)
+    return path_parameters.get(
+        parameter_name
+    )
 
 
 def get_query_parameter(
@@ -93,10 +78,13 @@ def get_query_parameter(
     parameter_name: str
 ) -> str | None:
     query_parameters = (
-        event.get("queryStringParameters") or {}
+        event.get("queryStringParameters")
+        or {}
     )
 
-    value = query_parameters.get(parameter_name)
+    value = query_parameters.get(
+        parameter_name
+    )
 
     if value is None:
         return None
@@ -104,7 +92,9 @@ def get_query_parameter(
     return unquote(value)
 
 
-def get_json_body(event: dict) -> dict:
+def get_json_body(
+    event: dict
+) -> dict:
     body = event.get("body")
 
     if not body:
@@ -115,14 +105,16 @@ def get_json_body(event: dict) -> dict:
             body = base64.b64decode(
                 body
             ).decode("utf-8")
+
         except Exception as error:
             raise ValueError(
-                "The encoded request body could "
-                "not be read"
+                "The encoded request body "
+                "could not be read"
             ) from error
 
     try:
         parsed_body = json.loads(body)
+
     except json.JSONDecodeError as error:
         raise ValueError(
             "The request body is not valid JSON"
@@ -130,67 +122,16 @@ def get_json_body(event: dict) -> dict:
 
     if not isinstance(parsed_body, dict):
         raise ValueError(
-            "The request body must be a JSON object"
+            "The request body must be "
+            "a JSON object"
         )
 
     return parsed_body
 
 
-def list_files(
-    prefix: str,
-    required_path: str | None = None
-) -> list[dict]:
-    paginator = s3.get_paginator(
-        "list_objects_v2"
-    )
-
-    files = []
-
-    required_path_lower = (
-        required_path.lower()
-        if required_path
-        else None
-    )
-
-    for page in paginator.paginate(
-        Bucket=FILE_BUCKET,
-        Prefix=prefix
-    ):
-        for item in page.get("Contents", []):
-            key = item["Key"]
-            filename = key.rsplit("/", 1)[-1]
-
-            if key.endswith("/"):
-                continue
-
-            if filename in IGNORED_FILE_NAMES:
-                continue
-
-            if (
-                required_path_lower
-                and required_path_lower
-                not in key.lower()
-            ):
-                continue
-
-            files.append({
-                "key": key,
-                "name": filename,
-                "sizeBytes": item["Size"],
-                "lastModified": (
-                    item["LastModified"].isoformat()
-                )
-            })
-
-    files.sort(
-        key=lambda item: item["lastModified"],
-        reverse=True
-    )
-
-    return files
-
-
-def create_presigned_url(key: str) -> str:
+def create_presigned_url(
+    key: str
+) -> str:
     return s3.generate_presigned_url(
         ClientMethod="get_object",
         Params={
@@ -226,25 +167,101 @@ def normalise_building_prefix(
             "The building prefix cannot be blank"
         )
 
-    expected_start = f"{BUILDING_PREFIX}//"
+    expected_start = (
+        f"{BUILDING_PREFIX}//"
+    )
 
-    if not prefix.startswith(expected_start):
+    if not prefix.startswith(
+        expected_start
+    ):
         raise ValueError(
-            "The supplied prefix is not a valid "
-            "building path"
+            "The supplied prefix is not "
+            "a valid Building path"
         )
 
     return prefix
 
 
+def normalise_folder_path(
+    folder_path: str | None
+) -> str:
+    if not folder_path:
+        return COMPLIANCE_DOCUMENTS_FOLDER
+
+    path = unquote(
+        str(folder_path)
+    ).strip()
+
+    path = path.replace(
+        "\\",
+        "/"
+    )
+
+    while path.startswith("/"):
+        path = path[1:]
+
+    while "//" in path:
+        path = path.replace(
+            "//",
+            "/"
+        )
+
+    if not path:
+        return COMPLIANCE_DOCUMENTS_FOLDER
+
+    path_parts = [
+        part.strip()
+        for part in path.split("/")
+        if part.strip()
+    ]
+
+    if any(
+        part in {".", ".."}
+        for part in path_parts
+    ):
+        raise ValueError(
+            "The supplied folder path is invalid"
+        )
+
+    normalised_path = (
+        "/".join(path_parts) + "/"
+    )
+
+    if (
+        normalised_path.lower()
+        !=
+        COMPLIANCE_DOCUMENTS_FOLDER.lower()
+        and not normalised_path.lower().startswith(
+            COMPLIANCE_DOCUMENTS_FOLDER.lower()
+        )
+    ):
+        raise ValueError(
+            "The selected folder is outside "
+            "Compliance Documents"
+        )
+
+    return normalised_path
+
+
 def sanitise_file_name(
     file_name: str
 ) -> str:
-    name = file_name.strip()
+    name = str(file_name).strip()
 
-    name = name.replace("/", "_")
-    name = name.replace("\\", "_")
-    name = name.replace("\x00", "")
+    name = name.replace(
+        "/",
+        "_"
+    )
+
+    name = name.replace(
+        "\\",
+        "_"
+    )
+
+    name = name.replace(
+        "\x00",
+        ""
+    )
 
     name = "".join(
         character
@@ -287,12 +304,17 @@ def find_building_roots(
         Bucket=FILE_BUCKET,
         Prefix=building_prefix
     ):
-        for item in page.get("Contents", []):
+        for item in page.get(
+            "Contents",
+            []
+        ):
             key = item["Key"]
             key_lower = key.lower()
 
-            marker_position = key_lower.find(
-                marker_lower
+            marker_position = (
+                key_lower.find(
+                    marker_lower
+                )
             )
 
             if marker_position == -1:
@@ -319,8 +341,7 @@ def find_building_root(
     if not building_roots:
         raise ValueError(
             "No existing Compliance Documents "
-            "folder was found for this Building. "
-            "No file was uploaded."
+            "folder was found for this Building."
         )
 
     if len(building_roots) > 1:
@@ -331,14 +352,18 @@ def find_building_root(
         raise ValueError(
             "Multiple S3 Building folders were "
             "found for this Building Number. "
-            "No file was uploaded. Found: " +
+            "Found: " +
             roots_text
         )
 
-    return next(iter(building_roots))
+    return next(
+        iter(building_roots)
+    )
 
 
-def object_exists(key: str) -> bool:
+def object_exists(
+    key: str
+) -> bool:
     try:
         s3.head_object(
             Bucket=FILE_BUCKET,
@@ -364,14 +389,306 @@ def object_exists(key: str) -> bool:
         raise
 
 
-def is_building_assessment_key(
-    key: str,
-    building_prefix: str
+def list_files(
+    prefix: str
+) -> list[dict]:
+    paginator = s3.get_paginator(
+        "list_objects_v2"
+    )
+
+    files = []
+
+    for page in paginator.paginate(
+        Bucket=FILE_BUCKET,
+        Prefix=prefix
+    ):
+        for item in page.get(
+            "Contents",
+            []
+        ):
+            key = item["Key"]
+            filename = (
+                key.rsplit("/", 1)[-1]
+            )
+
+            if key.endswith("/"):
+                continue
+
+            if filename in IGNORED_FILE_NAMES:
+                continue
+
+            files.append({
+                "key": key,
+                "name": filename,
+                "sizeBytes": item["Size"],
+                "lastModified": (
+                    item[
+                        "LastModified"
+                    ].isoformat()
+                )
+            })
+
+    files.sort(
+        key=lambda item:
+            item["lastModified"],
+        reverse=True
+    )
+
+    return files
+
+
+def list_building_folder(
+    building_root: str,
+    folder_path: str
+) -> tuple[list[dict], list[dict]]:
+    full_prefix = (
+        building_root +
+        folder_path
+    )
+
+    paginator = s3.get_paginator(
+        "list_objects_v2"
+    )
+
+    folders_by_path = {}
+    files = []
+
+    for page in paginator.paginate(
+        Bucket=FILE_BUCKET,
+        Prefix=full_prefix,
+        Delimiter="/"
+    ):
+        for folder in page.get(
+            "CommonPrefixes",
+            []
+        ):
+            full_folder_path = (
+                folder.get("Prefix")
+            )
+
+            if not full_folder_path:
+                continue
+
+            relative_folder_path = (
+                full_folder_path[
+                    len(building_root):
+                ]
+            )
+
+            folder_name = (
+                relative_folder_path
+                .rstrip("/")
+                .rsplit("/", 1)[-1]
+            )
+
+            folders_by_path[
+                relative_folder_path
+            ] = {
+                "name": folder_name,
+                "path": relative_folder_path
+            }
+
+        for item in page.get(
+            "Contents",
+            []
+        ):
+            key = item["Key"]
+
+            if key == full_prefix:
+                continue
+
+            if key.endswith("/"):
+                continue
+
+            filename = (
+                key.rsplit("/", 1)[-1]
+            )
+
+            if filename in IGNORED_FILE_NAMES:
+                continue
+
+            files.append({
+                "key": key,
+                "name": filename,
+                "sizeBytes": item["Size"],
+                "lastModified": (
+                    item[
+                        "LastModified"
+                    ].isoformat()
+                )
+            })
+
+    folders = list(
+        folders_by_path.values()
+    )
+
+    folders.sort(
+        key=lambda folder:
+            folder["name"].lower()
+    )
+
+    files.sort(
+        key=lambda item:
+            item["lastModified"],
+        reverse=True
+    )
+
+    return folders, files
+
+
+def building_folder_exists(
+    building_root: str,
+    folder_path: str
 ) -> bool:
+    full_prefix = (
+        building_root +
+        folder_path
+    )
+
+    result = s3.list_objects_v2(
+        Bucket=FILE_BUCKET,
+        Prefix=full_prefix,
+        MaxKeys=1
+    )
+
     return (
-        key.startswith(building_prefix)
-        and BUILDING_ASSESSMENT_PATH.lower()
-        in key.lower()
+        result.get("KeyCount", 0) > 0
+        or bool(
+            result.get("Contents")
+        )
+        or bool(
+            result.get("CommonPrefixes")
+        )
+    )
+
+
+def folder_has_child_folders(
+    building_root: str,
+    folder_path: str
+) -> bool:
+    full_prefix = (
+        building_root +
+        folder_path
+    )
+
+    result = s3.list_objects_v2(
+        Bucket=FILE_BUCKET,
+        Prefix=full_prefix,
+        Delimiter="/",
+        MaxKeys=1000
+    )
+
+    return bool(
+        result.get("CommonPrefixes")
+    )
+
+
+def validate_upload_folder(
+    building_root: str,
+    supplied_folder_path: str
+) -> str:
+    folder_path = normalise_folder_path(
+        supplied_folder_path
+    )
+
+    if (
+        folder_path.lower()
+        ==
+        COMPLIANCE_DOCUMENTS_FOLDER.lower()
+    ):
+        raise ValueError(
+            "Open a final document folder "
+            "before uploading."
+        )
+
+    if not building_folder_exists(
+        building_root,
+        folder_path
+    ):
+        raise ValueError(
+            "The selected AWS folder "
+            "does not exist."
+        )
+
+    if folder_has_child_folders(
+        building_root,
+        folder_path
+    ):
+        raise ValueError(
+            "Open a final document folder "
+            "before uploading."
+        )
+
+    return folder_path
+
+
+def build_breadcrumbs(
+    folder_path: str
+) -> list[dict]:
+    path_parts = [
+        part
+        for part in folder_path
+        .strip("/")
+        .split("/")
+        if part
+    ]
+
+    breadcrumbs = []
+    accumulated_parts = []
+
+    for index, part in enumerate(
+        path_parts
+    ):
+        accumulated_parts.append(
+            part
+        )
+
+        breadcrumb_path = (
+            "/".join(
+                accumulated_parts
+            ) + "/"
+        )
+
+        breadcrumbs.append({
+            "key": (
+                f"{index}-"
+                f"{breadcrumb_path}"
+            ),
+            "name": part,
+            "path": breadcrumb_path
+        })
+
+    return breadcrumbs
+
+
+def current_folder_name(
+    folder_path: str
+) -> str:
+    path_parts = [
+        part
+        for part in folder_path
+        .strip("/")
+        .split("/")
+        if part
+    ]
+
+    if not path_parts:
+        return "Compliance Documents"
+
+    return path_parts[-1]
+
+
+def is_key_in_building_documents(
+    key: str,
+    building_root: str
+) -> bool:
+    allowed_prefix = (
+        building_root +
+        COMPLIANCE_DOCUMENTS_FOLDER
+    )
+
+    return key.startswith(
+        allowed_prefix
     )
 
 
@@ -390,7 +707,8 @@ def process_work_order_request(
         })
 
     expected_prefix = (
-        f"{WORK_ORDER_PREFIX}/{work_order_id}/"
+        f"{WORK_ORDER_PREFIX}/"
+        f"{work_order_id}/"
     )
 
     if raw_path.endswith("/open"):
@@ -404,11 +722,13 @@ def process_work_order_request(
                 "error": "Missing key"
             })
 
-        if not key.startswith(expected_prefix):
+        if not key.startswith(
+            expected_prefix
+        ):
             return response(403, {
                 "error": (
-                    "The requested object does not "
-                    "belong to this Work Order"
+                    "The requested object does "
+                    "not belong to this Work Order"
                 )
             })
 
@@ -418,12 +738,15 @@ def process_work_order_request(
         )
 
         return response(200, {
-            "url": create_presigned_url(key),
+            "url":
+                create_presigned_url(key),
             "expiresInSeconds":
                 PRESIGNED_URL_SECONDS
         })
 
-    files = list_files(expected_prefix)
+    files = list_files(
+        expected_prefix
+    )
 
     return response(200, {
         "workOrderId": work_order_id,
@@ -447,8 +770,14 @@ def process_building_request(
             "error": "Missing buildingPrefix"
         })
 
-    building_prefix = normalise_building_prefix(
-        supplied_prefix
+    building_prefix = (
+        normalise_building_prefix(
+            supplied_prefix
+        )
+    )
+
+    building_root = find_building_root(
+        building_prefix
     )
 
     if raw_path.endswith("/open"):
@@ -462,15 +791,15 @@ def process_building_request(
                 "error": "Missing key"
             })
 
-        if not is_building_assessment_key(
+        if not is_key_in_building_documents(
             key,
-            building_prefix
+            building_root
         ):
             return response(403, {
                 "error": (
                     "The requested object does not "
-                    "belong to this Building's Fire "
-                    "Assessment folder"
+                    "belong to this Building's "
+                    "Compliance Documents folder"
                 )
             })
 
@@ -480,22 +809,62 @@ def process_building_request(
         )
 
         return response(200, {
-            "url": create_presigned_url(key),
+            "url":
+                create_presigned_url(key),
             "expiresInSeconds":
                 PRESIGNED_URL_SECONDS
         })
 
-    files = list_files(
-        prefix=building_prefix,
-        required_path=BUILDING_ASSESSMENT_PATH
+    supplied_folder_path = (
+        get_query_parameter(
+            event,
+            "folderPath"
+        )
+    )
+
+    folder_path = normalise_folder_path(
+        supplied_folder_path
+    )
+
+    if not building_folder_exists(
+        building_root,
+        folder_path
+    ):
+        return response(404, {
+            "error": (
+                "The selected Building folder "
+                "was not found"
+            )
+        })
+
+    folders, files = list_building_folder(
+        building_root,
+        folder_path
+    )
+
+    can_upload = (
+        folder_path.lower()
+        !=
+        COMPLIANCE_DOCUMENTS_FOLDER.lower()
+        and len(folders) == 0
     )
 
     return response(200, {
         "buildingPrefix": building_prefix,
-        "requiredPath":
-            BUILDING_ASSESSMENT_PATH,
+        "buildingRoot": building_root,
+        "currentPath": folder_path,
+        "currentFolderName":
+            current_folder_name(
+                folder_path
+            ),
         "recordCount": len(files),
-        "files": files
+        "folders": folders,
+        "breadcrumbs":
+            build_breadcrumbs(
+                folder_path
+            ),
+        "files": files,
+        "canUpload": can_upload
     })
 
 
@@ -508,12 +877,8 @@ def process_building_upload_request(
         "buildingPrefix"
     )
 
-    discipline = body.get(
-        "discipline"
-    )
-
-    category = body.get(
-        "category"
+    supplied_folder_path = body.get(
+        "folderPath"
     )
 
     file_name = body.get(
@@ -530,25 +895,11 @@ def process_building_upload_request(
             "error": "Missing buildingPrefix"
         })
 
-    if discipline not in ALLOWED_DISCIPLINES:
+    if not supplied_folder_path:
         return response(400, {
             "error": (
-                "Invalid discipline. Allowed values "
-                "are: " +
-                ", ".join(
-                    sorted(ALLOWED_DISCIPLINES)
-                )
-            )
-        })
-
-    if category not in ALLOWED_CATEGORIES:
-        return response(400, {
-            "error": (
-                "Invalid category. Allowed values "
-                "are: " +
-                ", ".join(
-                    sorted(ALLOWED_CATEGORIES)
-                )
+                "Open a final document folder "
+                "before uploading."
             )
         })
 
@@ -557,24 +908,36 @@ def process_building_upload_request(
             "error": "Missing fileName"
         })
 
-    if not isinstance(content_type, str):
+    if not isinstance(
+        content_type,
+        str
+    ):
         return response(400, {
             "error": "Invalid contentType"
         })
 
-    content_type = content_type.strip()
+    content_type = (
+        content_type.strip()
+    )
 
     if not content_type:
         content_type = (
             "application/octet-stream"
         )
 
-    building_prefix = normalise_building_prefix(
-        supplied_prefix
+    building_prefix = (
+        normalise_building_prefix(
+            supplied_prefix
+        )
     )
 
     building_root = find_building_root(
         building_prefix
+    )
+
+    folder_path = validate_upload_folder(
+        building_root,
+        supplied_folder_path
     )
 
     safe_file_name = sanitise_file_name(
@@ -582,11 +945,9 @@ def process_building_upload_request(
     )
 
     object_key = (
-        f"{building_root}"
-        f"Compliance Documents/"
-        f"{discipline}/"
-        f"{category}/"
-        f"{safe_file_name}"
+        building_root +
+        folder_path +
+        safe_file_name
     )
 
     if object_exists(object_key):
@@ -599,17 +960,18 @@ def process_building_upload_request(
             "objectKey": object_key
         })
 
-    upload_url = create_presigned_upload_url(
-        object_key,
-        content_type
+    upload_url = (
+        create_presigned_upload_url(
+            object_key,
+            content_type
+        )
     )
 
     return response(200, {
         "uploadUrl": upload_url,
         "objectKey": object_key,
         "buildingRoot": building_root,
-        "discipline": discipline,
-        "category": category,
+        "folderPath": folder_path,
         "fileName": safe_file_name,
         "contentType": content_type,
         "expiresInSeconds":
@@ -617,7 +979,10 @@ def process_building_upload_request(
     })
 
 
-def process(event, context):
+def process(
+    event,
+    context
+):
     try:
         raw_path = (
             event.get("rawPath")
@@ -630,22 +995,27 @@ def process(event, context):
             repr(raw_path)
         )
 
-        if raw_path.startswith("/prod/"):
-            raw_path = raw_path[len("/prod"):]
+        if raw_path.startswith(
+            "/prod/"
+        ):
+            raw_path = raw_path[
+                len("/prod"):
+            ]
 
         print(
             "ROUTING PATH:",
             repr(raw_path)
         )
 
-        # This exact route must be checked before
-        # the general /files/buildings route.
         if (
             raw_path
-            == "/files/buildings/upload-url"
+            ==
+            "/files/buildings/upload-url"
         ):
-            return process_building_upload_request(
-                event
+            return (
+                process_building_upload_request(
+                    event
+                )
             )
 
         if raw_path.startswith(
@@ -665,12 +1035,20 @@ def process(event, context):
             )
 
         return response(404, {
-            "error": "Unsupported file viewer route",
+            "error":
+                "Unsupported file viewer route",
             "rawPath": raw_path,
             "path": event.get("path"),
             "requestContext": (
-                event.get("requestContext", {})
-                .get("http", {})
+                event
+                .get(
+                    "requestContext",
+                    {}
+                )
+                .get(
+                    "http",
+                    {}
+                )
             )
         })
 
