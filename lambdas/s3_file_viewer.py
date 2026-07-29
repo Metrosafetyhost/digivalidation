@@ -1485,6 +1485,101 @@ def process_building_upload_request(
             PRESIGNED_URL_SECONDS
     })
 
+def process_building_delete_request(
+    event: dict
+) -> dict:
+    body = get_json_body(event)
+
+    supplied_prefix = body.get(
+        "buildingPrefix"
+    )
+
+    object_key = body.get(
+        "objectKey"
+    )
+
+    if not supplied_prefix:
+        return response(400, {
+            "error": "Missing buildingPrefix"
+        })
+
+    if not object_key:
+        return response(400, {
+            "error": "Missing objectKey"
+        })
+
+    if not isinstance(object_key, str):
+        return response(400, {
+            "error": "Invalid objectKey"
+        })
+
+    object_key = object_key.strip()
+
+    building_prefix = (
+        normalise_building_prefix(
+            supplied_prefix
+        )
+    )
+
+    building_root = (
+        find_building_root(
+            building_prefix
+        )
+    )
+
+    if not is_key_in_building_documents(
+        object_key,
+        building_root
+    ):
+        return response(403, {
+            "error": (
+                "The selected file does not belong "
+                "to this Building's Compliance "
+                "Documents folder."
+            )
+        })
+
+    file_name = (
+        object_key.rsplit("/", 1)[-1]
+    )
+
+    if (
+        not file_name
+        or file_name in IGNORED_FILE_NAMES
+    ):
+        return response(400, {
+            "error": (
+                "The selected S3 object cannot "
+                "be deleted."
+            )
+        })
+
+    if object_key.endswith("/"):
+        return response(400, {
+            "error": (
+                "Folders cannot be deleted from "
+                "this viewer."
+            )
+        })
+
+    if not object_exists(object_key):
+        return response(404, {
+            "error": (
+                "The selected file no longer "
+                "exists in S3."
+            )
+        })
+
+    s3.delete_object(
+        Bucket=FILE_BUCKET,
+        Key=object_key
+    )
+
+    return response(200, {
+        "deleted": True,
+        "objectKey": object_key,
+        "fileName": file_name
+    })
 
 def process(
     event,
@@ -1521,6 +1616,17 @@ def process(
         ):
             return (
                 process_building_upload_request(
+                    event
+                )
+            )
+
+        if (
+            raw_path
+            ==
+            "/files/buildings/delete"
+        ):
+            return (
+                process_building_delete_request(
                     event
                 )
             )
