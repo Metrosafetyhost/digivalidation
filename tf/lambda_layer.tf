@@ -1478,7 +1478,8 @@ resource "aws_iam_policy" "s3_file_viewer_read" {
         Effect = "Allow"
 
         Action = [
-          "s3:PutObject"
+          "s3:PutObject",
+          "s3:DeleteObject"
         ]
 
         Resource = [

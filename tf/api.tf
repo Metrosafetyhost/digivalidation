@@ -390,3 +390,11 @@ resource "aws_apigatewayv2_route" "create_building_upload_url" {
   route_key = "POST /files/buildings/upload-url"
   target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
 }
+
+resource "aws_apigatewayv2_route" "s3_file_viewer_building_delete" {
+  api_id = aws_apigatewayv2_api.main.id
+
+  route_key = "POST /files/buildings/delete"
+
+  target = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+}
