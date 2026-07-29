@@ -392,7 +392,7 @@ resource "aws_apigatewayv2_route" "create_building_upload_url" {
 }
 
 resource "aws_apigatewayv2_route" "s3_file_viewer_building_delete" {
-  api_id = aws_apigatewayv2_api.main.id
+  api_id = aws_apigatewayv2_api.lambda_api.id
 
   route_key = "POST /files/buildings/delete"
 
