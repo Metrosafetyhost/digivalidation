@@ -28,6 +28,7 @@ module "lambdas_zip" {
     "fire_validation",
     "archive_viewer",
     "s3_file_viewer",
+    "gam"
   ]
 
   # these are the Python files that get zipped
@@ -55,6 +56,7 @@ module "lambdas_zip" {
     "fire_validation.py",
     "archive_viewer.py",
     "s3_file_viewer.py",
+    "gam.py"
   ]
 
   runtime       = "python3.13"
@@ -154,9 +156,16 @@ module "lambdas_zip" {
         PRESIGNED_URL_SECONDS = "300"
       }
     }
-    
+
+    gam = {
+      handler     = "process"
+      timeout     = 240
+      memory_size = 512
+    }
+        
   }
     # All other lambdas
+    
     basic_event            = { handler = "process", timeout = 240, memory_size = 512 }
     bedrock                = { handler = "process", timeout = 240, memory_size = 512 }
     categorisation         = { handler = "process", timeout = 240, memory_size = 512 }
