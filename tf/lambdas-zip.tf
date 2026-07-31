@@ -135,7 +135,7 @@ module "lambdas_zip" {
       }
     }
 
-    archive_viewer = {
+        archive_viewer = {
       handler     = "process"
       timeout     = 30
       memory_size = 256
@@ -144,6 +144,7 @@ module "lambdas_zip" {
         ARCHIVE_BUCKET = "metrosafety-salesforce-archive"
         ARCHIVE_PREFIX = "salesforce/workorders"
       }
+    }
 
     s3_file_viewer = {
       handler     = "process"
@@ -162,10 +163,8 @@ module "lambdas_zip" {
       timeout     = 240
       memory_size = 512
     }
-        
-  }
-    # All other lambdas
-    
+
+    # All other Lambdas
     basic_event            = { handler = "process", timeout = 240, memory_size = 512 }
     bedrock                = { handler = "process", timeout = 240, memory_size = 512 }
     categorisation         = { handler = "process", timeout = 240, memory_size = 512 }
