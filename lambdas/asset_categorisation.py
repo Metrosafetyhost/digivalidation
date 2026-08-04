@@ -402,9 +402,20 @@ OBJECT_MAP: dict[str, list[str]] = {
 # ---------------------------
 # Helper functions
 # ---------------------------
+def is_blurred_derivative(key: str) -> bool:
+    """Return True when the S3 object's filename ends in `_blurred[.ext]`."""
+    filename = key.rsplit("/", 1)[-1].lower()
+    stem = filename.rsplit(".", 1)[0]
+    return stem.endswith("_blurred")
+
+
 def find_key_by_prefix(prefix: str) -> str | None:
     """
-    Return the most recently modified S3 key whose name starts with the given prefix.
+    Return the newest original S3 key whose name starts with the given prefix.
+
+    Privacy-processing derivatives such as `photo_blurred.jpg` deliberately
+    share the ContentVersion prefix, so they must not participate in the
+    newest-object comparison.
     """
     started = time.time()
     log_event("INFO", "s3_lookup_started", bucket=S3_BUCKET, prefix=prefix)
@@ -413,12 +424,16 @@ def find_key_by_prefix(prefix: str) -> str | None:
         latest_key, latest_ts = None, 0.0
         page_count = 0
         object_count = 0
+        blurred_object_count = 0
 
         for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix):
             page_count += 1
             contents = page.get("Contents", [])
             object_count += len(contents)
             for obj in contents:
+                if is_blurred_derivative(obj["Key"]):
+                    blurred_object_count += 1
+                    continue
                 ts = obj["LastModified"].timestamp()
                 if ts > latest_ts:
                     latest_ts = ts
@@ -433,6 +448,7 @@ def find_key_by_prefix(prefix: str) -> str | None:
             latest_key=latest_key,
             pages_scanned=page_count,
             objects_matched=object_count,
+            blurred_objects_ignored=blurred_object_count,
             duration_ms=round((time.time() - started) * 1000, 2),
         )
         return latest_key

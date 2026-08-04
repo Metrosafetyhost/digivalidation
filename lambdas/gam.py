@@ -186,17 +186,27 @@ def _presign_s3_key(s3_key: str) -> str:
     )
 
 
+def _is_blurred_derivative(s3_key: str) -> bool:
+    """Return True when the S3 object's filename ends in `_blurred[.ext]`."""
+    filename = s3_key.rsplit("/", 1)[-1].lower()
+    stem = filename.rsplit(".", 1)[0]
+    return stem.endswith("_blurred")
+
+
 def _find_s3_key(content_version_id: str) -> str:
-    """Find the newest S3 object whose key begins with a ContentVersion ID."""
+    """Find the newest non-blurred object for a ContentVersion ID."""
     latest_key = None
     latest_modified = None
 
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=ASSET_BUCKET, Prefix=content_version_id):
         for item in page.get("Contents", []):
+            key = item.get("Key")
+            if not key or _is_blurred_derivative(key):
+                continue
             modified = item.get("LastModified")
             if latest_modified is None or (modified and modified > latest_modified):
-                latest_key = item.get("Key")
+                latest_key = key
                 latest_modified = modified
 
     if not latest_key:
