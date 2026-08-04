@@ -1,3 +1,4 @@
+
 import base64
 import json
 import logging
@@ -185,16 +186,39 @@ def _presign_s3_key(s3_key: str) -> str:
     )
 
 
-def _image_url(image: dict[str, Any]) -> str | None:
-    # Prefer S3 because Lambda controls the short-lived access URL.
-    if image.get("s3Key"):
-        return _presign_s3_key(str(image["s3Key"]))
-    if image.get("resizedUrl"):
-        return str(image["resizedUrl"])
-    if image.get("originalUrl"):
-        url = str(image["originalUrl"])
-        return url if url.startswith(("https://", "http://")) else f"https://{url}"
-    return None
+def _find_s3_key(content_version_id: str) -> str:
+    """Find the newest S3 object whose key begins with a ContentVersion ID."""
+    latest_key = None
+    latest_modified = None
+
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=ASSET_BUCKET, Prefix=content_version_id):
+        for item in page.get("Contents", []):
+            modified = item.get("LastModified")
+            if latest_modified is None or (modified and modified > latest_modified):
+                latest_key = item.get("Key")
+                latest_modified = modified
+
+    if not latest_key:
+        raise ValueError(
+            f"No S3 image found in {ASSET_BUCKET} for ContentVersionId "
+            f"'{content_version_id}'"
+        )
+    return latest_key
+
+
+def _image_url(image: dict[str, Any]) -> str:
+    content_version_id = str(image.get("contentVersionId") or "").strip()
+    if not content_version_id:
+        raise ValueError("Every asset image must contain contentVersionId")
+
+    s3_key = _find_s3_key(content_version_id)
+    logger.info(
+        "Resolved ContentVersionId %s to S3 key %s",
+        content_version_id,
+        s3_key,
+    )
+    return _presign_s3_key(s3_key)
 
 
 def _build_user_content(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -220,12 +244,8 @@ def _build_user_content(payload: dict[str, Any]) -> list[dict[str, Any]]:
     image_count = 0
     for image in images[:MAX_IMAGES]:
         if not isinstance(image, dict):
-            continue
-        try:
-            url = _image_url(image)
-        except Exception as exc:
-            logger.warning("Unable to prepare image %s: %s", image.get("contentVersionId"), exc)
-            continue
+            raise ValueError("Every item in asset.images must be a JSON object")
+        url = _image_url(image)
         if url:
             content.append({"type": "image_url", "image_url": {"url": url}})
             image_count += 1
