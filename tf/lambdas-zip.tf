@@ -135,7 +135,7 @@ module "lambdas_zip" {
       }
     }
 
-        archive_viewer = {
+    archive_viewer = {
       handler     = "process"
       timeout     = 30
       memory_size = 256
@@ -162,6 +162,13 @@ module "lambdas_zip" {
       handler     = "process"
       timeout     = 240
       memory_size = 512
+
+      lambda_environment = {
+        OPENAI_SECRET_ARN     = aws_secretsmanager_secret.openai.arn
+        ASSET_BUCKET          = "metrosafetyprod"
+        GAM_MAX_IMAGES        = "4"
+        PRESIGNED_URL_SECONDS = "900"
+      }
     }
 
     # All other Lambdas

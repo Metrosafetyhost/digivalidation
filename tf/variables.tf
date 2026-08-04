@@ -73,6 +73,7 @@ variable "openai_enabled_lambdas" {
   type    = list(string)
   default = ["asset_categorisation",
             "pdf_qa",
+            "gam",
             ] # add more later as needed
 }
 

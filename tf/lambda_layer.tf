@@ -1498,3 +1498,40 @@ resource "aws_iam_role_policy_attachment" "attach_s3_file_viewer_read" {
     module.lambdas_zip
   ]
 }
+
+# GAM 
+data "aws_iam_role" "gam_role" {
+  name = "bedrock-lambda-gam"
+
+  depends_on = [
+    module.lambdas_zip
+  ]
+}
+
+resource "aws_iam_role_policy" "gam_s3_read" {
+  name = "AllowGamReadAssetImages"
+  role = data.aws_iam_role.gam_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "ListAssetImagesByContentVersionId"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = "arn:aws:s3:::metrosafetyprod"
+        Condition = {
+          StringLike = {
+            "s3:prefix" = ["068*"]
+          }
+        }
+      },
+      {
+        Sid      = "ReadAssetImages"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = "arn:aws:s3:::metrosafetyprod/*"
+      }
+    ]
+  })
+}
