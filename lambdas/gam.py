@@ -1,4 +1,3 @@
-
 import base64
 import json
 import logging
@@ -38,33 +37,39 @@ def _load_openai_key() -> str:
 openai_client = OpenAI(api_key=_load_openai_key())
 
 
-# Existing text Asset Capture fields, existing image Asset Capture fields, and
-# proposed GAM classification fields. Defaults keep the response predictable.
+# Initial GAM fields agreed for the first tuning release. Parked fields are
+# deliberately omitted so Salesforce receives only the current scope.
 OUTPUT_DEFAULTS: dict[str, Any] = {
-    # Existing text Asset Capture
+    # Core asset details
     "Object_Type__c": "",
     "Object_Category__c": "",
     "Asset_Instructions__c": "",
     "Label__c": "",
     "Name": "",
     "What3Words__c": "",
-    "TEST_RESULT__c": "",
     "Floor__c": "",
 
-    # Existing image Asset Capture
+    # Identification
     "Manufacturer_AI__c": "",
     "What_Is_It__c": "",
     "SerialNumber": "",
     "Colour__c": "",
     "Rough_Dimensions__c": "",
     "Distinguishing_Features__c": "",
+    "Other_Codes_Or_Numbers__c": "",
+
+    # Condition and maintenance
     "Asset_Condition__c": "",
     "Broken_Or_Needs_Replacement__c": "",
     "Service_Provider_Or_Supplier__c": "",
-    "Other_Codes_Or_Numbers__c": "",
     "How_To_Test__c": "",
     "How_To_Replace__c": "",
     "Parts_Needed__c": "",
+    "Suggested_Test_Frequency__c": "",
+    "Test_Frequency_Standards_To_Check__c": "",
+    "Test_Frequency_Confidence__c": 0.0,
+
+    # Costs
     "UK_Estimated_Price__c": "",
     "Estimated_Unit_Replacement_Cost__c": "",
     "Estimated_Replacement_Parts_Price__c": "",
@@ -72,30 +77,24 @@ OUTPUT_DEFAULTS: dict[str, Any] = {
     "Estimated_Labour_Cost_To_Replace__c": "",
     "Estimated_Labour_Cost_To_Repair_On_Site__c": "",
     "Estimated_Time_To_Replace_On_Site__c": "",
+
+    # AI categorisation
     "Object_Type_AI__c": "",
     "Object_Category_AI__c": "",
     "Confidence__c": 0.0,
-    "Nearest_Store_Name__c": "",
-    "Nearest_Store_Address__c": "",
-    "Drive_Time__c": "",
-    "Drive_Distance_km__c": "",
-    "Price_Including_Drive_Time__c": "",
-    "Opening_Hours__c": "",
-    "Premises_Situation__c": "",
-    "Location_Type__c": "",
-    "Building_Classification__c": "",
-    "Floor_Construction__c": "",
-    "Building_Height_m__c": "",
-    "Storeys_Above_Ground__c": "",
-    "Storeys_Below_Ground__c": "",
-    "Approx_Dimensions__c": "",
-    "Roof_Details__c": "",
-    "Vehicle_Parking__c": "",
-    "General_Occupancy_Types__c": "",
-    "Fire_History_Summary__c": "",
-    "Obsequio_cross_sell_long__c": "",
 
-    # New GAM classifications. These remain suggestions until dataset-backed.
+    # Fire-safety classification
+    "Fire_Safety_Classification__c": "Insufficient Information",
+    "Fire_Safety_Classification_Confidence__c": "Low",
+    "Fire_Safety_Classification_Reasoning__c": "",
+    "Fire_Safety_Evidence_Observed__c": "",
+    "Fire_Safety_Alternative_Classification__c": "",
+    "Fire_Safety_Missing_Information__c": "",
+    "Fire_Safety_Standards_To_Check__c": "",
+    "Fire_Safety_Verification_Action__c": "",
+    "Fire_Safety_Compliance_Conclusion__c": "Sufficient information not available",
+
+    # Additional classifications. These remain suggestions until dataset-backed.
     "UNSPSC_Code__c": "",
     "UNSPSC_Description__c": "",
     "UNSPSC_Codeset_Version__c": "",
@@ -107,12 +106,6 @@ OUTPUT_DEFAULTS: dict[str, Any] = {
     "Uniclass_Version__c": "",
     "Uniclass_Confidence__c": 0.0,
     "Uniclass_Verification_Status__c": "Unverified AI suggestion",
-    "SFG20_Schedule_Code__c": "",
-    "SFG20_Schedule_Title__c": "",
-    "SFG20_Schedule_Version__c": "",
-    "SFG20_Confidence__c": 0.0,
-    "SFG20_Criticality_Colours__c": "",
-    "SFG20_Verification_Status__c": "Official data access required",
     "Classification_Review_Required__c": True,
     "Classification_Notes__c": "",
 }
@@ -137,15 +130,55 @@ Rules:
   evidence permits.
 - Object_Type__c/Object_Category__c are the text-capture result;
   Object_Type_AI__c/Object_Category_AI__c are the image-assisted result.
-- UNSPSC, Uniclass and SFG20 values are candidate suggestions only in this
+- UNSPSC and Uniclass values are candidate suggestions only in this
   version because no authoritative reference dataset is supplied.
 - Do not fabricate an exact classification code. If you cannot confidently
   recall a genuine code, leave the code blank and explain the likely class in
   Classification_Notes__c.
-- SFG20 criticality colours belong to maintenance tasks, not the physical asset.
-  Do not assert colours without official schedule/task evidence.
 - Keep Classification_Review_Required__c true until authoritative datasets and
   approval rules are connected.
+
+Testing-frequency rules:
+- Suggest the routine test frequency normally associated with the identified
+  asset type in the UK, such as weekly, monthly, six-monthly or annually.
+- Put the frequency in Suggested_Test_Frequency__c and the potentially relevant
+  British Standard or UK guidance in Test_Frequency_Standards_To_Check__c.
+- This is a scheduling suggestion, not a compliance conclusion. Do not claim a
+  standard definitely applies unless the asset type and supplied context support
+  it. If uncertain, leave the frequency blank and state what must be checked.
+
+Fire-safety classification rules:
+- Fire_Safety_Classification__c must be exactly one of:
+  Passive Fire Protection (PFP); Active Fire Protection (AFP);
+  Fire Safety Management (FSM); Mixed or Combined System;
+  Not a Fire-Safety Asset; Insufficient Information.
+- Passive Fire Protection means built-in products or systems intended to resist,
+  contain, limit or delay fire, heat or smoke, normally without activation.
+- Active Fire Protection means equipment that detects, activates, moves,
+  discharges, operates or is manually used to warn, control smoke, suppress fire
+  or support firefighting.
+- Fire Safety Management means administrative, procedural or organisational
+  controls rather than physical fire-protection equipment.
+- Mixed or Combined System requires meaningful passive and active elements.
+- Fire_Safety_Classification_Confidence__c must be High, Medium or Low.
+- Use the photographs and supplied asset information together. Distinguish the
+  asset itself from nearby equipment and do not classify from colour, shape,
+  label or apparent location alone.
+- Do not assume an ordinary door is a fire door, a sealed penetration is
+  compliant fire stopping, or a damper is passive/active without operational
+  evidence. When evidence is incomplete, use Insufficient Information.
+- Do not infer fire-resistance ratings such as FD30, FD60, EI30 or EI60 unless
+  visible or explicitly supplied.
+- Fire_Safety_Evidence_Observed__c must record only observed or supplied facts.
+- Fire_Safety_Standards_To_Check__c may list potentially relevant UK documents,
+  but must not present them as confirmed requirements.
+- Fire_Safety_Compliance_Conclusion__c must be exactly one of:
+  Classification only — compliance not assessed;
+  Further documentary review required;
+  Physical inspection by a competent person required;
+  Sufficient information not available.
+- Never provide a definitive compliance or certification conclusion from the
+  photographs alone.
 - Return JSON only, with no Markdown.
 """.strip()
 
@@ -277,9 +310,9 @@ def _coerce_result(raw: dict[str, Any]) -> dict[str, Any]:
 
     for key in (
         "Confidence__c",
+        "Test_Frequency_Confidence__c",
         "UNSPSC_Confidence__c",
         "Uniclass_Confidence__c",
-        "SFG20_Confidence__c",
     ):
         try:
             result[key] = max(0.0, min(1.0, float(result[key])))
@@ -289,8 +322,30 @@ def _coerce_result(raw: dict[str, Any]) -> dict[str, Any]:
     # Until reference lookup exists, these values must not look approved.
     result["UNSPSC_Verification_Status__c"] = "Unverified AI suggestion"
     result["Uniclass_Verification_Status__c"] = "Unverified AI suggestion"
-    result["SFG20_Verification_Status__c"] = "Official data access required"
     result["Classification_Review_Required__c"] = True
+
+    allowed_fire_classes = {
+        "Passive Fire Protection (PFP)",
+        "Active Fire Protection (AFP)",
+        "Fire Safety Management (FSM)",
+        "Mixed or Combined System",
+        "Not a Fire-Safety Asset",
+        "Insufficient Information",
+    }
+    if result["Fire_Safety_Classification__c"] not in allowed_fire_classes:
+        result["Fire_Safety_Classification__c"] = "Insufficient Information"
+
+    if result["Fire_Safety_Classification_Confidence__c"] not in {"High", "Medium", "Low"}:
+        result["Fire_Safety_Classification_Confidence__c"] = "Low"
+
+    allowed_compliance_conclusions = {
+        "Classification only — compliance not assessed",
+        "Further documentary review required",
+        "Physical inspection by a competent person required",
+        "Sufficient information not available",
+    }
+    if result["Fire_Safety_Compliance_Conclusion__c"] not in allowed_compliance_conclusions:
+        result["Fire_Safety_Compliance_Conclusion__c"] = "Sufficient information not available"
     return result
 
 
