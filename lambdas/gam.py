@@ -49,6 +49,7 @@ OUTPUT_DEFAULTS: dict[str, Any] = {
     "Asset_Instructions__c": "",
     "Label__c": "",
     "Name": "",
+    "What3Words__c": "",
     "Floor__c": "",
 
     # Identification
@@ -113,6 +114,64 @@ OUTPUT_DEFAULTS: dict[str, Any] = {
 }
 
 
+# Exact Salesforce Asset_Condition__c picklist values.
+ASSET_CONDITION_VALUES = [
+    "C1 - Very Good Condition",
+    "C2 - Needs cleaning",
+    "C2 - Minor Defects Only",
+    "C3 - Maintenance required to return to an accepted level of service",
+    "C4 - Requires renewal",
+    "C5 - Asset Unserviceable",
+]
+
+
+def normalize_asset_condition(text: str) -> str:
+    """Map the model's condition wording to an exact Salesforce picklist value."""
+    value = (text or "").strip()
+    if not value:
+        return ""
+    if value in ASSET_CONDITION_VALUES:
+        return value
+
+    normalised = value.lower()
+
+    if any(term in normalised for term in (
+        "unserviceable", "not working", "doesn't work", "broken",
+        "inoperative", "unsafe", "failed",
+    )):
+        return "C5 - Asset Unserviceable"
+
+    if any(term in normalised for term in (
+        "requires renewal", "replace", "replacement", "end of life",
+        "obsolete", "beyond repair", "major defect",
+    )):
+        return "C4 - Requires renewal"
+
+    if any(term in normalised for term in (
+        "maintenance required", "requires maintenance", "repair", "service",
+        "intermittent fault", "faulty",
+    )):
+        return "C3 - Maintenance required to return to an accepted level of service"
+
+    if any(term in normalised for term in (
+        "dirty", "dust", "grime", "cleaning", "needs cleaning",
+    )):
+        return "C2 - Needs cleaning"
+
+    if any(term in normalised for term in (
+        "minor defect", "minor defects", "scuff", "scratch", "crack",
+        "loose", "wear", "worn", "cosmetic", "slight", "fair condition",
+    )):
+        return "C2 - Minor Defects Only"
+
+    if any(term in normalised for term in (
+        "very good", "excellent", "good", "serviceable", "ok", "working",
+    )):
+        return "C1 - Very Good Condition"
+
+    return "C2 - Minor Defects Only"
+
+
 SYSTEM_PROMPT = """
 You are a UK building asset enrichment assistant for Metro Safety.
 
@@ -143,10 +202,17 @@ Evidence rules:
   "Unable to determine from supplied evidence" rather than an unexplained blank.
 - Use concise British-English Salesforce-ready strings.
 - Confidence fields must be numbers from 0 to 1.
-- Asset_Condition__c should use one of the existing C1-C5 descriptions where
-  evidence permits. Base it only on visible condition; do not imply functional
-  testing. If the photographs are insufficient, explain this in
-  Broken_Or_Needs_Replacement__c.
+- Asset_Condition__c must be exactly one of these Salesforce values when visible
+  evidence permits a condition assessment:
+  C1 - Very Good Condition;
+  C2 - Needs cleaning;
+  C2 - Minor Defects Only;
+  C3 - Maintenance required to return to an accepted level of service;
+  C4 - Requires renewal;
+  C5 - Asset Unserviceable.
+  Base it only on visible condition; do not imply functional testing. If the
+  photographs are insufficient, leave Asset_Condition__c empty and explain the
+  limitation in Broken_Or_Needs_Replacement__c.
 - Object_Type__c/Object_Category__c are the text-capture result;
   Object_Type_AI__c/Object_Category_AI__c are the image-assisted result.
 
@@ -360,6 +426,10 @@ def _coerce_result(raw: dict[str, Any]) -> dict[str, Any]:
     for key in OUTPUT_DEFAULTS:
         if key in raw and raw[key] is not None:
             result[key] = raw[key]
+
+    result["Asset_Condition__c"] = normalize_asset_condition(
+        str(result.get("Asset_Condition__c") or "")
+    )
 
     for key in (
         "Confidence__c",
