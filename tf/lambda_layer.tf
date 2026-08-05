@@ -1499,7 +1499,6 @@ resource "aws_iam_role_policy_attachment" "attach_s3_file_viewer_read" {
   ]
 }
 
-# GAM 
 # GAM
 resource "aws_iam_role_policy" "gam_s3_read" {
   name = "AllowGamReadAssetImages"
@@ -1513,12 +1512,6 @@ resource "aws_iam_role_policy" "gam_s3_read" {
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
         Resource = "arn:aws:s3:::metrosafetyprod"
-
-        Condition = {
-          StringLike = {
-            "s3:prefix" = ["068*"]
-          }
-        }
       },
       {
         Sid      = "ReadAssetImages"
