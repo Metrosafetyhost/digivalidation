@@ -1,6 +1,3 @@
-
-"""GAM asset-enrichment Lambda for Salesforce and PlanStudio assets."""
-
 import base64
 import json
 import logging
@@ -44,12 +41,9 @@ openai_client = OpenAI(api_key=_load_openai_key())
 # deliberately omitted so Salesforce receives only the current scope.
 OUTPUT_DEFAULTS: dict[str, Any] = {
     # Core asset details
-    "Object_Type__c": "",
-    "Object_Category__c": "",
     "Asset_Instructions__c": "",
     "Label__c": "",
     "Name": "",
-    "What3Words__c": "",
     "Floor__c": "",
 
     # Identification
