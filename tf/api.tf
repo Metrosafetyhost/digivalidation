@@ -128,7 +128,6 @@ resource "aws_lambda_permission" "apigw_lambda_asset_categorisation" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
 }
-
 # Integration for GAM (Geospatial Asset Mapping) Lambda
 resource "aws_apigatewayv2_integration" "gam_integration" {
   api_id                 = aws_apigatewayv2_api.lambda_api.id
@@ -144,8 +143,13 @@ resource "aws_apigatewayv2_route" "gam_route" {
   target    = "integrations/${aws_apigatewayv2_integration.gam_integration.id}"
 }
 
-output "gam_api_url" {
-  value = "${aws_apigatewayv2_api.lambda_api.api_endpoint}/${aws_apigatewayv2_stage.lambda_stage.name}/gam"
+# Permission for API Gateway to invoke GAM
+resource "aws_lambda_permission" "apigw_lambda_gam" {
+  statement_id  = "AllowExecutionFromAPIGatewayGam"
+  action        = "lambda:InvokeFunction"
+  function_name = "bedrock-lambda-gam"
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
 }
 
 #Integration for Water Risk Case Ingest Lambda
