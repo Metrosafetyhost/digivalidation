@@ -85,6 +85,15 @@ CONFIGURED_FOLDER_STRUCTURE = {
 }
 
 
+MALFORMED_BUILDING_ROOT_MARKERS = (
+    "compliance documents",
+    "assessment",
+    "testing",
+    "maintenance, training",
+    "plans, procedures, policies etc.",
+)
+
+
 def response(
     status_code: int,
     body: dict
@@ -333,17 +342,11 @@ def find_building_roots(
     building_prefix: str
 ) -> set[str]:
     """
-    Resolve the complete S3 Building folder from
-    the stable Building Number prefix.
+    Resolve all immediate S3 Building folders that
+    begin with the stable Building Number token.
 
-    Example input:
-
-        Buildings//018278 |
-
-    Example resolved root:
-
-        Buildings//018278 | In Store FC Travel
-        Shop, Asda Store EH54 6NB/
+    Both the current double-slash parent and the
+    historical single-slash parent are checked.
     """
     lookup_token = (
         get_building_lookup_token(
@@ -353,29 +356,204 @@ def find_building_roots(
 
     all_matches = set()
 
-    for index, parent_prefix in enumerate(
+    for parent_prefix in (
         get_building_parent_prefixes()
     ):
-        matches = (
+        all_matches.update(
             find_building_matches_under_parent(
                 parent_prefix,
                 lookup_token
             )
         )
 
-        if index == 0 and len(matches) == 1:
-            return matches
-
-        all_matches.update(
-            matches
-        )
-
     return all_matches
 
 
-def find_building_root(
+def get_root_parent_prefix(
+    building_root: str
+) -> str:
+    for parent_prefix in (
+        get_building_parent_prefixes()
+    ):
+        if building_root.startswith(
+            parent_prefix
+        ):
+            return parent_prefix
+
+    return ""
+
+
+def get_building_root_suffix(
+    building_root: str,
+    lookup_token: str
+) -> str:
+    parent_prefix = (
+        get_root_parent_prefix(
+            building_root
+        )
+    )
+
+    if not parent_prefix:
+        return ""
+
+    folder_name = (
+        building_root[
+            len(parent_prefix):
+        ]
+        .rstrip("/")
+    )
+
+    if not folder_name.startswith(
+        lookup_token
+    ):
+        return ""
+
+    return folder_name[
+        len(lookup_token):
+    ].strip()
+
+
+def building_root_priority(
+    building_root: str,
+    lookup_token: str
+) -> int:
+    """
+    Rank candidate Building roots.
+
+    A correctly named Building root is preferred
+    over a malformed root where a document folder
+    name has been appended to the Building name.
+
+    Named roots are preferred over number-only
+    fallback roots. The current double-slash parent
+    receives a small preference over the historical
+    single-slash parent.
+    """
+    parent_prefix = (
+        get_root_parent_prefix(
+            building_root
+        )
+    )
+
+    score = 0
+
+    if parent_prefix == f"{BUILDING_PREFIX}//":
+        score += 20
+    elif parent_prefix == f"{BUILDING_PREFIX}/":
+        score += 10
+
+    suffix = get_building_root_suffix(
+        building_root,
+        lookup_token
+    )
+
+    suffix_lower = suffix.lower()
+
+    if any(
+        marker in suffix_lower
+        for marker in (
+            MALFORMED_BUILDING_ROOT_MARKERS
+        )
+    ):
+        score -= 1000
+    elif suffix:
+        score += 50
+
+    return score
+
+
+def prefix_contains_real_files(
+    prefix: str
+) -> bool:
+    """
+    Return True when a prefix contains at least one
+    real document rather than only folder markers or
+    ignored processing marker files.
+    """
+    paginator = s3.get_paginator(
+        "list_objects_v2"
+    )
+
+    for page in paginator.paginate(
+        Bucket=FILE_BUCKET,
+        Prefix=prefix
+    ):
+        for item in page.get(
+            "Contents",
+            []
+        ):
+            key = item.get(
+                "Key",
+                ""
+            )
+
+            if not key or key.endswith("/"):
+                continue
+
+            file_name = (
+                key.rsplit("/", 1)[-1]
+            )
+
+            if file_name in IGNORED_FILE_NAMES:
+                continue
+
+            return True
+
+    return False
+
+
+def create_missing_building_root(
     building_prefix: str
 ) -> str:
+    """
+    Create a zero-byte S3 folder marker when a
+    Building does not yet have an S3 root.
+
+    Salesforce currently supplies the stable value
+    `Buildings//<number> |` rather than the full
+    Building name, so the fallback root is created
+    directly from that stable prefix.
+    """
+    normalised_prefix = (
+        normalise_building_prefix(
+            building_prefix
+        )
+    )
+
+    building_root = (
+        normalised_prefix.rstrip("/")
+        + "/"
+    )
+
+    s3.put_object(
+        Bucket=FILE_BUCKET,
+        Key=building_root,
+        Body=b"",
+        ContentType="application/x-directory"
+    )
+
+    return building_root
+
+
+def resolve_building_root(
+    building_prefix: str,
+    create_if_missing: bool = True
+) -> dict:
+    """
+    Select the safest Building root and return any
+    warnings about lower-priority legacy roots.
+    
+    A missing root can be created automatically so
+    the configured virtual folder structure remains
+    available without relying on Neilon to create
+    empty folders first.
+    """
+    lookup_token = (
+        get_building_lookup_token(
+            building_prefix
+        )
+    )
+
     building_roots = (
         find_building_roots(
             building_prefix
@@ -383,27 +561,93 @@ def find_building_root(
     )
 
     if not building_roots:
-        raise ValueError(
-            "No AWS documents or Building folder "
-            "were found for this Building."
+        if not create_if_missing:
+            raise ValueError(
+                "No AWS documents or Building folder "
+                "were found for this Building."
+            )
+
+        created_root = (
+            create_missing_building_root(
+                building_prefix
+            )
         )
 
-    if len(building_roots) > 1:
-        roots_text = ", ".join(
-            sorted(building_roots)
-        )
+        return {
+            "buildingRoot": created_root,
+            "buildingRootCreated": True,
+            "warnings": []
+        }
 
-        raise ValueError(
-            "Multiple S3 Building folders were "
-            "found for this Building Number. "
-            "The system could not safely choose "
-            "one. Found: " +
-            roots_text
-        )
-
-    return next(
-        iter(building_roots)
+    ranked_roots = sorted(
+        building_roots,
+        key=lambda root: (
+            building_root_priority(
+                root,
+                lookup_token
+            ),
+            root
+        ),
+        reverse=True
     )
+
+    highest_score = (
+        building_root_priority(
+            ranked_roots[0],
+            lookup_token
+        )
+    )
+
+    highest_ranked_roots = [
+        root
+        for root in ranked_roots
+        if building_root_priority(
+            root,
+            lookup_token
+        ) == highest_score
+    ]
+
+    if len(highest_ranked_roots) > 1:
+        roots_text = ", ".join(
+            sorted(highest_ranked_roots)
+        )
+
+        raise ValueError(
+            "Multiple equally valid S3 Building "
+            "folders were found for this Building "
+            "Number. The system could not safely "
+            "choose one. Found: "
+            + roots_text
+        )
+
+    selected_root = ranked_roots[0]
+    warnings = []
+
+    for lower_priority_root in ranked_roots[1:]:
+        if prefix_contains_real_files(
+            lower_priority_root
+        ):
+            warnings.append(
+                "A lower-priority legacy Building "
+                "folder also contains files and may "
+                "require review: "
+                + lower_priority_root
+            )
+
+    return {
+        "buildingRoot": selected_root,
+        "buildingRootCreated": False,
+        "warnings": warnings
+    }
+
+
+def find_building_root(
+    building_prefix: str
+) -> str:
+    return resolve_building_root(
+        building_prefix,
+        create_if_missing=True
+    )["buildingRoot"]
 
 
 def normalise_folder_path(
@@ -1226,10 +1470,15 @@ def process_building_request(
         )
     )
 
-    building_root = (
-        find_building_root(
-            building_prefix
+    root_resolution = (
+        resolve_building_root(
+            building_prefix,
+            create_if_missing=True
         )
+    )
+
+    building_root = (
+        root_resolution["buildingRoot"]
     )
 
     if raw_path.endswith(
@@ -1348,7 +1597,15 @@ def process_building_request(
         "files":
             files,
         "canUpload":
-            can_upload
+            can_upload,
+        "buildingRootCreated":
+            root_resolution[
+                "buildingRootCreated"
+            ],
+        "warnings":
+            root_resolution[
+                "warnings"
+            ]
     })
 
 
