@@ -1,5 +1,3 @@
-"""GAM asset-enrichment Lambda for Salesforce and PlanStudio assets."""
-
 import base64
 import json
 import logging
@@ -107,6 +105,153 @@ OUTPUT_DEFAULTS: dict[str, Any] = {
 }
 
 
+def _floor_categories() -> list[str]:
+    """Return the Floor subtypes used by the existing Asset Capture Lambda."""
+    categories: list[str] = []
+    for number in range(1, 51):
+        suffix = "th"
+        if number % 100 not in {11, 12, 13}:
+            suffix = {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
+        mezzanine = (
+            "14th Mezzanin"
+            if number == 14
+            else f"{number}{suffix} Mezzanine"
+        )
+        categories.extend((f"{number}{suffix} Floor", mezzanine))
+    categories.extend((
+        "B1 Mezzanine", "B2 Mezzanine", "B3 Mezzanine",
+        "Basement 1", "Basement 2", "Basement 3", "Basement 4", "Basement 5",
+        "Grd Mezzanine", "Ground Floor",
+    ))
+    return categories
+
+
+# The same constrained Salesforce type/category map used by
+# asset_categorisation.py. Object type is a key; object category is one of the
+# corresponding values (or N/A when that type has no subtype).
+OBJECT_MAP: dict[str, list[str]] = {
+    "Access": [],
+    "Activation Point": ["Button (Test)", "Check LED", "Distribution Board", "Fish Key", "Fish Key (Own)", "Fish Key (Single Tooth)", "Fish Key (Thin)", "Fish Key Bank", "Fish Key Switch", "Flick Fuse", "Flick Switch", "Fuse (Ceramic)", "Fuse (Pull)", "Key (Flat)", "Switch (Push)", "Switch (Rocker)", "Switch (Test)", "Testing Panel", "Unlisted"],
+    "Alarm Gong": [],
+    "Aquamist": [],
+    "Assembly Point": [],
+    "Beacon": [],
+    "Boiler": [],
+    "BSRA": [],
+    "Building": [],
+    "Building Plan": [],
+    "Building Generator": [],
+    "Burns Kit": [],
+    "Call Point": ["Button (Test)", "Flick Fuse", "Key (Allen)", "Key (Apollo)", "Key (Cylindrical)", "Key (Fork)", "Key (GFE)", "Key (KAC)", "Key (Long)", "Key (Newlec)", "Key (Old Flag)", "Key (Pin)", "Key (Raffiki)", "Key (Side)", "Key (STI)", "Key (Sycall)", "Key (TOK)", "Key (Triangle)", "Key (UP)", "Key (White Flag)", "Unlisted"],
+    "Calorifier": [],
+    "CTTV": [],
+    "Damper": [],
+    "Diesel Storage Tank": [],
+    "Disabled Emergency Refugee Point": [],
+    "Door Released Switch": [],
+    "Dry Riser": [],
+    "Electric Meter": ["Dial Meter", "Digital Meter", "Prepayment Meter", "Smart Meter", "Standard Meter", "Variable-rate Meter"],
+    "Emergency Light": ["Bulb", "Check LED", "Cone", "Coved", "Decorative", "Flood Lamp", "Flood Light", "Fluorescent Tube", "Fluro Square", "Halogen", "Hanging", "Hexagon", "LED Spot Light", "Oblong", "Round", "Running Man", "Semi Circular", "Spot Light", "Square", "Strip Light", "Strip Tubes", "Twin Spots", "Unlisted"],
+    "Emergency Stop Activation Switch": [],
+    "Emergency Stop Beacon": [],
+    "Emergency Stop Button": [],
+    "Emergency Stop Reset Button": [],
+    "Emergency Stop Reset Key": [],
+    "Evacuation Plan": [],
+    "External Wall": [],
+    "Extinguisher": [],
+    "Eye Wash Kit": [],
+    "Fire Alarm Panel": ["Key (TOK)", "Key Panel (1001)", "Key Panel (134)", "Key Panel (801)", "Key Panel (827)", "Key Panel (901)", "Key Panel (Black Plastic Flag)", "Key Panel (Plastic RED)", "Key Panel (Plastic Tok)", "Key Panel (TOK 001)", "Key Panel (TOK 003)", "Key Panel (TOK 007)", "Unlisted"],
+    "Fire Blanket": [],
+    "Fire Door - Communal": [],
+    "Fire Door - Door and a Half": [],
+    "Fire Door - Double": [],
+    "Fire Door - Flat Front": [],
+    "Fire Door - Single": [],
+    "Fire Shutter": [],
+    "First Aid Kit": [],
+    "Floor": _floor_categories(),
+    "Flow Switch": [],
+    "Foam Inlet": [],
+    "Gas Meter": ["Dial Meter", "Digital Meter", "Prepayment Meter", "Smart Meter", "Standard Meter", "Variable-rate Meter"],
+    "Heat / Smoke Detector": [],
+    "Heat Detector": [],
+    "Hose Reel": [],
+    "Hydrant": [],
+    "Installation Valve": ["Dry", "Wet"],
+    "Isolation Switch": [],
+    "Jet Fan": ["Key (Fork)", "Smoke Generator"],
+    "Key Safe": ["Combination", "Key"],
+    "Large Step Ladder": [],
+    "Led Fluro": [],
+    "Lightning Conductor": [],
+    "Logbook": ["Customers", "Metro"],
+    "Logbook Cabinet": [],
+    "Magnetic Door Release": [],
+    "Meter": ["Dial Meter", "Digital Meter", "Electric Meter", "Electric Multi Read Meter", "Gas Meter", "Gas Multi Read Meter", "Prepayment Meter", "Smart Meter", "Standard Meter", "Variable-rate Meter", "Water Meter"],
+    "Mobile Elevated Work Platform": [],
+    "Monitoring Appliance": [],
+    "Multi-Heat": [],
+    "Optical Smoke": [],
+    "Pressure Gauge": [],
+    "Pump Test Valve": [],
+    "Refuge Alarm": [],
+    "Refuge Point Alarm Panel": [],
+    "Region": ["Administration Office", "Annexe", "Attic", "Auditorium", "Bank", "Bathroom", "Bike Store", "Bin Room", "Bin Store", "Boardroom", "Boiler Room", "Cafe", "Caretakers Office", "Car Park", "Cellar", "Changing Room", "Cleaner Storage", "Computer Room", "Conference Room", "Corridor", "Corridor (LH)", "Corridor (RH)", "Corridor (Service)", "Courtyard", "Cupboard", "Dance Hall", "Dining Room", "Electrical Intake Room", "Electrical Riser", "Electrical Room", "Entrance", "Entrance Gates", "Entrance Lobby", "External Area", "External Plant Area", "External Plant Room", "External Walkway", "Extractor Room", "Fire Escape Stairs", "Fire Exit", "Fire Exit Lobby", "Flat Lobby", "Function Room", "Gas Intake room", "Gas Room", "Generator Room", "Gym", "Hall", "Kitchen", "Landing", "Laundry Room", "Lift Lobby", "Lift Machine Room", "Lift Motor Room", "Loading Bay", "Lobby", "Locker Room", "Lounge Room", "Meeting Room", "Meter Room", "Office (Other)", "Office Lobby", "Operations Room", "Photocopying Room", "Plant Room", "Playroom", "Pump House", "Pump Room", "Reception Area", "Refuse Area", "Riser", "Rooftop Area", "Room (Other)", "Seating Area", "Security Office", "Server Room", "Shop", "Shop Floor", "Shower Room", "Sprinkler Pump Room", "Staff Area", "Staffroom", "Stair Landing", "Stairs", "Stock Room", "Storage Area", "Store Room", "Studio", "Suite", "Tank Room", "Toilet (Disabled)", "Toilet (Female)", "Toilet (Lobby)", "Toilet (Male)", "Toilet (Unisex)", "Training Room", "Unlisted", "Utility Room", "Waiting Area", "Walkway", "Wall", "Wall (LHS)", "Wall (RHS)", "Warehouse", "Water Storage Space"],
+    "Relay Loop Module": [],
+    "Remote Monitoring Panel": ["Key (TOK)"],
+    "Roof Asset": ["Lift Motor Room", "Stairs Tank Room", "CCTV", "Cell Phone Tower", "Cooling Tower", "Crane / Lifting Equipment", "Exhaust", "Eye Bolt", "Fall Arrest System", "Fan Room", "Ladder", "Lightning Rod / Conductor", "Solar Panel"],
+    "Security Alarm": [],
+    "Security Alarm Panel": [],
+    "Security Sensor": [],
+    "Shower": [],
+    "Shutter": [],
+    "Small Step Ladder": [],
+    "Small Step Podium": [],
+    "Smoke Activation Point": ["Button (Test)", "Fish Key", "Fuse (Push)", "Key (Fork)", "Key (Side)", "Switch (Test)", "Unlisted"],
+    "Smoke Control Panel": [],
+    "Smoke Detector (Automatic)": [],
+    "Smoke Detector (Domestic)": [],
+    "Smoke Extractor": [],
+    "Smoke Hatch": [],
+    "Smoke Head of Shaft Vent": [],
+    "Smoke Head of Stair Vent": [],
+    "Smoke Shaft Door": [],
+    "Smoke Vent": [],
+    "Smoke Vent Door": [],
+    "Smoke Vent Louvre": [],
+    "Smoke Vent Panel": [],
+    "Smoke Vent Reset Button": [],
+    "Smoke Vent Reset Switch": ["Button", "Switch"],
+    "Smoke Window": [],
+    "Sounder": [],
+    "Sprinkler Control Panel (Diesel)": [],
+    "Sprinkler Control Panel (Electrical)": [],
+    "Sprinkler Control Panel (Jockey)": [],
+    "Sprinkler Pump (Diesel)": [],
+    "Sprinkler Pump (Electric)": [],
+    "Sprinkler Pump (Jockey)": [],
+    "Sprinkler Pump Controller": [],
+    "Surface Water Sump Pump": [],
+    "Tap - Boiling": [],
+    "Tap - Fountain": [],
+    "Tap - Mixer": [],
+    "Tap - Push Button": [],
+    "Tap - Single": [],
+    "Tenant List": [],
+    "Testing Procedures": [],
+    "Towns Main Water Supply": [],
+    "Water Closet": [],
+    "Water Heater": [],
+    "Water Meter": ["Dial Meter", "Digital Meter", "Prepayment Meter", "Smart Meter", "Standard Meter", "Variable-rate Meter"],
+    "Water Storage Tank": [],
+    "Wet Riser": [],
+    "Wet Riser Pump (Electric)": ["Hi Pressure (for High Rise Blocks)", "Low Pressure (for High Rise Blocks)", "Standard"],
+    "Wet Riser Pump (Jockey)": ["Hi Pressure (for High Rise Blocks)", "Low Pressure (for High Rise Blocks)", "Standard"],
+    "Zone Map": [],
+}
+
+
 # Exact Salesforce Asset_Condition__c picklist values.
 ASSET_CONDITION_VALUES = [
     "C1 - Very Good Condition",
@@ -165,23 +310,35 @@ def normalize_asset_condition(text: str) -> str:
     return ""
 
 
-COMMON_ASSET_LABELS = {
-    "smoke detector": "Smoke Detector",
-    "fire alarm system": "Fire Alarm System",
-    "fire alarm control panel": "Fire Alarm Control Panel",
-    "fire door": "Fire Door",
-    "fire extinguisher": "Fire Extinguisher",
-    "firefighting lift": "Firefighting Lift",
-    "fire fighting lift": "Firefighting Lift",
-    "emergency door release": "Emergency Door Release",
-    "key emergency door release": "Key Emergency Door Release",
-}
+def _exact_allowed_value(value: Any, allowed: list[str]) -> str | None:
+    """Return the canonical allowed value using a case-insensitive match."""
+    candidate = str(value or "").strip().casefold()
+    return next((item for item in allowed if item.casefold() == candidate), None)
 
 
-def normalize_asset_label(text: Any) -> str:
-    """Fix known casing inconsistencies without damaging codes such as FD60."""
-    value = str(text or "").strip()
-    return COMMON_ASSET_LABELS.get(value.casefold(), value)
+def _validate_object_classification(result: dict[str, Any]) -> None:
+    """Enforce the same OBJECT_MAP contract as asset_categorisation.py."""
+    object_type = _exact_allowed_value(
+        result.get("Object_Type_AI__c"), list(OBJECT_MAP)
+    )
+    if object_type is None:
+        result["Object_Type_AI__c"] = "N/A"
+        result["Object_Category_AI__c"] = "N/A"
+        result["Confidence__c"] = 0.0
+        return
+
+    result["Object_Type_AI__c"] = object_type
+    allowed_categories = OBJECT_MAP[object_type]
+    if not allowed_categories:
+        result["Object_Category_AI__c"] = "N/A"
+        return
+
+    object_category = _exact_allowed_value(
+        result.get("Object_Category_AI__c"), allowed_categories
+    )
+    if object_category is None:
+        object_category = "Unlisted" if "Unlisted" in allowed_categories else "N/A"
+    result["Object_Category_AI__c"] = object_category
 
 
 def _context_text(payload: dict[str, Any], result: dict[str, Any]) -> str:
@@ -211,7 +368,8 @@ def _strengthen_fire_classification(
     )
     afp_terms = (
         "smoke detector", "heat detector", "fire alarm", "manual call point",
-        "fire extinguisher", "sprinkler", "hose reel", "emergency lighting",
+        "fire extinguisher", "extinguisher", "sprinkler", "hose reel",
+        "emergency lighting", "emergency light",
         "emergency door release", "firefighting lift", "fire fighting lift",
         "smoke control", "automatic opening vent", "aov",
     )
@@ -277,17 +435,12 @@ def _apply_deterministic_fields(
         if value not in (None, ""):
             result[output_key] = str(value)
 
-    result["Object_Type_AI__c"] = normalize_asset_label(
-        result.get("Object_Type_AI__c")
-    )
-    result["Object_Category_AI__c"] = normalize_asset_label(
-        result.get("Object_Category_AI__c")
-    )
+    _validate_object_classification(result)
     _strengthen_fire_classification(result, payload)
 
 
 SYSTEM_PROMPT = """
-You are a UK building asset enrichment assistant for Metro Safety.
+You are GAM, a UK building asset enrichment assistant for Metro Safety.
 
 Use all supplied Salesforce/PlanStudio text and all supplied photographs as
 evidence for one asset. Return one compact JSON object using exactly the keys
@@ -327,7 +480,10 @@ Evidence rules:
   photographs are insufficient, leave Asset_Condition__c empty and explain the
   limitation in Broken_Or_Needs_Replacement__c.
 - Object_Type_AI__c/Object_Category_AI__c are the image-assisted result. Use
-  consistent title case, for example "Smoke Detector", never "smoke Detector".
+  only the exact values supplied in OBJECT_MAP. Object_Type_AI__c must be one
+  OBJECT_MAP key. Object_Category_AI__c must be one subtype belonging to that
+  chosen key. If the type has no subtypes, return "N/A" for the category. If no
+  type fits, return "N/A" for both fields. Never invent or reword these labels.
 
 Field completion rules:
 - Floor__c is source-owned. Copy it only when an explicit floor value is present
@@ -526,6 +682,10 @@ def _build_user_content(payload: dict[str, Any]) -> list[dict[str, Any]]:
         {
             "type": "text",
             "text": "OUTPUT_FIELDS: " + json.dumps(OUTPUT_DEFAULTS),
+        },
+        {
+            "type": "text",
+            "text": "OBJECT_MAP (allowed values): " + json.dumps(OBJECT_MAP),
         },
         {
             "type": "text",
