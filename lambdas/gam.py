@@ -1,7 +1,10 @@
+"""GAM asset-enrichment Lambda for Salesforce and PlanStudio assets."""
+
 import base64
 import json
 import logging
 import os
+import re
 from typing import Any
 
 import boto3
@@ -42,7 +45,6 @@ openai_client = OpenAI(api_key=_load_openai_key())
 OUTPUT_DEFAULTS: dict[str, Any] = {
     # Core asset details
     "Asset_Instructions__c": "",
-    "Label__c": "",
     "Name": "",
     "Floor__c": "",
 
@@ -68,6 +70,8 @@ OUTPUT_DEFAULTS: dict[str, Any] = {
 
     # Costs
     "UK_Estimated_Price__c": "",
+    "UK_Average_Price__c": "",
+    "Estimated_Asset_Age__c": "",
     "Estimated_Unit_Replacement_Cost__c": "",
     "Estimated_Replacement_Parts_Price__c": "",
     "Estimated_Labour_Cost_To_Repair__c": "",
@@ -85,11 +89,6 @@ OUTPUT_DEFAULTS: dict[str, Any] = {
     "Fire_Safety_Classification_Confidence__c": "Low",
     "Fire_Safety_Classification_Reasoning__c": "",
     "Fire_Safety_Evidence_Observed__c": "",
-    "Fire_Safety_Alternative_Classification__c": "",
-    "Fire_Safety_Missing_Information__c": "",
-    "Fire_Safety_Standards_To_Check__c": "",
-    "Fire_Safety_Verification_Action__c": "",
-    "Fire_Safety_Compliance_Conclusion__c": "Sufficient information not available",
 
     # Additional classifications. These remain suggestions until dataset-backed.
     "UNSPSC_Code__c": "",
@@ -163,7 +162,128 @@ def normalize_asset_condition(text: str) -> str:
     )):
         return "C1 - Very Good Condition"
 
-    return "C2 - Minor Defects Only"
+    return ""
+
+
+COMMON_ASSET_LABELS = {
+    "smoke detector": "Smoke Detector",
+    "fire alarm system": "Fire Alarm System",
+    "fire alarm control panel": "Fire Alarm Control Panel",
+    "fire door": "Fire Door",
+    "fire extinguisher": "Fire Extinguisher",
+    "firefighting lift": "Firefighting Lift",
+    "fire fighting lift": "Firefighting Lift",
+    "emergency door release": "Emergency Door Release",
+    "key emergency door release": "Key Emergency Door Release",
+}
+
+
+def normalize_asset_label(text: Any) -> str:
+    """Fix known casing inconsistencies without damaging codes such as FD60."""
+    value = str(text or "").strip()
+    return COMMON_ASSET_LABELS.get(value.casefold(), value)
+
+
+def _context_text(payload: dict[str, Any], result: dict[str, Any]) -> str:
+    asset = payload["asset"]
+    values = [
+        asset.get("name"),
+        asset.get("objectType"),
+        asset.get("objectCategory"),
+        result.get("Object_Type_AI__c"),
+        result.get("Object_Category_AI__c"),
+        result.get("What_Is_It__c"),
+    ]
+    return " ".join(str(value) for value in values if value).casefold()
+
+
+def _strengthen_fire_classification(
+    result: dict[str, Any], payload: dict[str, Any]
+) -> None:
+    """Avoid 'Insufficient Information' when the known asset type is decisive."""
+    if result.get("Fire_Safety_Classification__c") != "Insufficient Information":
+        return
+
+    context = _context_text(payload, result)
+    mixed_terms = (
+        "fire door hold open", "fire door hold-open", "automatic fire curtain",
+        "powered smoke damper", "actuated smoke damper",
+    )
+    afp_terms = (
+        "smoke detector", "heat detector", "fire alarm", "manual call point",
+        "fire extinguisher", "sprinkler", "hose reel", "emergency lighting",
+        "emergency door release", "firefighting lift", "fire fighting lift",
+        "smoke control", "automatic opening vent", "aov",
+    )
+    pfp_terms = (
+        "fire door", "fd30", "fd60", "fd90", "fd120", "fire stopping",
+        "firestop", "cavity barrier", "fire-resisting wall",
+        "fire resisting wall", "fire-resistant glazing",
+        "fire resistant glazing", "structural fire protection",
+    )
+    fsm_terms = (
+        "fire action notice", "evacuation plan", "fire risk assessment",
+        "fire warden", "emergency procedure", "inspection record",
+        "maintenance record",
+    )
+
+    classification = None
+    if any(term in context for term in mixed_terms):
+        classification = "Mixed or Combined System"
+    elif any(term in context for term in afp_terms):
+        classification = "Active Fire Protection (AFP)"
+    elif any(term in context for term in pfp_terms):
+        classification = "Passive Fire Protection (PFP)"
+    elif any(term in context for term in fsm_terms):
+        classification = "Fire Safety Management (FSM)"
+
+    if classification:
+        result["Fire_Safety_Classification__c"] = classification
+        if result.get("Fire_Safety_Classification_Confidence__c") == "Low":
+            result["Fire_Safety_Classification_Confidence__c"] = "Medium"
+        result["Fire_Safety_Classification_Reasoning__c"] = (
+            f"The supplied asset identity and image context identify this as "
+            f"{classification}; certification is not required to determine the "
+            "classification category."
+        )
+        if not str(result.get("Fire_Safety_Evidence_Observed__c") or "").strip():
+            result["Fire_Safety_Evidence_Observed__c"] = (
+                "Supplied asset name/type and associated photograph(s)."
+            )
+
+
+def _first_source_value(asset: dict[str, Any], *keys: str) -> Any:
+    plan_fields = asset.get("planStudioFields")
+    sources = [asset, plan_fields if isinstance(plan_fields, dict) else {}]
+    for source in sources:
+        folded = {str(key).casefold(): value for key, value in source.items()}
+        for key in keys:
+            value = folded.get(key.casefold())
+            if value not in (None, ""):
+                return value
+    return None
+
+
+def _apply_deterministic_fields(
+    result: dict[str, Any], payload: dict[str, Any]
+) -> None:
+    """Set source-owned fields deterministically instead of asking the model."""
+    asset = payload["asset"]
+    source_mappings = {
+        "Name": ("name",),
+    }
+    for output_key, source_keys in source_mappings.items():
+        value = _first_source_value(asset, *source_keys)
+        if value not in (None, ""):
+            result[output_key] = str(value)
+
+    result["Object_Type_AI__c"] = normalize_asset_label(
+        result.get("Object_Type_AI__c")
+    )
+    result["Object_Category_AI__c"] = normalize_asset_label(
+        result.get("Object_Category_AI__c")
+    )
+    _strengthen_fire_classification(result, payload)
 
 
 SYSTEM_PROMPT = """
@@ -179,7 +299,7 @@ Success criteria:
   observed facts.
 - Populate practical condition, maintenance, cost and verification fields when
   a reasonable asset-type-level assessment can be made.
-- Explicitly identify missing evidence and the next verification action.
+- Prioritise correct asset identification and useful classification.
 
 Evidence rules:
 - Preserve supplied values when they are reliable; enrich rather than overwrite.
@@ -191,9 +311,8 @@ Evidence rules:
   on appearance.
 - Clearly label estimates using wording such as "Estimated", "Typical" or
   "Approximate" and prefer a realistic range over false precision.
-- For an inapplicable field return "Not applicable". For a useful non-identifier
-  field that cannot be determined, return a concise explanation such as
-  "Unable to determine from supplied evidence" rather than an unexplained blank.
+- For an inapplicable field return "Not applicable". Leave observed-only fields
+  blank when the required evidence is absent; do not fill them with generic text.
 - Use concise British-English Salesforce-ready strings.
 - Confidence fields must be numbers from 0 to 1.
 - Asset_Condition__c must be exactly one of these Salesforce values when visible
@@ -207,12 +326,12 @@ Evidence rules:
   Base it only on visible condition; do not imply functional testing. If the
   photographs are insufficient, leave Asset_Condition__c empty and explain the
   limitation in Broken_Or_Needs_Replacement__c.
-- Object_Type__c/Object_Category__c are the text-capture result;
-  Object_Type_AI__c/Object_Category_AI__c are the image-assisted result.
+- Object_Type_AI__c/Object_Category_AI__c are the image-assisted result. Use
+  consistent title case, for example "Smoke Detector", never "smoke Detector".
 
 Field completion rules:
-- Label__c: generate a short human-readable label when a reliable supplied label
-  is absent, using the identified asset type and location where available.
+- Floor__c is source-owned. Copy it only when an explicit floor value is present
+  in the supplied context; never infer it from the photograph or asset name.
 - Asset_Instructions__c and How_To_Test__c: provide concise, safe, non-invasive
   routine guidance suitable for the identified asset. State when a competent
   person is required; do not provide unsafe repair instructions.
@@ -223,8 +342,9 @@ Field completion rules:
   whether a competent person is likely required.
 - Parts_Needed__c: list only normally associated parts that are defensible from
   the identified asset type. Otherwise say what information is needed.
-- Service_Provider_Or_Supplier__c: give a suitable UK supplier or service-provider
-  category, not a fabricated specific company or branch.
+- Service_Provider_Or_Supplier__c is observed-only. Populate it only when a
+  company or service-provider name is clearly visible on a sticker, label or
+  supplied text. Record the exact visible name; otherwise return an empty string.
 - Rough_Dimensions__c: provide an approximate range only when the identified
   asset type has a defensible typical size; otherwise state that scale or model
   information is required.
@@ -232,21 +352,36 @@ Field completion rules:
   market ranges for unit, parts and labour costs. Prefix estimates with
   "Estimated" and state the main assumption, such as type, capacity or access.
   Use "Not applicable" where repair parts or labour genuinely do not apply.
+- UK_Average_Price__c: provide the estimated midpoint/typical price as one GBP
+  amount as well as the broader range in UK_Estimated_Price__c.
+- Estimated_Asset_Age__c: estimate an age range only where visual design, wear,
+  a visible date code or supplied context provides a defensible basis. Prefix it
+  with "Estimated" and state the evidence briefly. Otherwise leave it blank.
 - Estimated_Time_To_Replace_On_Site__c: provide a broad time range when a normal
   replacement scenario is reasonably foreseeable, noting access or specialist
   assumptions where relevant.
-- Fire_Safety_Classification_Reasoning__c,
-  Fire_Safety_Evidence_Observed__c,
-  Fire_Safety_Missing_Information__c and
-  Fire_Safety_Verification_Action__c must not be blank. State the evidence,
-  uncertainty and smallest practical next check.
+- Fire_Safety_Classification_Reasoning__c and
+  Fire_Safety_Evidence_Observed__c must not be blank. Explain the classification
+  using the known asset name/type/category and what the photographs show.
+- Other_Codes_Or_Numbers__c: transcribe visible identifiers exactly. If a QR or
+  barcode is visible and readable, return its decoded URL/text/number. Do not
+  merely say "QR code present". If it cannot be decoded, state "QR code visible
+  but payload unreadable" and do not invent its contents.
 
 Additional-classification rules:
-- UNSPSC and Uniclass values are candidate suggestions only in this
-  version because no authoritative reference dataset is supplied.
-- Do not fabricate an exact classification code. If you cannot confidently
-  recall a genuine code, leave the code blank and explain the likely class in
+- UNSPSC and Uniclass values are unverified candidate suggestions because no
+  authoritative reference dataset is connected.
+- For UNSPSC, where the asset is clearly identified and a genuine candidate is
+  known, return one 8-digit commodity code in UNSPSC_Code__c. Use
+  UNSPSC_Description__c to show all four hierarchy levels in this form:
+  "Segment > Family > Class > Commodity". Never invent a code; leave it blank
+  if uncertain and explain the likely classification family in
   Classification_Notes__c.
+- For Uniclass, use the most appropriate product/system/entity table for the
+  identified asset. Return a candidate code/title/table only when reasonably
+  confident. Do not leave the title/table blank merely because the exact code
+  is uncertain: return the likely table/title, leave the code blank, use a low
+  confidence, and explain the uncertainty in Classification_Notes__c.
 - Keep Classification_Review_Required__c true until authoritative datasets and
   approval rules are connected.
 
@@ -277,21 +412,22 @@ Fire-safety classification rules:
 - Use the photographs and supplied asset information together. Distinguish the
   asset itself from nearby equipment and do not classify from colour, shape,
   label or apparent location alone.
-- Do not assume an ordinary door is a fire door, a sealed penetration is
-  compliant fire stopping, or a damper is passive/active without operational
-  evidence. When evidence is incomplete, use Insufficient Information.
+- Classification is about what kind of fire-safety asset it is, not whether it
+  is certified or compliant. A visible certificate or rating is not required
+  to classify an asset whose purpose is clear from its supplied name/type and
+  photograph. Use Insufficient Information only when the asset itself or the
+  operational characteristic needed to choose a class cannot be identified.
+- Strong examples: smoke detector, fire-alarm panel, manual call point, fire
+  extinguisher, sprinkler, emergency door release and firefighting lift are AFP;
+  an explicitly identified fire door/FD30/FD60, fire stopping or cavity barrier
+  is PFP; a fire-action notice or evacuation plan is FSM. An ordinary door is
+  Not a Fire-Safety Asset unless reliable evidence identifies a fire function.
+- Do not assume a sealed penetration is compliant fire stopping or a damper is
+  passive/active without operational evidence.
 - Do not infer fire-resistance ratings such as FD30, FD60, EI30 or EI60 unless
   visible or explicitly supplied.
 - Fire_Safety_Evidence_Observed__c must record only observed or supplied facts.
-- Fire_Safety_Standards_To_Check__c may list potentially relevant UK documents,
-  but must not present them as confirmed requirements.
-- Fire_Safety_Compliance_Conclusion__c must be exactly one of:
-  Classification only — compliance not assessed;
-  Further documentary review required;
-  Physical inspection by a competent person required;
-  Sufficient information not available.
-- Never provide a definitive compliance or certification conclusion from the
-  photographs alone.
+- Do not assess compliance or certification in this response.
 - Return JSON only, with no Markdown.
 """.strip()
 
@@ -425,6 +561,9 @@ def _coerce_result(raw: dict[str, Any]) -> dict[str, Any]:
         str(result.get("Asset_Condition__c") or "")
     )
 
+    unspsc_code = re.sub(r"\D", "", str(result.get("UNSPSC_Code__c") or ""))
+    result["UNSPSC_Code__c"] = unspsc_code if len(unspsc_code) == 8 else ""
+
     for key in (
         "Confidence__c",
         "Test_Frequency_Confidence__c",
@@ -454,15 +593,6 @@ def _coerce_result(raw: dict[str, Any]) -> dict[str, Any]:
 
     if result["Fire_Safety_Classification_Confidence__c"] not in {"High", "Medium", "Low"}:
         result["Fire_Safety_Classification_Confidence__c"] = "Low"
-
-    allowed_compliance_conclusions = {
-        "Classification only — compliance not assessed",
-        "Further documentary review required",
-        "Physical inspection by a competent person required",
-        "Sufficient information not available",
-    }
-    if result["Fire_Safety_Compliance_Conclusion__c"] not in allowed_compliance_conclusions:
-        result["Fire_Safety_Compliance_Conclusion__c"] = "Sufficient information not available"
     return result
 
 
@@ -480,7 +610,9 @@ def _analyse(payload: dict[str, Any]) -> dict[str, Any]:
     parsed = json.loads(text)
     if not isinstance(parsed, dict):
         raise ValueError("OpenAI response was not a JSON object")
-    return _coerce_result(parsed)
+    result = _coerce_result(parsed)
+    _apply_deterministic_fields(result, payload)
+    return result
 
 
 def process(event, context):
