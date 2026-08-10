@@ -116,33 +116,55 @@ ASSET_CONDITION_VALUES = [
 ]
 
 
-# Verified entries from the official Uniclass Products table (April 2026).
+# Verified entries from the official Uniclass Products and Systems tables.
 # Rules are deliberately narrow: an unmatched asset remains unclassified rather
 # than accepting a code invented from model memory.
 UNICLASS_VERSION = "Products v1.42, April 2026"
-UNICLASS_RULES: tuple[tuple[tuple[str, ...], str, str], ...] = (
+UNICLASS_RULES: tuple[
+    tuple[tuple[str, ...], str, str, str, str], ...
+] = (
     (("smoke and heat multi-sensor", "smoke/heat multi-sensor"),
-     "Pr_75_80_30_82", "Smoke and heat multi-sensor detectors"),
+     "Pr_75_80_30_82", "Smoke and heat multi-sensor detectors", "Products", UNICLASS_VERSION),
     (("multi-sensor detector", "multisensor detector"),
-     "Pr_75_80_30_55", "Multi-sensor detectors"),
+     "Pr_75_80_30_55", "Multi-sensor detectors", "Products", UNICLASS_VERSION),
     (("domestic smoke alarm", "smoke alarm"),
-     "Pr_75_80_30_80", "Smoke alarms"),
+     "Pr_75_80_30_80", "Smoke alarms", "Products", UNICLASS_VERSION),
     (("optical smoke", "smoke detector"),
-     "Pr_75_80_30_65", "Point smoke detectors"),
+     "Pr_75_80_30_65", "Point smoke detectors", "Products", UNICLASS_VERSION),
     (("heat detector",),
-     "Pr_75_80_30_64", "Point heat detectors"),
+     "Pr_75_80_30_64", "Point heat detectors", "Products", UNICLASS_VERSION),
     (("fire alarm panel", "fire alarm control panel"),
-     "Pr_75_80_30_29", "Fire alarm panels"),
+     "Pr_75_80_30_29", "Fire alarm panels", "Products", UNICLASS_VERSION),
     (("fire alarm sounder", "alarm sounder", "sounder"),
-     "Pr_75_80_30_30", "Fire alarm sounders"),
+     "Pr_75_80_30_30", "Fire alarm sounders", "Products", UNICLASS_VERSION),
     (("manual call point", "call point"),
-     "Pr_75_80_30_50", "Manual call points"),
+     "Pr_75_80_30_50", "Manual call points", "Products", UNICLASS_VERSION),
     (("fire extinguisher", "extinguisher"),
-     "Pr_40_50_28_64", "Portable fire extinguishers"),
+     "Pr_40_50_28_64", "Portable fire extinguishers", "Products", UNICLASS_VERSION),
     (("emergency luminaire", "emergency light", "emergency lighting"),
-     "Pr_70_70_48_25", "Emergency luminaires"),
+     "Pr_70_70_48_25", "Emergency luminaires", "Products", UNICLASS_VERSION),
     (("fire blanket",),
-     "Pr_40_50_28_29", "Fire blankets"),
+     "Pr_40_50_28_29", "Fire blankets", "Products", UNICLASS_VERSION),
+    (("wet riser landing valve",),
+     "Pr_65_54_30_97", "Wet riser landing valves", "Products", UNICLASS_VERSION),
+    (("dry riser landing valve",),
+     "Pr_65_54_30_24", "Dry riser landing valves", "Products", UNICLASS_VERSION),
+    (("wet riser inlet", "dry riser inlet", "inlet breeching"),
+     "Pr_65_54_30_42", "Inlet breechings", "Products", UNICLASS_VERSION),
+    (("wet riser",),
+     "Ss_55_30_96_97", "Wet riser systems", "Systems", "Systems v1.42, April 2026"),
+    (("dry riser",),
+     "Ss_55_30_96_25", "Dry riser systems", "Systems", "Systems v1.42, April 2026"),
+    (("automatic smoke vent", "automatic opening vent", "aov"),
+     "Ss_65_40_80_56", "Natural smoke and heat exhaust ventilation systems",
+     "Systems", "Systems v1.42, April 2026"),
+    (("smoke control system", "smoke extract system"),
+     "Ss_65_40_80_80", "Smoke and heat exhaust ventilation systems",
+     "Systems", "Systems v1.42, April 2026"),
+    (("fire and smoke damper", "fire smoke damper"),
+     "Pr_65_65_24_29", "Fire and smoke dampers", "Products", UNICLASS_VERSION),
+    (("smoke damper",),
+     "Pr_65_65_24_80", "Smoke dampers", "Products", UNICLASS_VERSION),
 )
 
 
@@ -197,8 +219,8 @@ def _context_text(payload: dict[str, Any], result: dict[str, Any]) -> str:
     asset = payload["asset"]
     values = [
         asset.get("name"),
-        asset.get("objectType"),
-        asset.get("objectCategory"),
+        asset.get("Object_Type__c"),
+        asset.get("Object_Category__c"),
         result.get("Object_Type_AI__c"),
         result.get("Object_Category_AI__c"),
         result.get("What_Is_It__c"),
@@ -211,14 +233,14 @@ def _apply_uniclass_mapping(
 ) -> None:
     """Resolve known assets to current official Uniclass Product entries."""
     context = _context_text(payload, result)
-    for phrases, code, title in UNICLASS_RULES:
+    for phrases, code, title, table, version in UNICLASS_RULES:
         if not any(phrase in context for phrase in phrases):
             continue
 
         result["Uniclass_Code__c"] = code
         result["Uniclass_Title__c"] = title
-        result["Uniclass_Table__c"] = "Products"
-        result["Uniclass_Version__c"] = UNICLASS_VERSION
+        result["Uniclass_Table__c"] = table
+        result["Uniclass_Version__c"] = version
         result["Uniclass_Confidence__c"] = 0.9
         result["Uniclass_Verification_Status__c"] = (
             "Matched to official Uniclass table; asset match requires review"
@@ -226,7 +248,7 @@ def _apply_uniclass_mapping(
         result["Classification_Review_Required__c"] = True
         note = (
             f"Uniclass candidate {code} ({title}) was selected from "
-            f"{UNICLASS_VERSION} using the identified asset type."
+            f"{version} using the identified asset type."
         )
         existing = str(result.get("Classification_Notes__c") or "").strip()
         result["Classification_Notes__c"] = (
@@ -246,9 +268,7 @@ def _apply_uniclass_mapping(
 def _strengthen_fire_classification(
     result: dict[str, Any], payload: dict[str, Any]
 ) -> None:
-    """Avoid 'Insufficient Information' when the known asset type is decisive."""
-    if result.get("Fire_Safety_Classification__c") != "Insufficient Information":
-        return
+    """Make classification consistent when the supplied asset identity is clear."""
 
     context = _context_text(payload, result)
     mixed_terms = (
@@ -260,13 +280,15 @@ def _strengthen_fire_classification(
         "fire extinguisher", "extinguisher", "sprinkler", "hose reel",
         "emergency lighting", "emergency light",
         "emergency door release", "firefighting lift", "fire fighting lift",
-        "smoke control", "automatic opening vent", "aov",
+        "smoke control", "automatic smoke vent", "smoke vent",
+        "automatic opening vent", "aov", "wet riser", "dry riser",
+        "riser inlet", "fire hydrant",
     )
     pfp_terms = (
         "fire door", "fd30", "fd60", "fd90", "fd120", "fire stopping",
         "firestop", "cavity barrier", "fire-resisting wall",
         "fire resisting wall", "fire-resistant glazing",
-        "fire resistant glazing", "structural fire protection",
+        "fire resistant glazing", "structural fire protection", "door",
     )
     fsm_terms = (
         "fire action notice", "evacuation plan", "fire risk assessment",
@@ -286,8 +308,7 @@ def _strengthen_fire_classification(
 
     if classification:
         result["Fire_Safety_Classification__c"] = classification
-        if result.get("Fire_Safety_Classification_Confidence__c") == "Low":
-            result["Fire_Safety_Classification_Confidence__c"] = "Medium"
+        result["Fire_Safety_Classification_Confidence__c"] = "High"
         result["Fire_Safety_Classification_Reasoning__c"] = (
             f"The supplied asset identity and image context identify this as "
             f"{classification}; certification is not required to determine the "
@@ -318,6 +339,7 @@ def _apply_deterministic_fields(
     asset = payload["asset"]
     source_mappings = {
         "Name": ("name",),
+        "Floor__c": ("Floor__c", "floor"),
     }
     for output_key, source_keys in source_mappings.items():
         value = _first_source_value(asset, *source_keys)
@@ -368,10 +390,11 @@ Evidence rules:
   Base it only on visible condition; do not imply functional testing. If the
   photographs are insufficient, leave Asset_Condition__c empty and explain the
   limitation in Broken_Or_Needs_Replacement__c.
-- Object_Type_AI__c/Object_Category_AI__c are optional image-assisted,
-  descriptive outputs. Return a concise general asset type and a more specific
-  subtype when supported by the evidence. They are not constrained to a
-  Salesforce picklist. Leave them blank when identification is unreliable.
+- Object_Type_AI__c is the broad system or asset family, for example
+  "Fire Alarm System". Object_Category_AI__c is the specific asset, for example
+  "Smoke Detector". Never reverse these meanings. Use the supplied
+  Object_Type__c and Object_Category__c as context, but make these two AI fields
+  image-assisted descriptions. Leave them blank when identification is unreliable.
 
 Field completion rules:
 - Floor__c is source-owned. Copy it only when an explicit floor value is present
@@ -389,6 +412,10 @@ Field completion rules:
 - Service_Provider_Or_Supplier__c is observed-only. Populate it only when a
   company or service-provider name is clearly visible on a sticker, label or
   supplied text. Record the exact visible name; otherwise return an empty string.
+- Manufacturer_AI__c is observed-only. Inspect every image carefully for a
+  readable manufacturer name, logo or nameplate, particularly on panels and
+  equipment labels. Return the exact visible brand only. If it is obscured,
+  unreadable or merely inferred from appearance, return an empty string.
 - Rough_Dimensions__c: provide an approximate range only when the identified
   asset type has a defensible typical size; otherwise state that scale or model
   information is required.
@@ -459,10 +486,11 @@ Fire-safety classification rules:
   photograph. Use Insufficient Information only when the asset itself or the
   operational characteristic needed to choose a class cannot be identified.
 - Strong examples: smoke detector, fire-alarm panel, manual call point, fire
-  extinguisher, sprinkler, emergency door release and firefighting lift are AFP;
-  an explicitly identified fire door/FD30/FD60, fire stopping or cavity barrier
-  is PFP; a fire-action notice or evacuation plan is FSM. An ordinary door is
-  Not a Fire-Safety Asset unless reliable evidence identifies a fire function.
+  extinguisher, sprinkler, smoke vent, wet/dry riser, emergency door release and
+  firefighting lift are AFP; a door supplied to GAM, fire door/FD30/FD60, fire
+  stopping or cavity barrier is PFP; a fire-action notice or evacuation plan is
+  FSM. For this GAM dataset, assume a supplied door asset is a fire door unless
+  the supplied information explicitly identifies it as a non-fire door.
 - Do not assume a sealed penetration is compliant fire stopping or a damper is
   passive/active without operational evidence.
 - Do not infer fire-resistance ratings such as FD30, FD60, EI30 or EI60 unless
