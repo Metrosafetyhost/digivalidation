@@ -44,7 +44,6 @@ OUTPUT_DEFAULTS: dict[str, Any] = {
     # Core asset details
     "Asset_Instructions__c": "",
     "Name": "",
-    "Floor__c": "",
 
     # Identification
     "Manufacturer_AI__c": "",
@@ -339,7 +338,6 @@ def _apply_deterministic_fields(
     asset = payload["asset"]
     source_mappings = {
         "Name": ("name",),
-        "Floor__c": ("Floor__c", "floor"),
     }
     for output_key, source_keys in source_mappings.items():
         value = _first_source_value(asset, *source_keys)
@@ -397,8 +395,6 @@ Evidence rules:
   image-assisted descriptions. Leave them blank when identification is unreliable.
 
 Field completion rules:
-- Floor__c is source-owned. Copy it only when an explicit floor value is present
-  in the supplied context; never infer it from the photograph or asset name.
 - Asset_Instructions__c and How_To_Test__c: provide concise, safe, non-invasive
   routine guidance suitable for the identified asset. State when a competent
   person is required; do not provide unsafe repair instructions.
