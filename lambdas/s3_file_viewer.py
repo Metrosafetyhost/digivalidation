@@ -320,28 +320,51 @@ def find_building_matches_under_parent(
     lookup_token: str
 ) -> set[str]:
     """
-    Search only the immediate folders beneath
-    the supplied Buildings parent prefix.
-
-    Delimiter="/" is correct here because this
-    function is identifying Building folders,
-    not counting nested documents.
+    Search only S3 keys that can belong to the requested Building Number.
     """
+    started_at = time.perf_counter()
+
+    search_prefix = (
+        parent_prefix
+        + lookup_token
+    )
+
     paginator = s3.get_paginator(
         "list_objects_v2"
     )
 
     matches = set()
+    page_count = 0
+    common_prefix_count = 0
+    object_count = 0
 
     for page in paginator.paginate(
         Bucket=FILE_BUCKET,
-        Prefix=parent_prefix,
+        Prefix=search_prefix,
         Delimiter="/"
     ):
-        for common_prefix in page.get(
+        page_count += 1
+
+        common_prefixes = page.get(
             "CommonPrefixes",
             []
-        ):
+        )
+        common_prefix_count += len(
+            common_prefixes
+        )
+
+        # Normally Building roots are represented by
+        # CommonPrefixes. Contents is counted only for
+        # timing/diagnostics because legacy folder
+        # marker objects may also be returned.
+        object_count += len(
+            page.get(
+                "Contents",
+                []
+            )
+        )
+
+        for common_prefix in common_prefixes:
             folder_prefix = (
                 common_prefix.get(
                     "Prefix",
@@ -364,6 +387,17 @@ def find_building_matches_under_parent(
                 matches.add(
                     folder_prefix
                 )
+
+    log_timing(
+        "targeted building parent lookup",
+        started_at,
+        parent=parent_prefix,
+        searchPrefix=search_prefix,
+        pages=page_count,
+        commonPrefixes=common_prefix_count,
+        objects=object_count,
+        matches=len(matches)
+    )
 
     return matches
 
