@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import time
 from urllib.parse import unquote
 
 import boto3
@@ -105,6 +106,35 @@ def response(
         },
         "body": json.dumps(body)
     }
+
+
+def log_timing(
+    label: str,
+    started_at: float,
+    **details
+) -> float:
+    elapsed_ms = (
+        time.perf_counter() - started_at
+    ) * 1000
+
+    detail_text = " ".join(
+        f"{key}={value}"
+        for key, value in details.items()
+    )
+
+    if detail_text:
+        print(
+            f"[PERF] {label}: "
+            f"{elapsed_ms:.2f} ms "
+            f"{detail_text}"
+        )
+    else:
+        print(
+            f"[PERF] {label}: "
+            f"{elapsed_ms:.2f} ms"
+        )
+
+    return elapsed_ms
 
 
 def get_path_parameter(
@@ -542,22 +572,33 @@ def resolve_building_root(
     """
     Select the safest Building root and return any
     warnings about lower-priority legacy roots.
-    
+
     A missing root can be created automatically so
     the configured virtual folder structure remains
     available without relying on Neilon to create
     empty folders first.
+
+    Timing logs are emitted to CloudWatch only.
+    The API response remains unchanged.
     """
+    total_started_at = time.perf_counter()
+
     lookup_token = (
         get_building_lookup_token(
             building_prefix
         )
     )
 
+    lookup_started_at = time.perf_counter()
     building_roots = (
         find_building_roots(
             building_prefix
         )
+    )
+    log_timing(
+        "building root lookup",
+        lookup_started_at,
+        candidates=len(building_roots)
     )
 
     if not building_roots:
@@ -567,10 +608,22 @@ def resolve_building_root(
                 "were found for this Building."
             )
 
+        creation_started_at = time.perf_counter()
         created_root = (
             create_missing_building_root(
                 building_prefix
             )
+        )
+        log_timing(
+            "missing building root creation",
+            creation_started_at
+        )
+        log_timing(
+            "building root resolution total",
+            total_started_at,
+            selected=created_root,
+            created=True,
+            warnings=0
         )
 
         return {
@@ -579,6 +632,7 @@ def resolve_building_root(
             "warnings": []
         }
 
+    ranking_started_at = time.perf_counter()
     ranked_roots = sorted(
         building_roots,
         key=lambda root: (
@@ -606,6 +660,12 @@ def resolve_building_root(
             lookup_token
         ) == highest_score
     ]
+    log_timing(
+        "building root ranking",
+        ranking_started_at,
+        candidates=len(ranked_roots),
+        topScore=highest_score
+    )
 
     if len(highest_ranked_roots) > 1:
         roots_text = ", ".join(
@@ -623,7 +683,12 @@ def resolve_building_root(
     selected_root = ranked_roots[0]
     warnings = []
 
+    warning_scan_started_at = time.perf_counter()
+    lower_priority_checked = 0
+
     for lower_priority_root in ranked_roots[1:]:
+        lower_priority_checked += 1
+
         if prefix_contains_real_files(
             lower_priority_root
         ):
@@ -633,6 +698,20 @@ def resolve_building_root(
                 "require review: "
                 + lower_priority_root
             )
+
+    log_timing(
+        "legacy root warning scan",
+        warning_scan_started_at,
+        checked=lower_priority_checked,
+        warnings=len(warnings)
+    )
+    log_timing(
+        "building root resolution total",
+        total_started_at,
+        selected=selected_root,
+        created=False,
+        warnings=len(warnings)
+    )
 
     return {
         "buildingRoot": selected_root,
@@ -978,7 +1057,12 @@ def count_documents_under_folder(
     Delimiter="/" is deliberately not used here.
     The full S3 prefix still restricts the count
     to the resolved Building and folder.
+
+    Timing logs are emitted so we can measure the
+    cost of the current recursive counting strategy.
     """
+    started_at = time.perf_counter()
+
     full_prefix = (
         building_root
         + folder_path
@@ -989,15 +1073,20 @@ def count_documents_under_folder(
     )
 
     document_count = 0
+    page_count = 0
+    object_count = 0
 
     for page in paginator.paginate(
         Bucket=FILE_BUCKET,
         Prefix=full_prefix
     ):
+        page_count += 1
+
         for item in page.get(
             "Contents",
             []
         ):
+            object_count += 1
             key = item["Key"]
 
             if key.endswith("/"):
@@ -1014,6 +1103,15 @@ def count_documents_under_folder(
 
             document_count += 1
 
+    log_timing(
+        "folder document count",
+        started_at,
+        folder=folder_path,
+        pages=page_count,
+        objects=object_count,
+        documents=document_count
+    )
+
     return document_count
 
 
@@ -1028,7 +1126,13 @@ def list_building_folder(
     Delimiter="/" remains necessary here because
     the UI is navigating one folder level at a
     time.
+
+    This is still the existing listing strategy.
+    The additional code only measures where time
+    is currently being spent.
     """
+    total_started_at = time.perf_counter()
+
     full_prefix = (
         building_root
         + folder_path
@@ -1040,12 +1144,18 @@ def list_building_folder(
 
     discovered_folders = {}
     files = []
+    immediate_pages = 0
+    immediate_objects = 0
+
+    immediate_listing_started_at = time.perf_counter()
 
     for page in paginator.paginate(
         Bucket=FILE_BUCKET,
         Prefix=full_prefix,
         Delimiter="/"
     ):
+        immediate_pages += 1
+
         for folder in page.get(
             "CommonPrefixes",
             []
@@ -1081,6 +1191,7 @@ def list_building_folder(
             "Contents",
             []
         ):
+            immediate_objects += 1
             key = item["Key"]
 
             if key == full_prefix:
@@ -1109,6 +1220,16 @@ def list_building_folder(
                 )
             })
 
+    log_timing(
+        "current folder immediate listing",
+        immediate_listing_started_at,
+        folder=folder_path,
+        pages=immediate_pages,
+        objects=immediate_objects,
+        discoveredFolders=len(discovered_folders),
+        directFiles=len(files)
+    )
+
     configured_names = (
         get_configured_child_names(
             folder_path
@@ -1116,6 +1237,8 @@ def list_building_folder(
     )
 
     merged_folders = {}
+
+    configured_count_started_at = time.perf_counter()
 
     # Always display configured folders,
     # even when S3 has no object beneath them.
@@ -1165,6 +1288,16 @@ def list_building_folder(
                 not has_child_folders
         }
 
+    log_timing(
+        "configured folder counting total",
+        configured_count_started_at,
+        folder=folder_path,
+        configuredFolders=len(configured_names)
+    )
+
+    unexpected_started_at = time.perf_counter()
+    unexpected_count = 0
+
     # Include unexpected folders that physically
     # exist in S3 but are not in the configuration.
     for (
@@ -1177,6 +1310,8 @@ def list_building_folder(
             in merged_folders
         ):
             continue
+
+        unexpected_count += 1
 
         has_child_folders = (
             folder_has_child_folders(
@@ -1213,6 +1348,13 @@ def list_building_folder(
                 not has_child_folders
         }
 
+    log_timing(
+        "unexpected folder processing total",
+        unexpected_started_at,
+        folder=folder_path,
+        unexpectedFolders=unexpected_count
+    )
+
     configured_order = {
         name: index
         for index, name
@@ -1239,6 +1381,14 @@ def list_building_folder(
         key=lambda item:
             item["lastModified"],
         reverse=True
+    )
+
+    log_timing(
+        "building folder listing total",
+        total_started_at,
+        folder=folder_path,
+        returnedFolders=len(folders),
+        returnedFiles=len(files)
     )
 
     return folders, files
@@ -1451,6 +1601,8 @@ def process_building_request(
     event: dict,
     raw_path: str
 ) -> dict:
+    request_started_at = time.perf_counter()
+
     supplied_prefix = (
         get_query_parameter(
             event,
@@ -1470,11 +1622,16 @@ def process_building_request(
         )
     )
 
+    root_started_at = time.perf_counter()
     root_resolution = (
         resolve_building_root(
             building_prefix,
             create_if_missing=True
         )
+    )
+    log_timing(
+        "request root resolution",
+        root_started_at
     )
 
     building_root = (
@@ -1509,9 +1666,19 @@ def process_building_request(
                 )
             })
 
+        head_started_at = time.perf_counter()
         s3.head_object(
             Bucket=FILE_BUCKET,
             Key=key
+        )
+        log_timing(
+            "open file head_object",
+            head_started_at
+        )
+        log_timing(
+            "building request total",
+            request_started_at,
+            operation="open"
         )
 
         return response(200, {
@@ -1536,15 +1703,25 @@ def process_building_request(
         )
     )
 
-    if (
+    existence_started_at = time.perf_counter()
+    folder_exists_check_needed = (
         not is_configured_folder(
             folder_path
         )
+    )
+
+    if (
+        folder_exists_check_needed
         and not building_folder_exists(
             building_root,
             folder_path
         )
     ):
+        log_timing(
+            "selected folder existence check",
+            existence_started_at,
+            required=True
+        )
         return response(404, {
             "error": (
                 "The selected Building folder "
@@ -1552,13 +1729,26 @@ def process_building_request(
             )
         })
 
+    log_timing(
+        "selected folder existence check",
+        existence_started_at,
+        required=folder_exists_check_needed
+    )
+
+    listing_started_at = time.perf_counter()
     folders, files = (
         list_building_folder(
             building_root,
             folder_path
         )
     )
+    log_timing(
+        "request folder listing",
+        listing_started_at,
+        folder=folder_path
+    )
 
+    can_upload_started_at = time.perf_counter()
     can_upload = (
         is_configured_upload_destination(
             folder_path
@@ -1574,8 +1764,13 @@ def process_building_request(
             and len(folders) == 0
         )
     )
+    log_timing(
+        "canUpload calculation",
+        can_upload_started_at,
+        canUpload=can_upload
+    )
 
-    return response(200, {
+    result = response(200, {
         "buildingPrefix":
             building_prefix,
         "buildingRoot":
@@ -1607,6 +1802,17 @@ def process_building_request(
                 "warnings"
             ]
     })
+
+    log_timing(
+        "building request total",
+        request_started_at,
+        operation="list",
+        folder=folder_path,
+        folders=len(folders),
+        files=len(files)
+    )
+
+    return result
 
 
 def process_building_upload_request(
