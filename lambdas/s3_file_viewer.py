@@ -320,7 +320,24 @@ def find_building_matches_under_parent(
     lookup_token: str
 ) -> set[str]:
     """
-    Search only S3 keys that can belong to the requested Building Number.
+    Search only S3 keys that can belong to the
+    requested Building Number.
+
+    Previously this listed every immediate folder
+    beneath Buildings/ and Buildings// and filtered
+    the results in Python. In Production that meant
+    walking a very large Building namespace on every
+    viewer request.
+
+    S3 already supports prefix filtering, so the
+    lookup can start directly at:
+
+        Buildings/<building number> |
+        Buildings//<building number> |
+
+    Delimiter="/" still limits the result to candidate
+    Building roots while preserving legacy/malformed
+    candidates that begin with the same stable token.
     """
     started_at = time.perf_counter()
 
@@ -1154,16 +1171,22 @@ def list_building_folder(
     folder_path: str
 ) -> tuple[list[dict], list[dict]]:
     """
-    Return only the immediate folders and files
-    for the folder currently being viewed.
+    Return the immediate folders and files for the
+    folder currently being viewed.
 
-    Delimiter="/" remains necessary here because
-    the UI is navigating one folder level at a
-    time.
+    Performance optimisation:
+    S3 is recursively listed once for the current
+    folder. The returned keys are then aggregated in
+    memory to determine:
 
-    This is still the existing listing strategy.
-    The additional code only measures where time
-    is currently being spent.
+    - immediate child folders
+    - direct files
+    - recursive document counts per child folder
+    - whether unexpected child folders have children
+
+    This replaces the previous pattern of one current
+    folder listing plus a separate recursive S3 listing
+    for every displayed child folder.
     """
     total_started_at = time.perf_counter()
 
@@ -1178,74 +1201,130 @@ def list_building_folder(
 
     discovered_folders = {}
     files = []
-    immediate_pages = 0
-    immediate_objects = 0
+    document_counts = {}
+    unexpected_has_child_folders = {}
 
-    immediate_listing_started_at = time.perf_counter()
+    page_count = 0
+    object_count = 0
+    real_document_count = 0
+
+    listing_started_at = time.perf_counter()
 
     for page in paginator.paginate(
         Bucket=FILE_BUCKET,
-        Prefix=full_prefix,
-        Delimiter="/"
+        Prefix=full_prefix
     ):
-        immediate_pages += 1
-
-        for folder in page.get(
-            "CommonPrefixes",
-            []
-        ):
-            full_folder_path = (
-                folder.get("Prefix")
-            )
-
-            if not full_folder_path:
-                continue
-
-            relative_folder_path = (
-                full_folder_path[
-                    len(building_root):
-                ]
-            )
-
-            folder_name = (
-                relative_folder_path
-                .rstrip("/")
-                .rsplit("/", 1)[-1]
-            )
-
-            discovered_folders[
-                relative_folder_path
-            ] = {
-                "name": folder_name,
-                "path":
-                    relative_folder_path
-            }
+        page_count += 1
 
         for item in page.get(
             "Contents",
             []
         ):
-            immediate_objects += 1
-            key = item["Key"]
+            object_count += 1
 
-            if key == full_prefix:
+            key = item.get(
+                "Key",
+                ""
+            )
+
+            if not key:
                 continue
 
+            if not key.startswith(
+                full_prefix
+            ):
+                continue
+
+            relative_key = key[
+                len(full_prefix):
+            ]
+
+            if not relative_key:
+                continue
+
+            # Anything containing "/" is beneath an
+            # immediate child folder of the folder being
+            # viewed. This also detects S3 folder-marker
+            # objects such as "Fire/".
+            if "/" in relative_key:
+                child_name, remainder = (
+                    relative_key.split(
+                        "/",
+                        1
+                    )
+                )
+
+                if not child_name:
+                    continue
+
+                child_path = (
+                    folder_path
+                    + child_name
+                    + "/"
+                )
+
+                discovered_folders[
+                    child_path
+                ] = {
+                    "name": child_name,
+                    "path": child_path
+                }
+
+                document_counts.setdefault(
+                    child_path,
+                    0
+                )
+
+                unexpected_has_child_folders.setdefault(
+                    child_path,
+                    False
+                )
+
+                # A further slash in the remainder means
+                # this immediate child physically contains
+                # another subfolder.
+                if (
+                    remainder
+                    and "/" in remainder
+                ):
+                    unexpected_has_child_folders[
+                        child_path
+                    ] = True
+
+                # Folder-marker objects are not documents.
+                if key.endswith("/"):
+                    continue
+
+                file_name = (
+                    key.rsplit(
+                        "/",
+                        1
+                    )[-1]
+                )
+
+                if file_name in IGNORED_FILE_NAMES:
+                    continue
+
+                document_counts[
+                    child_path
+                ] += 1
+
+                real_document_count += 1
+                continue
+
+            # No slash means this file is directly inside
+            # the folder currently being viewed.
             if key.endswith("/"):
                 continue
 
-            filename = (
-                key.rsplit("/", 1)[-1]
-            )
+            file_name = relative_key
 
-            if filename in (
-                IGNORED_FILE_NAMES
-            ):
+            if file_name in IGNORED_FILE_NAMES:
                 continue
 
             files.append({
                 "key": key,
-                "name": filename,
+                "name": file_name,
                 "sizeBytes": item["Size"],
                 "lastModified": (
                     item[
@@ -1254,13 +1333,18 @@ def list_building_folder(
                 )
             })
 
+            real_document_count += 1
+
     log_timing(
-        "current folder immediate listing",
-        immediate_listing_started_at,
+        "single-pass folder tree listing",
+        listing_started_at,
         folder=folder_path,
-        pages=immediate_pages,
-        objects=immediate_objects,
-        discoveredFolders=len(discovered_folders),
+        pages=page_count,
+        objects=object_count,
+        realDocuments=real_document_count,
+        discoveredFolders=len(
+            discovered_folders
+        ),
         directFiles=len(files)
     )
 
@@ -1272,10 +1356,10 @@ def list_building_folder(
 
     merged_folders = {}
 
-    configured_count_started_at = time.perf_counter()
+    aggregation_started_at = time.perf_counter()
 
-    # Always display configured folders,
-    # even when S3 has no object beneath them.
+    # Always display configured folders, even when no
+    # corresponding S3 object currently exists.
     for folder_name in configured_names:
         child_path = (
             folder_path
@@ -1297,9 +1381,9 @@ def list_building_folder(
         )
 
         document_count = (
-            count_documents_under_folder(
-                building_root,
-                child_path
+            document_counts.get(
+                child_path,
+                0
             )
         )
 
@@ -1322,18 +1406,8 @@ def list_building_folder(
                 not has_child_folders
         }
 
-    log_timing(
-        "configured folder counting total",
-        configured_count_started_at,
-        folder=folder_path,
-        configuredFolders=len(configured_names)
-    )
-
-    unexpected_started_at = time.perf_counter()
-    unexpected_count = 0
-
-    # Include unexpected folders that physically
-    # exist in S3 but are not in the configuration.
+    # Include unexpected folders that physically exist
+    # in S3 but are not part of the configured structure.
     for (
         discovered_path,
         discovered_folder
@@ -1345,19 +1419,17 @@ def list_building_folder(
         ):
             continue
 
-        unexpected_count += 1
-
         has_child_folders = (
-            folder_has_child_folders(
-                building_root,
-                discovered_path
+            unexpected_has_child_folders.get(
+                discovered_path,
+                False
             )
         )
 
         document_count = (
-            count_documents_under_folder(
-                building_root,
-                discovered_path
+            document_counts.get(
+                discovered_path,
+                0
             )
         )
 
@@ -1383,10 +1455,18 @@ def list_building_folder(
         }
 
     log_timing(
-        "unexpected folder processing total",
-        unexpected_started_at,
+        "in-memory folder aggregation",
+        aggregation_started_at,
         folder=folder_path,
-        unexpectedFolders=unexpected_count
+        configuredFolders=len(
+            configured_names
+        ),
+        discoveredFolders=len(
+            discovered_folders
+        ),
+        returnedFolders=len(
+            merged_folders
+        )
     )
 
     configured_order = {
@@ -1426,7 +1506,6 @@ def list_building_folder(
     )
 
     return folders, files
-
 
 def build_breadcrumbs(
     folder_path: str
