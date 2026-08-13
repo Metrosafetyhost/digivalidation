@@ -1485,6 +1485,19 @@ resource "aws_iam_policy" "s3_file_viewer_read" {
         Resource = [
           "arn:aws:s3:::metrosafetyprodfiles/Buildings/*"
         ]
+      },
+      {
+        Sid    = "ManageWorkOrderFileViewerObjects"
+        Effect = "Allow"
+
+        Action = [
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+
+        Resource = [
+          "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*"
+        ]
       }
     ]
   })

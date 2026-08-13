@@ -393,6 +393,20 @@ resource "aws_apigatewayv2_route" "open_work_order_file" {
   target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
 }
 
+resource "aws_apigatewayv2_route" "create_work_order_upload_url" {
+  api_id = aws_apigatewayv2_api.lambda_api.id
+
+  route_key = "POST /files/workorders/{workOrderId}/upload-url"
+  target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+}
+
+resource "aws_apigatewayv2_route" "delete_work_order_file" {
+  api_id = aws_apigatewayv2_api.lambda_api.id
+
+  route_key = "POST /files/workorders/{workOrderId}/delete"
+  target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+}
+
 resource "aws_apigatewayv2_route" "list_building_documents" {
   api_id = aws_apigatewayv2_api.lambda_api.id
 

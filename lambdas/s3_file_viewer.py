@@ -1658,6 +1658,123 @@ def process_work_order_request(
     )
 
     if raw_path.endswith(
+        "/upload-url"
+    ):
+        body = get_json_body(event)
+        file_name = body.get("fileName")
+        content_type = (
+            body.get("contentType")
+            or "application/octet-stream"
+        )
+
+        if not file_name:
+            return response(400, {
+                "error": "Missing fileName"
+            })
+
+        if not isinstance(content_type, str):
+            return response(400, {
+                "error": "Invalid contentType"
+            })
+
+        content_type = (
+            content_type.strip()
+            or "application/octet-stream"
+        )
+        safe_file_name = sanitise_file_name(
+            file_name
+        )
+        object_key = (
+            expected_prefix
+            + safe_file_name
+        )
+
+        if object_exists(object_key):
+            return response(409, {
+                "error": (
+                    "A file with this name already "
+                    "exists for this Work Order. "
+                    "No file was uploaded."
+                ),
+                "objectKey": object_key
+            })
+
+        return response(200, {
+            "uploadUrl": create_presigned_upload_url(
+                object_key,
+                content_type
+            ),
+            "objectKey": object_key,
+            "fileName": safe_file_name,
+            "contentType": content_type,
+            "expiresInSeconds": PRESIGNED_URL_SECONDS
+        })
+
+    if raw_path.endswith(
+        "/delete"
+    ):
+        body = get_json_body(event)
+        object_key = body.get("objectKey")
+
+        if not object_key:
+            return response(400, {
+                "error": "Missing objectKey"
+            })
+
+        if not isinstance(object_key, str):
+            return response(400, {
+                "error": "Invalid objectKey"
+            })
+
+        object_key = object_key.strip()
+
+        if not object_key.startswith(
+            expected_prefix
+        ):
+            return response(403, {
+                "error": (
+                    "The selected file does not "
+                    "belong to this Work Order"
+                )
+            })
+
+        file_name = object_key.rsplit(
+            "/",
+            1
+        )[-1]
+
+        if (
+            not file_name
+            or object_key.endswith("/")
+            or file_name in IGNORED_FILE_NAMES
+        ):
+            return response(400, {
+                "error": (
+                    "The selected S3 object cannot "
+                    "be deleted."
+                )
+            })
+
+        if not object_exists(object_key):
+            return response(404, {
+                "error": (
+                    "The selected file no longer "
+                    "exists in S3."
+                )
+            })
+
+        s3.delete_object(
+            Bucket=FILE_BUCKET,
+            Key=object_key
+        )
+
+        return response(200, {
+            "deleted": True,
+            "objectKey": object_key,
+            "fileName": file_name
+        })
+
+    if raw_path.endswith(
         "/open"
     ):
         key = get_query_parameter(
