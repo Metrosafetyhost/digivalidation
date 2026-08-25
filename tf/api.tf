@@ -435,3 +435,11 @@ resource "aws_apigatewayv2_route" "s3_file_viewer_building_delete" {
 
   target = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
 }
+
+resource "aws_apigatewayv2_route" "s3_file_viewer_building_move" {
+  api_id = aws_apigatewayv2_api.lambda_api.id
+
+  route_key = "POST /files/buildings/move"
+
+  target = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+}
