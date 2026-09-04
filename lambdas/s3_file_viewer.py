@@ -153,6 +153,7 @@ def normalise_building_prefix(building_prefix: str) -> str:
 
     return prefix
 
+
 def normalise_exact_building_root(building_root: str) -> str:
     root = str(building_root).strip()
 
@@ -163,6 +164,7 @@ def normalise_exact_building_root(building_root: str) -> str:
         raise ValueError('The supplied Building root is not valid')
 
     return root.rstrip('/') + '/'
+
 
 def get_boolean_query_parameter(
     event: dict,
@@ -182,9 +184,7 @@ def get_boolean_query_parameter(
     if normalised in {'false', '0', 'no'}:
         return False
 
-    raise ValueError(
-        f'{parameter_name} must be true or false'
-    )
+    raise ValueError(f'{parameter_name} must be true or false')
 
 
 def get_building_lookup_token(building_prefix: str) -> str:
@@ -1018,17 +1018,12 @@ def process_building_request(event: dict, raw_path: str) -> dict:
     root_started_at = time.perf_counter()
 
     if supplied_building_root:
-        building_root = normalise_exact_building_root(
-            supplied_building_root
-        )
+        building_root = normalise_exact_building_root(supplied_building_root)
 
         if not s3_prefix_has_contents(building_root):
             return response(
                 404,
-                {
-                    'error':
-                        'The supplied Building root was not found'
-                },
+                {'error': 'The supplied Building root was not found'},
             )
 
         root_resolution = {
@@ -1174,7 +1169,7 @@ def process_building_delete_request(event: dict) -> dict:
     body = get_json_body(event)
 
     supplied_prefix = body.get('buildingPrefix')
-
+    supplied_building_root = body.get('buildingRoot')
     object_key = body.get('objectKey')
 
     if not supplied_prefix:
@@ -1190,76 +1185,154 @@ def process_building_delete_request(event: dict) -> dict:
 
     building_prefix = normalise_building_prefix(supplied_prefix)
 
-    building_root = find_building_root(building_prefix)
+    if supplied_building_root:
+        building_root = normalise_exact_building_root(supplied_building_root)
+    else:
+        building_root = find_building_root(building_prefix)
 
     if not is_key_in_building_documents(object_key, building_root):
-        return response(403, {'error': ("The selected file does not belong to this Building's Compliance Documents folder.")})
+        return response(
+            403,
+            {'error': "The selected file does not belong to this Building's Compliance Documents folder."},
+        )
 
     file_name = object_key.rsplit('/', 1)[-1]
 
     if not file_name or file_name in IGNORED_FILE_NAMES:
-        return response(400, {'error': ('The selected S3 object cannot be deleted.')})
+        return response(
+            400,
+            {'error': 'The selected S3 object cannot be deleted.'},
+        )
 
     if object_key.endswith('/'):
-        return response(400, {'error': ('Folders cannot be deleted from this viewer.')})
+        return response(
+            400,
+            {'error': 'Folders cannot be deleted from this viewer.'},
+        )
 
     if not object_exists(object_key):
-        return response(404, {'error': ('The selected file no longer exists in S3.')})
+        return response(
+            404,
+            {'error': 'The selected file no longer exists in S3.'},
+        )
 
-    s3.delete_object(Bucket=FILE_BUCKET, Key=object_key)
+    s3.delete_object(
+        Bucket=FILE_BUCKET,
+        Key=object_key,
+    )
 
-    return response(200, {'deleted': True, 'objectKey': object_key, 'fileName': file_name})
+    return response(
+        200,
+        {
+            'deleted': True,
+            'objectKey': object_key,
+            'fileName': file_name,
+        },
+    )
 
 
 def process_building_move_request(event: dict) -> dict:
     body = get_json_body(event)
 
     supplied_prefix = body.get('buildingPrefix')
+    supplied_building_root = body.get('buildingRoot')
     object_key = body.get('objectKey')
     supplied_destination = body.get('destinationFolderPath')
 
     if not supplied_prefix:
-        return response(400, {'error': 'Missing buildingPrefix'})
+        return response(
+            400,
+            {'error': 'Missing buildingPrefix'},
+        )
 
     if not object_key:
-        return response(400, {'error': 'Missing objectKey'})
+        return response(
+            400,
+            {'error': 'Missing objectKey'},
+        )
 
     if not supplied_destination:
-        return response(400, {'error': 'Missing destinationFolderPath'})
+        return response(
+            400,
+            {'error': 'Missing destinationFolderPath'},
+        )
 
     if not isinstance(object_key, str):
-        return response(400, {'error': 'Invalid objectKey'})
+        return response(
+            400,
+            {'error': 'Invalid objectKey'},
+        )
 
     object_key = object_key.strip()
+
     building_prefix = normalise_building_prefix(supplied_prefix)
-    building_root = find_building_root(building_prefix)
+
+    if supplied_building_root:
+        building_root = normalise_exact_building_root(supplied_building_root)
+    else:
+        building_root = find_building_root(building_prefix)
 
     if not is_key_in_building_documents(object_key, building_root):
-        return response(403, {'error': ("The selected file does not belong to this Building's Compliance Documents folder.")})
+        return response(
+            403,
+            {'error': "The selected file does not belong to this Building's Compliance Documents folder."},
+        )
 
     file_name = object_key.rsplit('/', 1)[-1]
 
     if not file_name or object_key.endswith('/') or file_name in IGNORED_FILE_NAMES:
-        return response(400, {'error': ('The selected S3 object cannot be moved.')})
+        return response(
+            400,
+            {'error': 'The selected S3 object cannot be moved.'},
+        )
 
     if not object_exists(object_key):
-        return response(404, {'error': ('The selected file no longer exists in S3.')})
+        return response(
+            404,
+            {'error': 'The selected file no longer exists in S3.'},
+        )
 
-    destination_folder_path = validate_upload_folder(building_root, supplied_destination)
+    destination_folder_path = validate_upload_folder(
+        building_root,
+        supplied_destination,
+    )
+
     destination_key = building_root + destination_folder_path + file_name
 
     if destination_key == object_key:
-        return response(400, {'error': ('The file is already in the selected folder.')})
+        return response(
+            400,
+            {'error': 'The file is already in the selected folder.'},
+        )
 
     if object_exists(destination_key):
-        return response(409, {'error': ('A file with this name already exists in the selected folder. No file was moved.'), 'objectKey': destination_key})
+        return response(
+            409,
+            {
+                'error': 'A file with this name already exists in the selected folder. No file was moved.',
+                'objectKey': destination_key,
+            },
+        )
 
-    s3.copy_object(Bucket=FILE_BUCKET, CopySource={'Bucket': FILE_BUCKET, 'Key': object_key}, Key=destination_key)
+    s3.copy_object(
+        Bucket=FILE_BUCKET,
+        CopySource={
+            'Bucket': FILE_BUCKET,
+            'Key': object_key,
+        },
+        Key=destination_key,
+    )
 
     if not object_exists(destination_key):
-        return response(500, {'error': ('AWS did not confirm the copied file. The original file was not removed.')})
+        return response(
+            500,
+            {'error': 'AWS did not confirm the copied file. The original file was not removed.'},
+        )
 
-    s3.delete_object(Bucket=FILE_BUCKET, Key=object_key)
+    s3.delete_object(
+        Bucket=FILE_BUCKET,
+        Key=object_key,
+    )
 
     return response(
         200,
