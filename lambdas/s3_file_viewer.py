@@ -70,6 +70,8 @@ MALFORMED_BUILDING_ROOT_MARKERS = (
     'plans, procedures, policies etc.',
 )
 
+class BuildingRootNotFoundError(Exception):
+    pass
 
 def response(status_code: int, body: dict) -> dict:
     return {'statusCode': status_code, 'headers': {'Content-Type': 'application/json'}, 'body': json.dumps(body)}
@@ -144,12 +146,20 @@ def normalise_building_prefix(building_prefix: str) -> str:
     prefix = str(building_prefix).strip()
 
     if not prefix:
-        raise ValueError('The building prefix cannot be blank')
+        raise ValueError(
+            'The building prefix cannot be blank'
+        )
 
-    expected_start = f'{BUILDING_PREFIX}//'
+    single_slash_start = f'{BUILDING_PREFIX}/'
+    double_slash_start = f'{BUILDING_PREFIX}//'
 
-    if not prefix.startswith(expected_start):
-        raise ValueError('The supplied prefix is not a valid Building path')
+    if not (
+        prefix.startswith(single_slash_start)
+        or prefix.startswith(double_slash_start)
+    ):
+        raise ValueError(
+            'The supplied prefix is not a valid Building path'
+        )
 
     return prefix
 
@@ -188,40 +198,48 @@ def get_boolean_query_parameter(
 
 
 def get_building_lookup_token(building_prefix: str) -> str:
-    """
-    Salesforce supplies a value such as:
 
-        Buildings//018278 |
+    # Extract the stable Building Number token.
 
-    The stable lookup token is:
+    normalised_prefix = normalise_building_prefix(
+        building_prefix
+    )
 
-        018278 |
+    if normalised_prefix.startswith(
+        f'{BUILDING_PREFIX}//'
+    ):
+        remainder = normalised_prefix[
+            len(f'{BUILDING_PREFIX}//'):
+        ]
+    else:
+        remainder = normalised_prefix[
+            len(f'{BUILDING_PREFIX}/'):
+        ]
 
-    The name, address and postcode stored after
-    this token are not required to match.
-    """
-    normalised_prefix = normalise_building_prefix(building_prefix)
+    separator_index = remainder.find('|')
 
-    expected_start = f'{BUILDING_PREFIX}//'
+    if separator_index < 0:
+        raise ValueError(
+            'The Building lookup value could not be determined'
+        )
 
-    lookup_token = (normalised_prefix[len(expected_start) :]).strip()
+    building_number = remainder[
+        :separator_index
+    ].strip()
 
-    if not lookup_token:
-        raise ValueError('The Building lookup value could not be determined')
+    if not building_number:
+        raise ValueError(
+            'The Building lookup value could not be determined'
+        )
 
-    return lookup_token
+    return f'{building_number} |'
 
 
 def get_building_parent_prefixes() -> tuple[str, ...]:
-    """
-    Check the current expected S3 structure first.
 
-    Additional variants are included for older
-    or inconsistent historical object keys.
-    """
     return (
-        f'{BUILDING_PREFIX}//',
         f'{BUILDING_PREFIX}/',
+        f'{BUILDING_PREFIX}//',
     )
 
 
@@ -298,9 +316,6 @@ def find_building_roots(building_prefix: str) -> set[str]:
     """
     Resolve all immediate S3 Building folders that
     begin with the stable Building Number token.
-
-    Both the current double-slash parent and the
-    historical single-slash parent are checked.
     """
     lookup_token = get_building_lookup_token(building_prefix)
 
@@ -335,25 +350,16 @@ def get_building_root_suffix(building_root: str, lookup_token: str) -> str:
 
 
 def building_root_priority(building_root: str, lookup_token: str) -> int:
-    """
-    Rank candidate Building roots.
 
-    A correctly named Building root is preferred
-    over a malformed root where a document folder
-    name has been appended to the Building name.
+    # Rank candidate Building roots
 
-    Named roots are preferred over number-only
-    fallback roots. The current double-slash parent
-    receives a small preference over the historical
-    single-slash parent.
-    """
     parent_prefix = get_root_parent_prefix(building_root)
 
     score = 0
 
-    if parent_prefix == f'{BUILDING_PREFIX}//':
+    if parent_prefix == f'{BUILDING_PREFIX}/':
         score += 20
-    elif parent_prefix == f'{BUILDING_PREFIX}/':
+    elif parent_prefix == f'{BUILDING_PREFIX}//':
         score += 10
 
     suffix = get_building_root_suffix(building_root, lookup_token)
@@ -397,11 +403,6 @@ def create_missing_building_root(building_prefix: str) -> str:
     """
     Create a zero-byte S3 folder marker when a
     Building does not yet have an S3 root.
-
-    Salesforce currently supplies the stable value
-    `Buildings//<number> |` rather than the full
-    Building name, so the fallback root is created
-    directly from that stable prefix.
     """
     normalised_prefix = normalise_building_prefix(building_prefix)
 
@@ -435,7 +436,9 @@ def resolve_building_root(building_prefix: str, create_if_missing: bool = True) 
 
     if not building_roots:
         if not create_if_missing:
-            raise ValueError('No AWS documents or Building folder were found for this Building.')
+            raise BuildingRootNotFoundError(
+                'No AWS documents or Building folder were found for this Building.'
+            )
 
         creation_started_at = time.perf_counter()
         created_root = create_missing_building_root(building_prefix)
@@ -1033,10 +1036,17 @@ def process_building_request(event: dict, raw_path: str) -> dict:
         }
 
     else:
-        root_resolution = resolve_building_root(
-            building_prefix,
-            create_if_missing=create_if_missing,
-        )
+        try:
+            root_resolution = resolve_building_root(
+                building_prefix,
+                create_if_missing=create_if_missing,
+            )
+
+        except BuildingRootNotFoundError as error:
+            return response(
+                404,
+                {'error': str(error)},
+            )
 
         building_root = root_resolution['buildingRoot']
 
@@ -1112,18 +1122,18 @@ def process_building_upload_request(event: dict) -> dict:
     body = get_json_body(event)
 
     supplied_prefix = body.get('buildingPrefix')
-
     supplied_folder_path = body.get('folderPath')
-
     file_name = body.get('fileName')
-
     content_type = body.get('contentType') or 'application/octet-stream'
 
     if not supplied_prefix:
         return response(400, {'error': 'Missing buildingPrefix'})
 
     if not supplied_folder_path:
-        return response(400, {'error': ('Open a final document folder before uploading.')})
+        return response(
+            400,
+            {'error': 'Open a final document folder before uploading.'},
+        )
 
     if not file_name:
         return response(400, {'error': 'Missing fileName'})
@@ -1138,18 +1148,36 @@ def process_building_upload_request(event: dict) -> dict:
 
     building_prefix = normalise_building_prefix(supplied_prefix)
 
-    building_root = find_building_root(building_prefix)
+    # New uploads always use the canonical Building root supplied
+    # by Salesforce. Existing legacy/null/double-slash roots remain
+    # readable, but new documents are never written back into them.
+    building_root = building_prefix.rstrip('/') + '/'
 
-    folder_path = validate_upload_folder(building_root, supplied_folder_path)
+    folder_path = validate_upload_folder(
+        building_root,
+        supplied_folder_path,
+    )
 
     safe_file_name = sanitise_file_name(file_name)
 
     object_key = building_root + folder_path + safe_file_name
 
     if object_exists(object_key):
-        return response(409, {'error': ('A file with this name already exists in the selected folder. No file was uploaded.'), 'objectKey': object_key})
+        return response(
+            409,
+            {
+                'error': (
+                    'A file with this name already exists in the '
+                    'selected folder. No file was uploaded.'
+                ),
+                'objectKey': object_key,
+            },
+        )
 
-    upload_url = create_presigned_upload_url(object_key, content_type)
+    upload_url = create_presigned_upload_url(
+        object_key,
+        content_type,
+    )
 
     return response(
         200,
