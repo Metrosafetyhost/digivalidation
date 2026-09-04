@@ -153,6 +153,39 @@ def normalise_building_prefix(building_prefix: str) -> str:
 
     return prefix
 
+def normalise_exact_building_root(building_root: str) -> str:
+    root = str(building_root).strip()
+
+    if not root:
+        raise ValueError('The Building root cannot be blank')
+
+    if not root.startswith(f'{BUILDING_PREFIX}/'):
+        raise ValueError('The supplied Building root is not valid')
+
+    return root.rstrip('/') + '/'
+
+def get_boolean_query_parameter(
+    event: dict,
+    parameter_name: str,
+    default: bool,
+) -> bool:
+    value = get_query_parameter(event, parameter_name)
+
+    if value is None:
+        return default
+
+    normalised = str(value).strip().lower()
+
+    if normalised in {'true', '1', 'yes'}:
+        return True
+
+    if normalised in {'false', '0', 'no'}:
+        return False
+
+    raise ValueError(
+        f'{parameter_name} must be true or false'
+    )
+
 
 def get_building_lookup_token(building_prefix: str) -> str:
     """
@@ -971,11 +1004,53 @@ def process_building_request(event: dict, raw_path: str) -> dict:
 
     building_prefix = normalise_building_prefix(supplied_prefix)
 
-    root_started_at = time.perf_counter()
-    root_resolution = resolve_building_root(building_prefix, create_if_missing=True)
-    log_timing('request root resolution', root_started_at)
+    supplied_building_root = get_query_parameter(
+        event,
+        'buildingRoot',
+    )
 
-    building_root = root_resolution['buildingRoot']
+    create_if_missing = get_boolean_query_parameter(
+        event,
+        'createIfMissing',
+        True,
+    )
+
+    root_started_at = time.perf_counter()
+
+    if supplied_building_root:
+        building_root = normalise_exact_building_root(
+            supplied_building_root
+        )
+
+        if not s3_prefix_has_contents(building_root):
+            return response(
+                404,
+                {
+                    'error':
+                        'The supplied Building root was not found'
+                },
+            )
+
+        root_resolution = {
+            'buildingRoot': building_root,
+            'buildingRootCreated': False,
+            'warnings': [],
+        }
+
+    else:
+        root_resolution = resolve_building_root(
+            building_prefix,
+            create_if_missing=create_if_missing,
+        )
+
+        building_root = root_resolution['buildingRoot']
+
+    log_timing(
+        'request root resolution',
+        root_started_at,
+        exactRoot=bool(supplied_building_root),
+        createIfMissing=create_if_missing,
+    )
 
     if raw_path.endswith('/open'):
         key = get_query_parameter(event, 'key')
