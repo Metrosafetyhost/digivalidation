@@ -1293,51 +1293,94 @@ def process_building_move_request(event: dict) -> dict:
 
     object_key = object_key.strip()
 
-    building_prefix = normalise_building_prefix(supplied_prefix)
+    building_prefix = normalise_building_prefix(
+        supplied_prefix
+    )
 
     if supplied_building_root:
-        building_root = normalise_exact_building_root(supplied_building_root)
+        source_building_root = normalise_exact_building_root(
+            supplied_building_root
+        )
     else:
-        building_root = find_building_root(building_prefix)
+        source_building_root = find_building_root(
+            building_prefix
+        )
 
-    if not is_key_in_building_documents(object_key, building_root):
+    # Make sure the selected source file genuinely belongs to
+    # the supplied Building root.
+    if not is_key_in_building_documents(
+        object_key,
+        source_building_root
+    ):
         return response(
             403,
-            {'error': "The selected file does not belong to this Building's Compliance Documents folder."},
+            {
+                'error': (
+                    "The selected file does not belong to this "
+                    "Building's Compliance Documents folder."
+                )
+            },
         )
 
     file_name = object_key.rsplit('/', 1)[-1]
 
-    if not file_name or object_key.endswith('/') or file_name in IGNORED_FILE_NAMES:
+    if (
+        not file_name
+        or object_key.endswith('/')
+        or file_name in IGNORED_FILE_NAMES
+    ):
         return response(
             400,
-            {'error': 'The selected S3 object cannot be moved.'},
+            {
+                'error':
+                    'The selected S3 object cannot be moved.'
+            },
         )
 
     if not object_exists(object_key):
         return response(
             404,
-            {'error': 'The selected file no longer exists in S3.'},
+            {
+                'error':
+                    'The selected file no longer exists in S3.'
+            },
         )
 
+    # Destination root:
+    # all writes now go to the canonical single-slash Building
+    # root supplied by Salesforce.
+    destination_building_root = (
+        building_prefix.rstrip('/') + '/'
+    )
+
     destination_folder_path = validate_upload_folder(
-        building_root,
+        destination_building_root,
         supplied_destination,
     )
 
-    destination_key = building_root + destination_folder_path + file_name
+    destination_key = (
+        destination_building_root
+        + destination_folder_path
+        + file_name
+    )
 
     if destination_key == object_key:
         return response(
             400,
-            {'error': 'The file is already in the selected folder.'},
+            {
+                'error':
+                    'The file is already in the selected folder.'
+            },
         )
 
     if object_exists(destination_key):
         return response(
             409,
             {
-                'error': 'A file with this name already exists in the selected folder. No file was moved.',
+                'error': (
+                    'A file with this name already exists in the '
+                    'selected folder. No file was moved.'
+                ),
                 'objectKey': destination_key,
             },
         )
@@ -1354,7 +1397,12 @@ def process_building_move_request(event: dict) -> dict:
     if not object_exists(destination_key):
         return response(
             500,
-            {'error': 'AWS did not confirm the copied file. The original file was not removed.'},
+            {
+                'error': (
+                    'AWS did not confirm the copied file. '
+                    'The original file was not removed.'
+                )
+            },
         )
 
     s3.delete_object(
@@ -1372,7 +1420,6 @@ def process_building_move_request(event: dict) -> dict:
             'fileName': file_name,
         },
     )
-
 
 def process(event, context):
     try:
