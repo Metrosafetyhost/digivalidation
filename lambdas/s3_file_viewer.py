@@ -238,8 +238,8 @@ def get_building_lookup_token(building_prefix: str) -> str:
 def get_building_parent_prefixes() -> tuple[str, ...]:
 
     return (
-        f'{BUILDING_PREFIX}/',
         f'{BUILDING_PREFIX}//',
+        f'{BUILDING_PREFIX}/',
     )
 
 
