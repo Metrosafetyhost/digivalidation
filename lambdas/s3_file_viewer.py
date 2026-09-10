@@ -518,6 +518,40 @@ def normalise_folder_path(folder_path: str | None) -> str:
     return normalised_path
 
 
+def is_malformed_compliance_root(building_root: str) -> bool:
+    root_name = building_root.rstrip('/').lower()
+
+    return root_name.endswith(
+        COMPLIANCE_DOCUMENTS_FOLDER.rstrip('/').lower()
+    )
+
+
+def get_physical_building_folder_path(
+    building_root: str,
+    logical_folder_path: str,
+) -> str:
+    """
+    Convert the logical Building viewer path into the
+    physical S3 path for historical roots where
+    "Compliance Documents" was appended to the Building
+    root name instead of created as a child folder.
+    """
+    if not is_malformed_compliance_root(building_root):
+        return logical_folder_path
+
+    compliance_prefix = COMPLIANCE_DOCUMENTS_FOLDER
+
+    if logical_folder_path.lower() == compliance_prefix.lower():
+        return ''
+
+    if logical_folder_path.lower().startswith(
+        compliance_prefix.lower()
+    ):
+        return logical_folder_path[len(compliance_prefix):]
+
+    return logical_folder_path
+
+
 def sanitise_file_name(file_name: str) -> str:
     name = str(file_name).strip()
 
@@ -676,7 +710,7 @@ def count_documents_under_folder(building_root: str, folder_path: str) -> int:
     return document_count
 
 
-def list_building_folder(building_root: str, folder_path: str) -> tuple[list[dict], list[dict]]:
+def list_building_folder(building_root: str, folder_path: str, physical_folder_path: str | None = None) -> tuple[list[dict], list[dict]]:
     """
     Return the immediate folders and files for the
     folder currently being viewed.
@@ -697,7 +731,10 @@ def list_building_folder(building_root: str, folder_path: str) -> tuple[list[dic
     """
     total_started_at = time.perf_counter()
 
-    full_prefix = building_root + folder_path
+    if physical_folder_path is None:
+        physical_folder_path = folder_path
+
+    full_prefix = building_root + physical_folder_path
 
     paginator = s3.get_paginator('list_objects_v2')
 
@@ -889,7 +926,10 @@ def current_folder_name(folder_path: str) -> str:
 
 
 def is_key_in_building_documents(key: str, building_root: str) -> bool:
-    allowed_prefix = building_root + COMPLIANCE_DOCUMENTS_FOLDER
+    if is_malformed_compliance_root(building_root):
+        allowed_prefix = building_root
+    else:
+        allowed_prefix = building_root + COMPLIANCE_DOCUMENTS_FOLDER
 
     return key.startswith(allowed_prefix)
 
@@ -1077,22 +1117,27 @@ def process_building_request(event: dict, raw_path: str) -> dict:
 
     folder_path = normalise_folder_path(supplied_folder_path)
 
+    physical_folder_path = get_physical_building_folder_path(
+        building_root,
+        folder_path,
+    )
+
     existence_started_at = time.perf_counter()
     folder_exists_check_needed = not is_configured_folder(folder_path)
 
-    if folder_exists_check_needed and not building_folder_exists(building_root, folder_path):
+    if folder_exists_check_needed and not building_folder_exists(building_root, physical_folder_path):
         log_timing('selected folder existence check', existence_started_at, required=True)
         return response(404, {'error': ('The selected Building folder was not found')})
 
     log_timing('selected folder existence check', existence_started_at, required=folder_exists_check_needed)
 
     listing_started_at = time.perf_counter()
-    folders, files = list_building_folder(building_root, folder_path)
+    folders, files = list_building_folder(building_root, folder_path, physical_folder_path)
     log_timing('request folder listing', listing_started_at, folder=folder_path)
 
     can_upload_started_at = time.perf_counter()
     can_upload = is_configured_upload_destination(folder_path) or (
-        folder_path.lower() != COMPLIANCE_DOCUMENTS_FOLDER.lower() and building_folder_exists(building_root, folder_path) and len(folders) == 0
+        folder_path.lower() != COMPLIANCE_DOCUMENTS_FOLDER.lower() and building_folder_exists(building_root, physical_folder_path) and len(folders) == 0
     )
     log_timing('canUpload calculation', can_upload_started_at, canUpload=can_upload)
 
