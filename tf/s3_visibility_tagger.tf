@@ -9,7 +9,9 @@ resource "aws_iam_policy" "s3_visibility_tagger_tagging" {
       Effect = "Allow"
       Action = [
         "s3:GetObjectTagging",
-        "s3:PutObjectTagging"
+        "s3:PutObjectTagging",
+        "s3:GetObjectVersionTagging",
+        "s3:PutObjectVersionTagging"
       ]
       Resource = [
         "arn:aws:s3:::metrosafetyprodfiles/Buildings/*",
