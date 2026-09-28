@@ -28,6 +28,7 @@ module "lambdas_zip" {
     "fire_validation",
     "archive_viewer",
     "s3_file_viewer",
+    "s3_visibility_tagger",
     "gam"
   ]
 
@@ -56,6 +57,7 @@ module "lambdas_zip" {
     "fire_validation.py",
     "archive_viewer.py",
     "s3_file_viewer.py",
+    "s3_visibility_tagger.py",
     "gam.py"
   ]
 
@@ -155,6 +157,16 @@ module "lambdas_zip" {
         FILE_BUCKET           = "metrosafetyprodfiles"
         WORK_ORDER_PREFIX     = "WorkOrders"
         PRESIGNED_URL_SECONDS = "300"
+      }
+    }
+
+    s3_visibility_tagger = {
+      handler     = "process"
+      timeout     = 30
+      memory_size = 256
+
+      lambda_environment = {
+        FILE_BUCKET = "metrosafetyprodfiles"
       }
     }
 
