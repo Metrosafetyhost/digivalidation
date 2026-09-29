@@ -428,6 +428,25 @@ resource "aws_apigatewayv2_route" "create_building_upload_url" {
   target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
 }
 
+data "aws_lambda_function" "s3_visibility_tagger" {
+  function_name = "bedrock-lambda-s3_visibility_tagger"
+
+  depends_on = [module.lambdas_zip]
+}
+
+resource "aws_apigatewayv2_integration" "s3_visibility_tagger_recommendation" {
+  api_id                 = aws_apigatewayv2_api.lambda_api.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = data.aws_lambda_function.s3_visibility_tagger.invoke_arn
+  payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "s3_visibility_recommendation" {
+  api_id             = aws_apigatewayv2_api.lambda_api.id
+  route_key          = "POST /files/visibility-recommendation"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_visibility_tagger_recommendation.id}"
+}
+
 resource "aws_apigatewayv2_route" "s3_file_viewer_building_delete" {
   api_id = aws_apigatewayv2_api.lambda_api.id
 

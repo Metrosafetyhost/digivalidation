@@ -37,6 +37,14 @@ resource "aws_lambda_permission" "allow_files_bucket_invoke_s3_visibility_tagger
   source_account = local.this_account
 }
 
+resource "aws_lambda_permission" "allow_api_visibility_recommendation" {
+  statement_id  = "AllowExecutionFromAPIGatewayVisibilityRecommendation"
+  action        = "lambda:InvokeFunction"
+  function_name = module.lambdas_zip.lambda_arns["s3_visibility_tagger"]
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/POST/files/visibility-recommendation"
+}
+
 resource "aws_s3_bucket_notification" "files_visibility_tagger" {
   bucket = "metrosafetyprodfiles"
 

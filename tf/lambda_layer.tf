@@ -1465,7 +1465,8 @@ resource "aws_iam_policy" "s3_file_viewer_read" {
         Effect = "Allow"
 
         Action = [
-          "s3:GetObject"
+          "s3:GetObject",
+          "s3:GetObjectTagging"
         ]
 
         Resource = [
@@ -1496,6 +1497,17 @@ resource "aws_iam_policy" "s3_file_viewer_read" {
         ]
 
         Resource = [
+          "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*"
+        ]
+      },
+      {
+        Sid    = "TagFileViewerUploads"
+        Effect = "Allow"
+
+        Action = ["s3:PutObjectTagging"]
+
+        Resource = [
+          "arn:aws:s3:::metrosafetyprodfiles/Buildings/*",
           "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*"
         ]
       }

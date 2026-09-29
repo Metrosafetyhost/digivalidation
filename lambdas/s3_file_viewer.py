@@ -2,11 +2,11 @@ import base64
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import unquote
 
 import boto3
 from botocore.exceptions import ClientError
-
 
 s3 = boto3.client('s3')
 
@@ -26,6 +26,10 @@ IGNORED_FILE_NAMES = {
     '.textract_ran',
     'textract_ran',
 }
+
+VISIBILITY_TAGS = {'customer': 'customer-visible', 'public': 'public-visible'}
+TAG_LOOKUP_WORKERS = 8
+TAG_LOOKUP_BATCH_SIZE = 32
 
 STANDARD_CATEGORIES = (
     'Assessment',
@@ -107,6 +111,59 @@ def get_query_parameter(event: dict, parameter_name: str) -> str | None:
     return unquote(value)
 
 
+def get_visibility_scope(event: dict) -> str:
+    parameters = event.get('queryStringParameters') or {}
+    if 'visibilityScope' not in parameters:
+        return 'staff'
+
+    scope = parameters['visibilityScope']
+    if not isinstance(scope, str) or scope not in {'staff', 'customer', 'public'}:
+        raise ValueError('visibilityScope must be staff, customer or public')
+    return scope
+
+
+def object_visible_to_scope(key: str, scope: str) -> bool:
+    if scope == 'staff':
+        return True
+
+    tag_set = s3.get_object_tagging(Bucket=FILE_BUCKET, Key=key).get('TagSet')
+    if not isinstance(tag_set, list):
+        return False
+
+    values = [tag.get('Value') for tag in tag_set if isinstance(tag, dict) and tag.get('Key') == VISIBILITY_TAGS[scope]]
+    return values == ['true']
+
+
+def list_visible_pages(prefix: str, scope: str):
+    paginator = s3.get_paginator('list_objects_v2')
+    pages = paginator.paginate(Bucket=FILE_BUCKET, Prefix=prefix)
+    if scope == 'staff':
+        yield from pages
+        return
+
+    # This cache and worker pool live only for one listing request.
+    visible_by_key = {}
+    with ThreadPoolExecutor(max_workers=TAG_LOOKUP_WORKERS) as workers:
+        for page in pages:
+            contents = page.get('Contents', [])
+            keys = list(
+                dict.fromkeys(
+                    item['Key']
+                    for item in contents
+                    if item.get('Key')
+                    and not item['Key'].endswith('/')
+                    and item['Key'].rsplit('/', 1)[-1] not in IGNORED_FILE_NAMES
+                    and item['Key'] not in visible_by_key
+                )
+            )
+            for start in range(0, len(keys), TAG_LOOKUP_BATCH_SIZE):
+                batch = keys[start : start + TAG_LOOKUP_BATCH_SIZE]
+                for key, visible in zip(batch, workers.map(lambda candidate: object_visible_to_scope(candidate, scope), batch), strict=True):
+                    visible_by_key[key] = visible
+
+            yield {**page, 'Contents': [item for item in contents if visible_by_key.get(item.get('Key'), False)]}
+
+
 def get_json_body(event: dict) -> dict:
     body = event.get('body')
 
@@ -136,10 +193,20 @@ def create_presigned_url(key: str) -> str:
     return s3.generate_presigned_url(ClientMethod='get_object', Params={'Bucket': FILE_BUCKET, 'Key': key}, ExpiresIn=PRESIGNED_URL_SECONDS)
 
 
-def create_presigned_upload_url(key: str, content_type: str) -> str:
-    return s3.generate_presigned_url(
-        ClientMethod='put_object', Params={'Bucket': FILE_BUCKET, 'Key': key, 'ContentType': content_type}, ExpiresIn=PRESIGNED_URL_SECONDS
-    )
+def create_presigned_upload_url(key: str, content_type: str, tagging: str | None = None) -> str:
+    params = {'Bucket': FILE_BUCKET, 'Key': key, 'ContentType': content_type}
+    if tagging is not None:
+        params['Tagging'] = tagging
+    return s3.generate_presigned_url(ClientMethod='put_object', Params=params, ExpiresIn=PRESIGNED_URL_SECONDS)
+
+
+def get_upload_tagging(body: dict) -> str | None:
+    if 'customerVisible' not in body:
+        return None
+    if not isinstance(body['customerVisible'], bool):
+        raise ValueError('customerVisible must be a JSON Boolean')
+    visible = 'true' if body['customerVisible'] else 'false'
+    return f'customer-visible={visible}&public-visible=false'
 
 
 def normalise_building_prefix(building_prefix: str) -> str:
@@ -413,7 +480,7 @@ def create_missing_building_root(building_prefix: str) -> str:
     return building_root
 
 
-def resolve_building_root(building_prefix: str, create_if_missing: bool = True) -> dict:
+def resolve_building_root(building_prefix: str, create_if_missing: bool = True, visibility_scope: str = 'staff') -> dict:
     """
     Select the safest Building root and return any
     warnings about lower-priority legacy roots.
@@ -468,11 +535,12 @@ def resolve_building_root(building_prefix: str, create_if_missing: bool = True) 
     warning_scan_started_at = time.perf_counter()
     lower_priority_checked = 0
 
-    for lower_priority_root in ranked_roots[1:]:
-        lower_priority_checked += 1
+    if visibility_scope == 'staff':
+        for lower_priority_root in ranked_roots[1:]:
+            lower_priority_checked += 1
 
-        if prefix_contains_real_files(lower_priority_root):
-            warnings.append('A lower-priority legacy Building folder also contains files and may require review: ' + lower_priority_root)
+            if prefix_contains_real_files(lower_priority_root):
+                warnings.append('A lower-priority legacy Building folder also contains files and may require review: ' + lower_priority_root)
 
     log_timing('legacy root warning scan', warning_scan_started_at, checked=lower_priority_checked, warnings=len(warnings))
     log_timing('building root resolution total', total_started_at, selected=selected_root, created=False, warnings=len(warnings))
@@ -562,6 +630,10 @@ def is_configured_folder(folder_path: str) -> bool:
     return False
 
 
+def hidden_unconfigured_folder(folder_path: str, folders: list[dict], files: list[dict], visibility_scope: str) -> bool:
+    return visibility_scope != 'staff' and not is_configured_folder(folder_path) and not folders and not files
+
+
 def is_configured_upload_destination(folder_path: str) -> bool:
     if not is_configured_folder(folder_path):
         return False
@@ -602,18 +674,16 @@ def folder_has_child_folders(building_root: str, folder_path: str) -> bool:
     return bool(result.get('CommonPrefixes'))
 
 
-def list_files(prefix: str) -> list[dict]:
+def list_files(prefix: str, visibility_scope: str = 'staff') -> list[dict]:
     """
     Existing Work Order listing behaviour.
 
     This intentionally lists all objects beneath
     the supplied Work Order prefix.
     """
-    paginator = s3.get_paginator('list_objects_v2')
-
     files = []
 
-    for page in paginator.paginate(Bucket=FILE_BUCKET, Prefix=prefix):
+    for page in list_visible_pages(prefix, visibility_scope):
         for item in page.get('Contents', []):
             key = item['Key']
 
@@ -676,7 +746,7 @@ def count_documents_under_folder(building_root: str, folder_path: str) -> int:
     return document_count
 
 
-def list_building_folder(building_root: str, folder_path: str) -> tuple[list[dict], list[dict]]:
+def list_building_folder(building_root: str, folder_path: str, visibility_scope: str = 'staff') -> tuple[list[dict], list[dict]]:
     """
     Return the immediate folders and files for the
     folder currently being viewed.
@@ -699,8 +769,6 @@ def list_building_folder(building_root: str, folder_path: str) -> tuple[list[dic
 
     full_prefix = building_root + folder_path
 
-    paginator = s3.get_paginator('list_objects_v2')
-
     discovered_folders = {}
     files = []
     document_counts = {}
@@ -712,7 +780,7 @@ def list_building_folder(building_root: str, folder_path: str) -> tuple[list[dic
 
     listing_started_at = time.perf_counter()
 
-    for page in paginator.paginate(Bucket=FILE_BUCKET, Prefix=full_prefix):
+    for page in list_visible_pages(full_prefix, visibility_scope):
         page_count += 1
 
         for item in page.get('Contents', []):
@@ -935,22 +1003,23 @@ def process_work_order_request(event: dict, raw_path: str) -> dict:
             return response(400, {'error': 'Invalid contentType'})
 
         content_type = content_type.strip() or 'application/octet-stream'
+        tagging = get_upload_tagging(body)
         safe_file_name = sanitise_file_name(file_name)
         object_key = expected_prefix + safe_file_name
 
         if object_exists(object_key):
             return response(409, {'error': ('A file with this name already exists for this Work Order. No file was uploaded.'), 'objectKey': object_key})
 
-        return response(
-            200,
-            {
-                'uploadUrl': create_presigned_upload_url(object_key, content_type),
-                'objectKey': object_key,
-                'fileName': safe_file_name,
-                'contentType': content_type,
-                'expiresInSeconds': PRESIGNED_URL_SECONDS,
-            },
-        )
+        result = {
+            'uploadUrl': create_presigned_upload_url(object_key, content_type, tagging),
+            'objectKey': object_key,
+            'fileName': safe_file_name,
+            'contentType': content_type,
+            'expiresInSeconds': PRESIGNED_URL_SECONDS,
+        }
+        if tagging is not None:
+            result['taggingHeader'] = tagging
+        return response(200, result)
 
     if raw_path.endswith('/delete'):
         body = get_json_body(event)
@@ -979,6 +1048,8 @@ def process_work_order_request(event: dict, raw_path: str) -> dict:
 
         return response(200, {'deleted': True, 'objectKey': object_key, 'fileName': file_name})
 
+    visibility_scope = get_visibility_scope(event)
+
     if raw_path.endswith('/open'):
         key = get_query_parameter(event, 'key')
 
@@ -990,15 +1061,39 @@ def process_work_order_request(event: dict, raw_path: str) -> dict:
 
         s3.head_object(Bucket=FILE_BUCKET, Key=key)
 
+        if not object_visible_to_scope(key, visibility_scope):
+            return response(404, {'error': 'The requested S3 object was not found'})
+
         return response(200, {'url': create_presigned_url(key), 'expiresInSeconds': PRESIGNED_URL_SECONDS})
 
-    files = list_files(expected_prefix)
+    files = list_files(expected_prefix, visibility_scope)
 
     return response(200, {'workOrderId': work_order_id, 'prefix': expected_prefix, 'recordCount': len(files), 'files': files})
 
 
+def open_building_file(event: dict, building_root: str, visibility_scope: str, request_started_at: float) -> dict:
+    key = get_query_parameter(event, 'key')
+
+    if not key:
+        return response(400, {'error': 'Missing key'})
+
+    if not is_key_in_building_documents(key, building_root):
+        return response(403, {'error': ("The requested object does not belong to this Building's Compliance Documents folder")})
+
+    head_started_at = time.perf_counter()
+    s3.head_object(Bucket=FILE_BUCKET, Key=key)
+    log_timing('open file head_object', head_started_at)
+
+    if not object_visible_to_scope(key, visibility_scope):
+        return response(404, {'error': 'The requested S3 object was not found'})
+
+    log_timing('building request total', request_started_at, operation='open')
+    return response(200, {'url': create_presigned_url(key), 'expiresInSeconds': PRESIGNED_URL_SECONDS})
+
+
 def process_building_request(event: dict, raw_path: str) -> dict:
     request_started_at = time.perf_counter()
+    visibility_scope = get_visibility_scope(event)
 
     supplied_prefix = get_query_parameter(event, 'buildingPrefix')
 
@@ -1040,6 +1135,7 @@ def process_building_request(event: dict, raw_path: str) -> dict:
             root_resolution = resolve_building_root(
                 building_prefix,
                 create_if_missing=create_if_missing,
+                visibility_scope=visibility_scope,
             )
 
         except BuildingRootNotFoundError as error:
@@ -1058,20 +1154,7 @@ def process_building_request(event: dict, raw_path: str) -> dict:
     )
 
     if raw_path.endswith('/open'):
-        key = get_query_parameter(event, 'key')
-
-        if not key:
-            return response(400, {'error': 'Missing key'})
-
-        if not (is_key_in_building_documents(key, building_root)):
-            return response(403, {'error': ("The requested object does not belong to this Building's Compliance Documents folder")})
-
-        head_started_at = time.perf_counter()
-        s3.head_object(Bucket=FILE_BUCKET, Key=key)
-        log_timing('open file head_object', head_started_at)
-        log_timing('building request total', request_started_at, operation='open')
-
-        return response(200, {'url': create_presigned_url(key), 'expiresInSeconds': PRESIGNED_URL_SECONDS})
+        return open_building_file(event, building_root, visibility_scope, request_started_at)
 
     supplied_folder_path = get_query_parameter(event, 'folderPath')
 
@@ -1087,12 +1170,18 @@ def process_building_request(event: dict, raw_path: str) -> dict:
     log_timing('selected folder existence check', existence_started_at, required=folder_exists_check_needed)
 
     listing_started_at = time.perf_counter()
-    folders, files = list_building_folder(building_root, folder_path)
+    folders, files = list_building_folder(building_root, folder_path, visibility_scope)
     log_timing('request folder listing', listing_started_at, folder=folder_path)
 
+    if hidden_unconfigured_folder(folder_path, folders, files, visibility_scope):
+        return response(404, {'error': 'The selected Building folder was not found'})
+
     can_upload_started_at = time.perf_counter()
-    can_upload = is_configured_upload_destination(folder_path) or (
-        folder_path.lower() != COMPLIANCE_DOCUMENTS_FOLDER.lower() and building_folder_exists(building_root, folder_path) and len(folders) == 0
+    can_upload = visibility_scope == 'staff' and (
+        is_configured_upload_destination(folder_path)
+        or (
+            folder_path.lower() != COMPLIANCE_DOCUMENTS_FOLDER.lower() and building_folder_exists(building_root, folder_path) and len(folders) == 0
+        )
     )
     log_timing('canUpload calculation', can_upload_started_at, canUpload=can_upload)
 
@@ -1142,6 +1231,7 @@ def process_building_upload_request(event: dict) -> dict:
         return response(400, {'error': 'Invalid contentType'})
 
     content_type = content_type.strip()
+    tagging = get_upload_tagging(body)
 
     if not content_type:
         content_type = 'application/octet-stream'
@@ -1177,20 +1267,21 @@ def process_building_upload_request(event: dict) -> dict:
     upload_url = create_presigned_upload_url(
         object_key,
         content_type,
+        tagging,
     )
 
-    return response(
-        200,
-        {
-            'uploadUrl': upload_url,
-            'objectKey': object_key,
-            'buildingRoot': building_root,
-            'folderPath': folder_path,
-            'fileName': safe_file_name,
-            'contentType': content_type,
-            'expiresInSeconds': PRESIGNED_URL_SECONDS,
-        },
-    )
+    result = {
+        'uploadUrl': upload_url,
+        'objectKey': object_key,
+        'buildingRoot': building_root,
+        'folderPath': folder_path,
+        'fileName': safe_file_name,
+        'contentType': content_type,
+        'expiresInSeconds': PRESIGNED_URL_SECONDS,
+    }
+    if tagging is not None:
+        result['taggingHeader'] = tagging
+    return response(200, result)
 
 
 def process_building_delete_request(event: dict) -> dict:

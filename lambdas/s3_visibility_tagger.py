@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import os
 from pathlib import PurePosixPath
@@ -140,8 +142,60 @@ def process_s3_record(record: dict[str, Any]) -> str:
     return tag_object_if_required(bucket, key, version_id)
 
 
-def process(event: dict[str, Any], context: Any) -> dict[str, int]:
-    """Handle a batch of native S3 ObjectCreated event records."""
+def api_response(status_code: int, body: dict[str, Any]) -> dict[str, Any]:
+    return {
+        'statusCode': status_code,
+        'headers': {'Content-Type': 'application/json'},
+        'body': json.dumps(body),
+    }
+
+
+def recommendation_request(event: dict[str, Any]) -> dict[str, Any]:
+    http = event['requestContext']['http']
+    method = http.get('method', '')
+    path = event.get('rawPath') or http.get('path') or ''
+    if path.startswith('/prod/'):
+        path = path[len('/prod') :]
+
+    if path != '/files/visibility-recommendation':
+        return api_response(404, {'error': 'Unsupported visibility recommendation route'})
+    if method != 'POST':
+        return api_response(405, {'error': 'Method not allowed'})
+
+    body = event.get('body')
+    if event.get('isBase64Encoded'):
+        try:
+            body = base64.b64decode(body, validate=True).decode('utf-8')
+        except (TypeError, ValueError, UnicodeError):
+            return api_response(400, {'error': 'The encoded request body could not be read'})
+
+    try:
+        parsed_body = json.loads(body)
+    except (TypeError, ValueError):
+        return api_response(400, {'error': 'The request body is not valid JSON'})
+
+    if not isinstance(parsed_body, dict):
+        return api_response(400, {'error': 'The request body must be a JSON object'})
+
+    file_name = parsed_body.get('fileName')
+    if not isinstance(file_name, str) or not file_name.strip():
+        return api_response(400, {'error': 'fileName must be a nonblank string'})
+
+    defaults = visibility_defaults(file_name)
+    return api_response(
+        200,
+        {
+            'customerVisible': defaults[CUSTOMER_VISIBLE_TAG] == 'true',
+            'publicVisible': defaults[PUBLIC_VISIBLE_TAG] == 'true',
+        },
+    )
+
+
+def process(event: dict[str, Any], context: Any) -> dict[str, Any]:
+    """Handle HTTP recommendations or native S3 ObjectCreated records."""
+    if isinstance(event.get('requestContext'), dict) and isinstance(event['requestContext'].get('http'), dict):
+        return recommendation_request(event)
+
     required_file_bucket()
     counts = {'received': 0, 'tagged': 0, 'skipped': 0}
 
