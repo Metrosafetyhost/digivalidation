@@ -551,7 +551,9 @@ def create_textract_pdf_copy(bucket: str, source_obj: dict, workorder_id: str) -
         CopySource={"Bucket": bucket, "Key": source_key},
         Key=safe_key,
         ContentType="application/pdf",
-        MetadataDirective="REPLACE"
+        MetadataDirective="REPLACE",
+        TaggingDirective="REPLACE",
+        Tagging=""
     )
 
     logger.info(
@@ -560,6 +562,7 @@ def create_textract_pdf_copy(bucket: str, source_obj: dict, workorder_id: str) -
         safe_key,
         source_key
     )
+
     return safe_key
     
 def make_diff(original: str, proofed: str) -> str:
