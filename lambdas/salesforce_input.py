@@ -530,10 +530,21 @@ def is_pdf_object(bucket: str, key: str) -> bool:
 
 
 def create_textract_pdf_copy(bucket: str, source_obj: dict, workorder_id: str) -> str:
-    """Copy an uploaded PDF to a predictable key that always ends in .pdf."""
     source_key = source_obj["Key"]
     etag = source_obj.get("ETag", "latest").strip('"')
     safe_key = f"TextractInput/{workorder_id}/{etag}.pdf"
+
+    logger.info(
+        "Attempting Textract PDF copy: source=s3://%s/%s destination=s3://%s/%s "
+        "etag=%s lastModified=%s size=%s",
+        bucket,
+        source_key,
+        bucket,
+        safe_key,
+        etag,
+        source_obj.get("LastModified"),
+        source_obj.get("Size")
+    )
 
     s3_client.copy_object(
         Bucket=bucket,
@@ -799,7 +810,7 @@ def process(event, context):
 
             logger.info("Invoking Textract for %s", workorder_id)
 
-            logger.info("Creating new marker %s", marker_key)
+            logger.info("Textract marker absent; starting workflow for %s", workorder_id)
             paginator = s3_client.get_paginator("list_objects_v2")
             contents = []
             for page in paginator.paginate(Bucket=PDF_BUCKET, Prefix=prefix):
