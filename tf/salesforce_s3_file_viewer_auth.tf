@@ -1,5 +1,3 @@
-data "aws_caller_identity" "current" {}
-
 resource "aws_iam_user" "salesforce_s3_file_viewer" {
   name = "salesforce-s3-file-viewer"
 }
