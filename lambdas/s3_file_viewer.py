@@ -1190,13 +1190,21 @@ def process_building_request(event: dict, raw_path: str) -> dict:
         return response(404, {'error': 'The selected Building folder was not found'})
 
     can_upload_started_at = time.perf_counter()
-    can_upload = visibility_scope == 'staff' and (
+
+    can_upload = (
         is_configured_upload_destination(folder_path)
         or (
-            folder_path.lower() != COMPLIANCE_DOCUMENTS_FOLDER.lower() and building_folder_exists(building_root, folder_path) and len(folders) == 0
+            folder_path.lower() != COMPLIANCE_DOCUMENTS_FOLDER.lower()
+            and building_folder_exists(building_root, folder_path)
+            and len(folders) == 0
         )
     )
-    log_timing('canUpload calculation', can_upload_started_at, canUpload=can_upload)
+
+    log_timing(
+        'canUpload calculation',
+        can_upload_started_at,
+        canUpload=can_upload
+    )
 
     result = response(
         200,
