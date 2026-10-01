@@ -384,6 +384,7 @@ resource "aws_apigatewayv2_route" "list_work_order_files" {
 
   route_key = "GET /files/workorders/{workOrderId}"
   target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
 }
 
 resource "aws_apigatewayv2_route" "open_work_order_file" {
@@ -391,6 +392,7 @@ resource "aws_apigatewayv2_route" "open_work_order_file" {
 
   route_key = "GET /files/workorders/{workOrderId}/open"
   target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
 }
 
 resource "aws_apigatewayv2_route" "create_work_order_upload_url" {
@@ -398,6 +400,7 @@ resource "aws_apigatewayv2_route" "create_work_order_upload_url" {
 
   route_key = "POST /files/workorders/{workOrderId}/upload-url"
   target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
 }
 
 resource "aws_apigatewayv2_route" "delete_work_order_file" {
@@ -405,6 +408,7 @@ resource "aws_apigatewayv2_route" "delete_work_order_file" {
 
   route_key = "POST /files/workorders/{workOrderId}/delete"
   target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
 }
 
 resource "aws_apigatewayv2_route" "list_building_documents" {
@@ -412,6 +416,7 @@ resource "aws_apigatewayv2_route" "list_building_documents" {
 
   route_key = "GET /files/buildings"
   target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
 }
 
 resource "aws_apigatewayv2_route" "open_building_document" {
@@ -419,6 +424,7 @@ resource "aws_apigatewayv2_route" "open_building_document" {
 
   route_key = "GET /files/buildings/open"
   target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
 }
 
 resource "aws_apigatewayv2_route" "create_building_upload_url" {
@@ -426,6 +432,7 @@ resource "aws_apigatewayv2_route" "create_building_upload_url" {
 
   route_key = "POST /files/buildings/upload-url"
   target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
 }
 
 data "aws_lambda_function" "s3_visibility_tagger" {
@@ -445,6 +452,7 @@ resource "aws_apigatewayv2_route" "s3_visibility_recommendation" {
   api_id             = aws_apigatewayv2_api.lambda_api.id
   route_key          = "POST /files/visibility-recommendation"
   target             = "integrations/${aws_apigatewayv2_integration.s3_visibility_tagger_recommendation.id}"
+  authorization_type = "AWS_IAM"
 }
 
 resource "aws_apigatewayv2_route" "s3_file_viewer_building_delete" {
@@ -453,6 +461,7 @@ resource "aws_apigatewayv2_route" "s3_file_viewer_building_delete" {
   route_key = "POST /files/buildings/delete"
 
   target = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
 }
 
 resource "aws_apigatewayv2_route" "s3_file_viewer_building_move" {
@@ -461,4 +470,5 @@ resource "aws_apigatewayv2_route" "s3_file_viewer_building_move" {
   route_key = "POST /files/buildings/move"
 
   target = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
 }
