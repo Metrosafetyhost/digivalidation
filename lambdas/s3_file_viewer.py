@@ -201,12 +201,25 @@ def create_presigned_upload_url(key: str, content_type: str, tagging: str | None
 
 
 def get_upload_tagging(body: dict) -> str | None:
-    if 'customerVisible' not in body:
+    if 'customerVisible' not in body and 'publicVisible' not in body:
         return None
-    if not isinstance(body['customerVisible'], bool):
+
+    customer_visible = body.get('customerVisible', False)
+    public_visible = body.get('publicVisible', False)
+
+    if not isinstance(customer_visible, bool):
         raise ValueError('customerVisible must be a JSON Boolean')
-    visible = 'true' if body['customerVisible'] else 'false'
-    return f'customer-visible={visible}&public-visible=false'
+
+    if not isinstance(public_visible, bool):
+        raise ValueError('publicVisible must be a JSON Boolean')
+
+    customer_value = 'true' if customer_visible else 'false'
+    public_value = 'true' if public_visible else 'false'
+
+    return (
+        f'customer-visible={customer_value}'
+        f'&public-visible={public_value}'
+    )
 
 
 def normalise_building_prefix(building_prefix: str) -> str:
