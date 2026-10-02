@@ -47,3 +47,16 @@ output "salesforce_prep_s3_secret_access_key" {
   value     = aws_iam_access_key.salesforce_prep_s3.secret
   sensitive = true
 }
+
+resource "aws_s3_bucket" "metrosafetysandboximages" {
+  bucket = "metrosafetysandboximages"
+}
+
+resource "aws_s3_bucket_public_access_block" "metrosafetysandboximages" {
+  bucket = aws_s3_bucket.metrosafetysandboximages.id
+
+  block_public_acls       = true
+  ignore_public_acls      = true
+  block_public_policy     = true
+  restrict_public_buckets = true
+}
