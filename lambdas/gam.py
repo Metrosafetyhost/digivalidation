@@ -114,6 +114,24 @@ ASSET_CONDITION_VALUES = [
     "C5 - Asset Unserviceable",
 ]
 
+# Exact Salesforce Colour__c picklist values.
+COLOUR_VALUES = [
+    "Black",
+    "Blue",
+    "Brown",
+    "Green",
+    "Metallic",
+    "Grey",
+    "Ivory",
+    "Orange",
+    "Other",
+    "Red",
+    "Silver",
+    "White",
+    "Wood",
+    "Yellow",
+]
+
 
 # Verified entries from the official Uniclass Products and Systems tables.
 # Rules are deliberately narrow: an unmatched asset remains unclassified rather
@@ -212,6 +230,47 @@ def normalize_asset_condition(text: str) -> str:
         return "C1 - Very Good Condition"
 
     return ""
+
+
+def normalize_colour(text: str) -> str:
+    """Map the model's colour wording to an exact Salesforce picklist value."""
+    value = (text or "").strip()
+    if not value:
+        return ""
+
+    canonical_values = {colour.casefold(): colour for colour in COLOUR_VALUES}
+    exact_match = canonical_values.get(value.casefold())
+    if exact_match:
+        return exact_match
+
+    normalised = value.casefold()
+
+    colour_terms = (
+        ("Black", ("black",)),
+        ("Blue", ("blue", "navy", "cyan", "turquoise")),
+        ("Brown", ("brown",)),
+        ("Green", ("green", "lime", "olive")),
+        ("Grey", ("grey", "gray", "charcoal")),
+        ("Ivory", ("ivory", "cream")),
+        ("Orange", ("orange",)),
+        ("Red", ("red", "maroon", "burgundy")),
+        ("Silver", ("silver", "chrome", "stainless steel")),
+        ("White", ("white",)),
+        ("Wood", ("wood", "wooden", "timber")),
+        ("Yellow", ("yellow",)),
+    )
+
+    for salesforce_colour, terms in colour_terms:
+        if any(term in normalised for term in terms):
+            return salesforce_colour
+
+    if any(term in normalised for term in (
+        "metallic", "metal", "aluminium", "aluminum", "steel",
+        "brass", "copper", "bronze", "gold",
+    )):
+        return "Metallic"
+
+    return "Other"
 
 
 def _context_text(payload: dict[str, Any], result: dict[str, Any]) -> str:
@@ -388,6 +447,14 @@ Evidence rules:
   Base it only on visible condition; do not imply functional testing. If the
   photographs are insufficient, leave Asset_Condition__c empty and explain the
   limitation in Broken_Or_Needs_Replacement__c.
+- Colour__c must be exactly one of these Salesforce values when the asset's
+  colour can reasonably be identified:
+  Black; Blue; Brown; Green; Metallic; Grey; Ivory; Orange; Other; Red; Silver;
+  White; Wood; Yellow.
+  Select the closest appropriate Salesforce value and do not return shades or
+  descriptive variations outside this list. Use Other when the visible colour
+  does not fit one of the named choices. If colour cannot reasonably be
+  determined, leave Colour__c empty.
 - Object_Type_AI__c is the broad system or asset family, for example
   "Fire Alarm System". Object_Category_AI__c is the specific asset, for example
   "Smoke Detector". Never reverse these meanings. Use the supplied
@@ -624,6 +691,10 @@ def _coerce_result(raw: dict[str, Any]) -> dict[str, Any]:
 
     result["Asset_Condition__c"] = normalize_asset_condition(
         str(result.get("Asset_Condition__c") or "")
+    )
+
+    result["Colour__c"] = normalize_colour(
+        str(result.get("Colour__c") or "")
     )
 
     unspsc_code = re.sub(r"\D", "", str(result.get("UNSPSC_Code__c") or ""))
