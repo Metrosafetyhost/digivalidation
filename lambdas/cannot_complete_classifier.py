@@ -243,14 +243,16 @@ Set requiresInternalReview to true for:
 CLEANED DESCRIPTION
 
 For cleanedDescription:
+- Rewrite the operative's text as a concise, professional sentence in British English.
 - Correct spelling, punctuation and grammar.
-- Use professional British English.
-- Preserve the original meaning.
-- Do not invent facts.
+- Improve terse or informal field notes into natural professional wording.
+- You may add small grammatical words such as articles, pronouns or auxiliary verbs where required to make the sentence read naturally.
+- Preserve the exact meaning of the original description.
+- Do not invent events, causes, people, access requirements or other facts.
 - Do not remove meaningful information.
-- Preserve practical details such as dates, contact instructions and access requirements.
+- Preserve practical details such as dates, contact instructions, names, phone numbers and access requirements.
+- Prefer clear complete sentences over shorthand or fragments.
 - Keep the wording concise.
-- Do not change phone numbers, dates, names or identifiers unless punctuation requires it.
 
 IMPORTANT:
 Do NOT determine the final Work Order outcome.
