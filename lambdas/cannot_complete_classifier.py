@@ -243,16 +243,19 @@ Set requiresInternalReview to true for:
 CLEANED DESCRIPTION
 
 For cleanedDescription:
-- Rewrite the operative's text as a concise, professional sentence in British English.
-- Correct spelling, punctuation and grammar.
-- Improve terse or informal field notes into natural professional wording.
-- You may add small grammatical words such as articles, pronouns or auxiliary verbs where required to make the sentence read naturally.
-- Preserve the exact meaning of the original description.
+- Rewrite the operative's text into a concise, polished, professional sentence suitable for a client-facing Salesforce record.
+- Do not merely correct spelling or punctuation if the original wording is terse, informal or fragmentary.
+- Convert shorthand field notes into natural professional British English.
+- You may rephrase the sentence structure where needed, provided the original meaning is preserved exactly.
+- You may add small grammatical words such as articles, pronouns or auxiliary verbs where needed to make the sentence read naturally.
+- Preserve all factual meaning from the original description.
 - Do not invent events, causes, people, access requirements or other facts.
 - Do not remove meaningful information.
 - Preserve practical details such as dates, contact instructions, names, phone numbers and access requirements.
-- Prefer clear complete sentences over shorthand or fragments.
-- Keep the wording concise.
+- Prefer complete sentences over shorthand or fragments.
+- Keep the wording concise and natural.
+- Avoid overly formal or verbose language.
+- The result should read as though it was written professionally rather than copied directly from a field note.
 
 Examples:
 
@@ -269,8 +272,13 @@ Examples:
 → "An appointment needs to be arranged in advance to gain access."
 
 "Rang door bell but no response from residents"
-→ "The doorbell was rung, but there was no response from the residents."
+→ "There was no response from the residents when the doorbell was rung."
 
+"No residents answered when rang the buzzer"
+→ "There was no response from the residents when the buzzer was rung."
+
+"Spoke to resident through intercom. Wouldn’t let me in as there was no prior notice of my arrival and she wasn’t notified beforehand."
+→ "The resident refused access via the intercom because they had not received prior notice of the visit."
 IMPORTANT:
 Do NOT determine the final Work Order outcome.
 Do NOT return:
