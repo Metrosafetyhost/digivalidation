@@ -472,3 +472,35 @@ resource "aws_apigatewayv2_route" "s3_file_viewer_building_move" {
   target = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
   authorization_type = "AWS_IAM"
 }
+
+# Integration for Cannot Complete AI Classifier Lambda
+resource "aws_apigatewayv2_integration" "cannot_complete_classifier_integration" {
+  api_id                 = aws_apigatewayv2_api.lambda_api.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-cannot_complete_classifier"
+  payload_format_version = "2.0"
+
+  depends_on = [
+    module.lambdas_zip
+  ]
+}
+
+# Route for POST /cannot_complete_classifier
+resource "aws_apigatewayv2_route" "cannot_complete_classifier_route" {
+  api_id    = aws_apigatewayv2_api.lambda_api.id
+  route_key = "POST /cannot_complete_classifier"
+  target    = "integrations/${aws_apigatewayv2_integration.cannot_complete_classifier_integration.id}"
+}
+
+# Permission to allow API Gateway to invoke the Cannot Complete AI Classifier Lambda
+resource "aws_lambda_permission" "apigw_lambda_cannot_complete_classifier" {
+  statement_id  = "AllowExecutionFromAPIGatewayCannotCompleteClassifier"
+  action        = "lambda:InvokeFunction"
+  function_name = "bedrock-lambda-cannot_complete_classifier"
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
+
+  depends_on = [
+    module.lambdas_zip
+  ]
+}
