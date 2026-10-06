@@ -488,6 +488,11 @@ def validate_classification(result):
         if key in allowed_fields
     }
 
+    # Deterministic business rule:
+    if cleaned_result.get("issueType") == "TEMPORARY_ACCESS_ISSUE":
+        cleaned_result["explicitAccessBarrier"] = False
+        cleaned_result["temporaryIssue"] = True
+
     return cleaned_result
 
 
