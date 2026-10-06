@@ -254,6 +254,23 @@ For cleanedDescription:
 - Prefer clear complete sentences over shorthand or fragments.
 - Keep the wording concise.
 
+Examples:
+
+"No answer at door"
+→ "There was no answer at the door."
+
+"Resident wont allow access"
+→ "The resident refused access."
+
+"Key fob doesnt work"
+→ "The key fob did not provide access."
+
+"Need to arrange access an appointment in advance"
+→ "An appointment needs to be arranged in advance to gain access."
+
+"Rang door bell but no response from residents"
+→ "The doorbell was rung, but there was no response from the residents."
+
 IMPORTANT:
 Do NOT determine the final Work Order outcome.
 Do NOT return:
