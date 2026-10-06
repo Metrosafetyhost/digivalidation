@@ -577,7 +577,7 @@ def process_record(payload):
     }
 
 
-def lambda_handler(event, context):
+def process(event, context):
     try:
         logger.info(
             "Cannot Complete classifier invoked."
