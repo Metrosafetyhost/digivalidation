@@ -14,7 +14,10 @@ data "aws_iam_policy_document" "salesforce_prep_s3_policy" {
   statement {
     effect    = "Allow"
     actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.metrosafetysandboxfiles.arn]
+    resources = [
+      aws_s3_bucket.metrosafetysandboxfiles.arn,
+      aws_s3_bucket.metrosafetysandboximages.arn
+    ]
   }
 
   statement {
@@ -25,7 +28,10 @@ data "aws_iam_policy_document" "salesforce_prep_s3_policy" {
       "s3:DeleteObject",
       "s3:HeadObject"
     ]
-    resources = ["${aws_s3_bucket.metrosafetysandboxfiles.arn}/*"]
+    resources = [
+      "${aws_s3_bucket.metrosafetysandboxfiles.arn}/*",
+      "${aws_s3_bucket.metrosafetysandboximages.arn}/*"
+    ]
   }
 }
 
