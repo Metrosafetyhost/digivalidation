@@ -29,10 +29,10 @@ module "lambdas_zip" {
     "archive_viewer",
     "s3_file_viewer",
     "s3_visibility_tagger",
-    "gam"
+    "gam",
+    "cannot_complete_classifier"
   ]
 
-  # these are the Python files that get zipped
   lambda_file_names = [
     "asset_categorisation.py",
     "checklist.py",
@@ -58,7 +58,8 @@ module "lambdas_zip" {
     "archive_viewer.py",
     "s3_file_viewer.py",
     "s3_visibility_tagger.py",
-    "gam.py"
+    "gam.py",
+    "cannot_complete_classifier.py"
   ]
 
   runtime       = "python3.13"
@@ -70,10 +71,9 @@ module "lambdas_zip" {
     OPENAI_MODEL = "gpt-4o-mini"
   }
 
-  # Layers
   lambda_layer_arns = [
-    module.lambda_layer.lambda_layer_arn, # your shared deps
-    var.openai_layer_arn,                 # OpenAI layer (keep if others use it)
+    module.lambda_layer.lambda_layer_arn,
+    var.openai_layer_arn,
     aws_lambda_layer_version.pymupdf.arn
   ]
 
@@ -84,6 +84,7 @@ module "lambdas_zip" {
       handler     = "process"
       memory_size = 512
       timeout     = 240
+
       lambda_environment = {
         OPENAI_SECRET_ARN = aws_secretsmanager_secret.openai.arn
       }
@@ -183,7 +184,12 @@ module "lambdas_zip" {
       }
     }
 
-    # All other Lambdas
+    cannot_complete_classifier = {
+      handler     = "process"
+      timeout     = 60
+      memory_size = 256
+    }
+
     basic_event            = { handler = "process", timeout = 240, memory_size = 512 }
     bedrock                = { handler = "process", timeout = 240, memory_size = 512 }
     categorisation         = { handler = "process", timeout = 240, memory_size = 512 }

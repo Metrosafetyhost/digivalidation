@@ -1551,3 +1551,24 @@ resource "aws_iam_role_policy" "gam_s3_read" {
     module.lambdas_zip
   ]
 }
+
+# Cannot Complete classifier role
+data "aws_iam_role" "cannot_complete_classifier_role" {
+  name = "bedrock-lambda-cannot_complete_classifier"
+}
+
+# Allow CloudWatch logging
+resource "aws_iam_role_policy_attachment" "cannot_complete_classifier_basic_exec" {
+  role       = data.aws_iam_role.cannot_complete_classifier_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# Allow Claude 3.7 Sonnet invocation
+resource "aws_iam_role_policy_attachment" "cannot_complete_classifier_bedrock_attach" {
+  role       = data.aws_iam_role.cannot_complete_classifier_role.name
+  policy_arn = aws_iam_policy.bedrock_invoke_policy.arn
+
+  depends_on = [
+    module.lambdas_zip
+  ]
+}
