@@ -520,62 +520,47 @@ def error_response(status_code, message):
     }
 
 
-def process(event, context):
-    try:
+def process_record(payload):
+    validate_request(payload)
+
+    service_appointment_id = (
+        payload.get("serviceAppointmentId") or ""
+    ).strip()
+
+    work_order_id = (
+        payload.get("workOrderId") or ""
+    ).strip()
+
+    reason_not_complete = (
+        payload.get("reasonNotComplete") or ""
+    ).strip()
+
+    reason_description = (
+        payload.get("reasonDescription") or ""
+    ).strip()
+
+    logger.info(
+        "Processing Cannot Complete classification. "
+        "serviceAppointmentId=%s workOrderId=%s",
+        service_appointment_id,
+        work_order_id,
+    )
+
+    deterministic_result = get_blank_description_result(
+        reason_not_complete,
+        reason_description,
+    )
+
+    if deterministic_result is not None:
         logger.info(
-            "Cannot Complete classifier invoked."
+            "Applied deterministic blank-description "
+            "NO_ANSWER rule."
         )
 
-        payload = parse_event(event)
-
-        validate_request(payload)
-
-        service_appointment_id = (
-            payload.get("serviceAppointmentId") or ""
-        ).strip()
-
-        work_order_id = (
-            payload.get("workOrderId") or ""
-        ).strip()
-
-        reason_not_complete = (
-            payload.get("reasonNotComplete") or ""
-        ).strip()
-
-        reason_description = (
-            payload.get("reasonDescription") or ""
-        ).strip()
-
-        logger.info(
-            "Processing Cannot Complete classification. "
-            "serviceAppointmentId=%s workOrderId=%s",
-            service_appointment_id,
-            work_order_id,
+        classification = validate_classification(
+            deterministic_result
         )
-
-        deterministic_result = (
-            get_blank_description_result(
-                reason_not_complete,
-                reason_description,
-            )
-        )
-
-        if deterministic_result is not None:
-            logger.info(
-                "Applied deterministic blank-description "
-                "NO_ANSWER rule."
-            )
-
-            validated_result = (
-                validate_classification(
-                    deterministic_result
-                )
-            )
-
-            return success_response(
-                validated_result
-            )
-
+    else:
         classification = call_bedrock(
             reason_not_complete,
             reason_description,
@@ -585,19 +570,89 @@ def process(event, context):
             classification
         )
 
+    return {
+        "serviceAppointmentId": service_appointment_id,
+        "workOrderId": work_order_id,
+        **classification,
+    }
+
+
+def lambda_handler(event, context):
+    try:
         logger.info(
-            "Cannot Complete classification completed. "
-            "serviceAppointmentId=%s "
-            "issueType=%s "
-            "failureParty=%s",
-            service_appointment_id,
-            classification["issueType"],
-            classification["failureParty"],
+            "Cannot Complete classifier invoked."
         )
 
-        return success_response(
-            classification
-        )
+        payload = parse_event(event)
+
+        if not isinstance(payload, dict):
+            raise ValueError(
+                "Request payload must be a JSON object."
+            )
+
+        #
+        # BULK REQUEST
+        #
+        if "records" in payload:
+            records = payload.get("records")
+
+            if not isinstance(records, list):
+                raise ValueError(
+                    "records must be an array."
+                )
+
+            if not records:
+                raise ValueError(
+                    "records must contain at least one record."
+                )
+
+            if len(records) > 50:
+                raise ValueError(
+                    "A maximum of 50 records can be processed per request."
+                )
+
+            results = []
+            errors = []
+
+            for index, record in enumerate(records):
+                try:
+                    result = process_record(record)
+                    results.append(result)
+
+                except Exception as exc:
+                    logger.exception(
+                        "Failed processing bulk record index=%s",
+                        index,
+                    )
+
+                    errors.append({
+                        "index": index,
+                        "serviceAppointmentId": (
+                            record.get("serviceAppointmentId")
+                            if isinstance(record, dict)
+                            else None
+                        ),
+                        "workOrderId": (
+                            record.get("workOrderId")
+                            if isinstance(record, dict)
+                            else None
+                        ),
+                        "error": str(exc),
+                    })
+
+            return success_response({
+                "results": results,
+                "errors": errors,
+                "processedCount": len(results),
+                "errorCount": len(errors),
+            })
+
+        #
+        # SINGLE RECORD REQUEST
+        #
+        result = process_record(payload)
+
+        return success_response(result)
 
     except ValueError as exc:
         logger.warning(
