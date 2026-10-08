@@ -134,6 +134,34 @@ def object_visible_to_scope(key: str, scope: str) -> bool:
     return values == ['true']
 
 
+def get_mutation_visibility_scope(body: dict) -> str:
+    if 'visibilityScope' not in body:
+        raise ValueError('Missing visibilityScope')
+
+    scope = body['visibilityScope']
+
+    if not isinstance(scope, str) or scope not in {
+        'staff',
+        'customer',
+        'public',
+    }:
+        raise ValueError(
+            'visibilityScope must be staff, customer or public'
+        )
+
+    return scope
+
+
+def object_mutable_by_scope(key: str, scope: str) -> bool:
+    if scope == 'staff':
+        return True
+
+    if scope != 'customer':
+        return False
+
+    return object_visible_to_scope(key, scope)
+
+
 def list_visible_pages(prefix: str, scope: str):
     paginator = s3.get_paginator('list_objects_v2')
     pages = paginator.paginate(Bucket=FILE_BUCKET, Prefix=prefix)
@@ -1036,6 +1064,7 @@ def process_work_order_request(event: dict, raw_path: str) -> dict:
 
     if raw_path.endswith('/delete'):
         body = get_json_body(event)
+        visibility_scope = get_mutation_visibility_scope(body)
         object_key = body.get('objectKey')
 
         if not object_key:
@@ -1055,11 +1084,41 @@ def process_work_order_request(event: dict, raw_path: str) -> dict:
             return response(400, {'error': ('The selected S3 object cannot be deleted.')})
 
         if not object_exists(object_key):
-            return response(404, {'error': ('The selected file no longer exists in S3.')})
+            return response(
+                404,
+                {
+                    'error': (
+                        'The selected file no longer exists in S3.'
+                    )
+                },
+            )
 
-        s3.delete_object(Bucket=FILE_BUCKET, Key=object_key)
+        if not object_mutable_by_scope(
+            object_key,
+            visibility_scope,
+        ):
+            return response(
+                403,
+                {
+                    'error': (
+                        'You do not have permission to delete this file.'
+                    )
+                },
+            )
 
-        return response(200, {'deleted': True, 'objectKey': object_key, 'fileName': file_name})
+        s3.delete_object(
+            Bucket=FILE_BUCKET,
+            Key=object_key,
+        )
+
+        return response(
+            200,
+            {
+                'deleted': True,
+                'objectKey': object_key,
+                'fileName': file_name,
+            },
+        )
 
     visibility_scope = get_visibility_scope(event)
 
@@ -1307,6 +1366,7 @@ def process_building_upload_request(event: dict) -> dict:
 
 def process_building_delete_request(event: dict) -> dict:
     body = get_json_body(event)
+    visibility_scope = get_mutation_visibility_scope(body)
 
     supplied_prefix = body.get('buildingPrefix')
     supplied_building_root = body.get('buildingRoot')
@@ -1322,18 +1382,27 @@ def process_building_delete_request(event: dict) -> dict:
         return response(400, {'error': 'Invalid objectKey'})
 
     object_key = object_key.strip()
-
     building_prefix = normalise_building_prefix(supplied_prefix)
 
     if supplied_building_root:
-        building_root = normalise_exact_building_root(supplied_building_root)
+        building_root = normalise_exact_building_root(
+            supplied_building_root
+        )
     else:
         building_root = find_building_root(building_prefix)
 
-    if not is_key_in_building_documents(object_key, building_root):
+    if not is_key_in_building_documents(
+        object_key,
+        building_root,
+    ):
         return response(
             403,
-            {'error': "The selected file does not belong to this Building's Compliance Documents folder."},
+            {
+                'error': (
+                    'The selected file does not belong to this '
+                    "Building's Compliance Documents folder."
+                )
+            },
         )
 
     file_name = object_key.rsplit('/', 1)[-1]
@@ -1341,19 +1410,44 @@ def process_building_delete_request(event: dict) -> dict:
     if not file_name or file_name in IGNORED_FILE_NAMES:
         return response(
             400,
-            {'error': 'The selected S3 object cannot be deleted.'},
+            {
+                'error': (
+                    'The selected S3 object cannot be deleted.'
+                )
+            },
         )
 
     if object_key.endswith('/'):
         return response(
             400,
-            {'error': 'Folders cannot be deleted from this viewer.'},
+            {
+                'error': (
+                    'Folders cannot be deleted from this viewer.'
+                )
+            },
         )
 
     if not object_exists(object_key):
         return response(
             404,
-            {'error': 'The selected file no longer exists in S3.'},
+            {
+                'error': (
+                    'The selected file no longer exists in S3.'
+                )
+            },
+        )
+
+    if not object_mutable_by_scope(
+        object_key,
+        visibility_scope,
+    ):
+        return response(
+            403,
+            {
+                'error': (
+                    'You do not have permission to delete this file.'
+                )
+            },
         )
 
     s3.delete_object(
@@ -1373,6 +1467,7 @@ def process_building_delete_request(event: dict) -> dict:
 
 def process_building_move_request(event: dict) -> dict:
     body = get_json_body(event)
+    visibility_scope = get_mutation_visibility_scope(body)
 
     supplied_prefix = body.get('buildingPrefix')
     supplied_building_root = body.get('buildingRoot')
@@ -1404,7 +1499,6 @@ def process_building_move_request(event: dict) -> dict:
         )
 
     object_key = object_key.strip()
-
     building_prefix = normalise_building_prefix(
         supplied_prefix
     )
@@ -1418,17 +1512,16 @@ def process_building_move_request(event: dict) -> dict:
             building_prefix
         )
 
-    # Make sure the selected source file genuinely belongs to
-    # the supplied Building root.
+    # Confirm that the source belongs to this Building.
     if not is_key_in_building_documents(
         object_key,
-        source_building_root
+        source_building_root,
     ):
         return response(
             403,
             {
                 'error': (
-                    "The selected file does not belong to this "
+                    'The selected file does not belong to this '
                     "Building's Compliance Documents folder."
                 )
             },
@@ -1444,8 +1537,9 @@ def process_building_move_request(event: dict) -> dict:
         return response(
             400,
             {
-                'error':
+                'error': (
                     'The selected S3 object cannot be moved.'
+                )
             },
         )
 
@@ -1453,14 +1547,26 @@ def process_building_move_request(event: dict) -> dict:
         return response(
             404,
             {
-                'error':
+                'error': (
                     'The selected file no longer exists in S3.'
+                )
             },
         )
 
-    # Destination root:
-    # all writes now go to the canonical single-slash Building
-    # root supplied by Salesforce.
+    if not object_mutable_by_scope(
+        object_key,
+        visibility_scope,
+    ):
+        return response(
+            403,
+            {
+                'error': (
+                    'You do not have permission to move this file.'
+                )
+            },
+        )
+
+    # All moves write to the canonical single-slash root.
     destination_building_root = (
         building_prefix.rstrip('/') + '/'
     )
@@ -1480,8 +1586,9 @@ def process_building_move_request(event: dict) -> dict:
         return response(
             400,
             {
-                'error':
+                'error': (
                     'The file is already in the selected folder.'
+                )
             },
         )
 
@@ -1504,6 +1611,7 @@ def process_building_move_request(event: dict) -> dict:
             'Key': object_key,
         },
         Key=destination_key,
+        TaggingDirective='COPY',
     )
 
     if not object_exists(destination_key):
@@ -1532,6 +1640,7 @@ def process_building_move_request(event: dict) -> dict:
             'fileName': file_name,
         },
     )
+
 
 def process(event, context):
     try:

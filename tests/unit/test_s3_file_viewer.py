@@ -348,71 +348,384 @@ def test_invalid_building_scope_returns_400_before_root_resolution(viewer, monke
     assert viewer.process(event, None)['statusCode'] == 400
 
 
-def test_existing_delete_and_move_routes_ignore_visibility_scope(viewer, monkeypatch):
+def test_staff_work_order_delete_does_not_read_tags(
+    viewer,
+    monkeypatch,
+):
     class MutatingS3:
         def __init__(self):
             self.deleted = []
-            self.copied = []
 
         def delete_object(self, **kwargs):
             self.deleted.append(kwargs)
 
-        def copy_object(self, **kwargs):
-            self.copied.append(kwargs)
-
         def get_object_tagging(self, **kwargs):
-            raise AssertionError('Mutation must not fetch tags')
+            raise AssertionError(
+                'Staff deletion must not read object tags'
+            )
 
     fake = MutatingS3()
     monkeypatch.setattr(viewer, 's3', fake)
-    monkeypatch.setattr(viewer, 'object_exists', lambda key: True)
-    work_order_key = 'WorkOrders/42/report.pdf'
-    deleted = viewer.process(
+    monkeypatch.setattr(
+        viewer,
+        'object_exists',
+        lambda key: True,
+    )
+
+    object_key = 'WorkOrders/42/report.pdf'
+
+    result = viewer.process(
         {
             'rawPath': '/files/workorders/42/delete',
             'pathParameters': {'workOrderId': '42'},
-            'queryStringParameters': {'visibilityScope': 'customer'},
-            'body': json.dumps({'objectKey': work_order_key}),
-        },
-        None,
-    )
-    assert deleted['statusCode'] == 200
-    assert fake.deleted == [{'Bucket': viewer.FILE_BUCKET, 'Key': work_order_key}]
-
-    root = 'Buildings/123 | Main/'
-    source = root + 'Compliance Documents/Fire/Assessment/report.pdf'
-    monkeypatch.setattr(viewer, 'object_exists', lambda key: key == source or bool(fake.copied))
-    monkeypatch.setattr(viewer, 'find_building_root', lambda prefix: root)
-    monkeypatch.setattr(viewer, 'validate_upload_folder', lambda building_root, folder: 'Compliance Documents/Gas/Assessment/')
-    moved = viewer.process(
-        {
-            'rawPath': '/files/buildings/move',
-            'queryStringParameters': {'visibilityScope': 'public'},
             'body': json.dumps(
                 {
-                    'buildingPrefix': root,
-                    'objectKey': source,
-                    'destinationFolderPath': 'Compliance Documents/Gas/Assessment/',
+                    'objectKey': object_key,
+                    'visibilityScope': 'staff',
                 }
             ),
         },
         None,
     )
-    assert moved['statusCode'] == 200
-    destination = root + 'Compliance Documents/Gas/Assessment/report.pdf'
-    assert fake.copied[-1]['Key'] == destination
-    assert fake.deleted[-1] == {'Bucket': viewer.FILE_BUCKET, 'Key': source}
 
-    building_deleted = viewer.process(
+    assert result['statusCode'] == 200
+    assert fake.deleted == [
         {
-            'rawPath': '/files/buildings/delete',
-            'queryStringParameters': {'visibilityScope': 'customer'},
-            'body': json.dumps({'buildingPrefix': root, 'objectKey': source}),
+            'Bucket': viewer.FILE_BUCKET,
+            'Key': object_key,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ('tag_value', 'expected_status'),
+    [
+        ('true', 200),
+        ('false', 403),
+        ('TRUE', 403),
+        (None, 403),
+    ],
+)
+def test_customer_work_order_delete_requires_exact_visible_tag(
+    viewer,
+    monkeypatch,
+    tag_value,
+    expected_status,
+):
+    class MutatingS3:
+        def __init__(self):
+            self.deleted = []
+            self.tag_calls = []
+
+        def get_object_tagging(self, **kwargs):
+            self.tag_calls.append(kwargs)
+
+            if tag_value is None:
+                return {'TagSet': []}
+
+            return {
+                'TagSet': [
+                    {
+                        'Key': 'customer-visible',
+                        'Value': tag_value,
+                    }
+                ]
+            }
+
+        def delete_object(self, **kwargs):
+            self.deleted.append(kwargs)
+
+    fake = MutatingS3()
+    monkeypatch.setattr(viewer, 's3', fake)
+    monkeypatch.setattr(
+        viewer,
+        'object_exists',
+        lambda key: True,
+    )
+
+    object_key = 'WorkOrders/42/report.pdf'
+
+    result = viewer.process(
+        {
+            'rawPath': '/files/workorders/42/delete',
+            'pathParameters': {'workOrderId': '42'},
+            'body': json.dumps(
+                {
+                    'objectKey': object_key,
+                    'visibilityScope': 'customer',
+                }
+            ),
         },
         None,
     )
-    assert building_deleted['statusCode'] == 200
-    assert fake.deleted[-1] == {'Bucket': viewer.FILE_BUCKET, 'Key': source}
+
+    assert result['statusCode'] == expected_status
+    assert fake.tag_calls == [
+        {
+            'Bucket': viewer.FILE_BUCKET,
+            'Key': object_key,
+        }
+    ]
+
+    if expected_status == 200:
+        assert fake.deleted == [
+            {
+                'Bucket': viewer.FILE_BUCKET,
+                'Key': object_key,
+            }
+        ]
+    else:
+        assert fake.deleted == []
+
+
+def test_public_work_order_delete_is_denied_without_tag_read(
+    viewer,
+    monkeypatch,
+):
+    class MutatingS3:
+        def __init__(self):
+            self.deleted = []
+
+        def get_object_tagging(self, **kwargs):
+            raise AssertionError(
+                'Public deletion must be denied without a tag read'
+            )
+
+        def delete_object(self, **kwargs):
+            self.deleted.append(kwargs)
+
+    fake = MutatingS3()
+    monkeypatch.setattr(viewer, 's3', fake)
+    monkeypatch.setattr(
+        viewer,
+        'object_exists',
+        lambda key: True,
+    )
+
+    result = viewer.process(
+        {
+            'rawPath': '/files/workorders/42/delete',
+            'pathParameters': {'workOrderId': '42'},
+            'body': json.dumps(
+                {
+                    'objectKey': 'WorkOrders/42/report.pdf',
+                    'visibilityScope': 'public',
+                }
+            ),
+        },
+        None,
+    )
+
+    assert result['statusCode'] == 403
+    assert fake.deleted == []
+
+
+@pytest.mark.parametrize(
+    'scope',
+    [None, '', 'Staff', 'internal', False, 1, []],
+)
+def test_mutation_requires_valid_body_scope(
+    viewer,
+    monkeypatch,
+    scope,
+):
+    def unexpected_exists_check(key):
+        raise AssertionError(
+            'Invalid scope must be rejected before checking S3'
+        )
+
+    monkeypatch.setattr(
+        viewer,
+        'object_exists',
+        unexpected_exists_check,
+    )
+
+    body = {
+        'objectKey': 'WorkOrders/42/report.pdf',
+    }
+
+    if scope is not None:
+        body['visibilityScope'] = scope
+
+    result = viewer.process(
+        {
+            'rawPath': '/files/workorders/42/delete',
+            'pathParameters': {'workOrderId': '42'},
+            'body': json.dumps(body),
+        },
+        None,
+    )
+
+    assert result['statusCode'] == 400
+
+
+def test_customer_building_move_preserves_tags(
+    viewer,
+    monkeypatch,
+):
+    class MutatingS3:
+        def __init__(self):
+            self.deleted = []
+            self.copied = []
+            self.tag_calls = []
+
+        def get_object_tagging(self, **kwargs):
+            self.tag_calls.append(kwargs)
+            return {
+                'TagSet': [
+                    {
+                        'Key': 'customer-visible',
+                        'Value': 'true',
+                    }
+                ]
+            }
+
+        def copy_object(self, **kwargs):
+            self.copied.append(kwargs)
+
+        def delete_object(self, **kwargs):
+            self.deleted.append(kwargs)
+
+    fake = MutatingS3()
+    monkeypatch.setattr(viewer, 's3', fake)
+
+    root = 'Buildings/123 | Main/'
+    source = (
+        root
+        + 'Compliance Documents/Fire/Assessment/report.pdf'
+    )
+    destination = (
+        root
+        + 'Compliance Documents/Gas/Assessment/report.pdf'
+    )
+
+    def object_exists(key):
+        if key == source:
+            return True
+
+        if key == destination:
+            return bool(fake.copied)
+
+        return False
+
+    monkeypatch.setattr(
+        viewer,
+        'object_exists',
+        object_exists,
+    )
+    monkeypatch.setattr(
+        viewer,
+        'find_building_root',
+        lambda prefix: root,
+    )
+    monkeypatch.setattr(
+        viewer,
+        'validate_upload_folder',
+        lambda building_root, folder: (
+            'Compliance Documents/Gas/Assessment/'
+        ),
+    )
+
+    result = viewer.process(
+        {
+            'rawPath': '/files/buildings/move',
+            'body': json.dumps(
+                {
+                    'buildingPrefix': root,
+                    'objectKey': source,
+                    'destinationFolderPath': (
+                        'Compliance Documents/Gas/Assessment/'
+                    ),
+                    'visibilityScope': 'customer',
+                }
+            ),
+        },
+        None,
+    )
+
+    assert result['statusCode'] == 200
+    assert fake.tag_calls == [
+        {
+            'Bucket': viewer.FILE_BUCKET,
+            'Key': source,
+        }
+    ]
+    assert fake.copied == [
+        {
+            'Bucket': viewer.FILE_BUCKET,
+            'CopySource': {
+                'Bucket': viewer.FILE_BUCKET,
+                'Key': source,
+            },
+            'Key': destination,
+            'TaggingDirective': 'COPY',
+        }
+    ]
+    assert fake.deleted == [
+        {
+            'Bucket': viewer.FILE_BUCKET,
+            'Key': source,
+        }
+    ]
+
+
+def test_customer_building_delete_denies_hidden_file(
+    viewer,
+    monkeypatch,
+):
+    class MutatingS3:
+        def __init__(self):
+            self.deleted = []
+
+        def get_object_tagging(self, **kwargs):
+            return {
+                'TagSet': [
+                    {
+                        'Key': 'customer-visible',
+                        'Value': 'false',
+                    }
+                ]
+            }
+
+        def delete_object(self, **kwargs):
+            self.deleted.append(kwargs)
+
+    fake = MutatingS3()
+    monkeypatch.setattr(viewer, 's3', fake)
+    monkeypatch.setattr(
+        viewer,
+        'object_exists',
+        lambda key: True,
+    )
+
+    root = 'Buildings/123 | Main/'
+    object_key = (
+        root
+        + 'Compliance Documents/Fire/Assessment/report.pdf'
+    )
+
+    monkeypatch.setattr(
+        viewer,
+        'find_building_root',
+        lambda prefix: root,
+    )
+
+    result = viewer.process(
+        {
+            'rawPath': '/files/buildings/delete',
+            'body': json.dumps(
+                {
+                    'buildingPrefix': root,
+                    'objectKey': object_key,
+                    'visibilityScope': 'customer',
+                }
+            ),
+        },
+        None,
+    )
+
+    assert result['statusCode'] == 403
+    assert fake.deleted == []
 
 
 def test_existing_upload_duplicate_check_is_unchanged(viewer, monkeypatch):
