@@ -214,9 +214,9 @@ def test_http_and_s3_call_same_rule_function(tagger, monkeypatch):
     called_with = []
     original = tagger.visibility_defaults
 
-    def tracking_rule(file_name):
+    def tracking_rule(file_name, object_key=''):
         called_with.append(file_name)
-        return original(file_name)
+        return original(file_name, object_key)
 
     class FakeS3:
         def get_object_tagging(self, **params):

@@ -17,7 +17,7 @@ S3 = boto3.client('s3')
 
 CUSTOMER_VISIBLE_TAG = 'customer-visible'
 PUBLIC_VISIBLE_TAG = 'public-visible'
-ALLOWED_PREFIXES = ('Buildings/', 'WorkOrders/')
+ALLOWED_PREFIXES = ('Buildings/', 'WorkOrders/', 'Accounts/')
 MAX_S3_TAGS = 10
 
 
@@ -28,14 +28,26 @@ def required_file_bucket() -> str:
     return bucket
 
 
-def visibility_defaults(file_name: str) -> dict[str, str]:
-    """Return the agreed default visibility tags for a filename."""
+def visibility_defaults(file_name: str, object_key: str = '') -> dict[str, str]:
+    """Return the agreed default visibility tags for a filename or S3 path."""
     normalised_name = file_name.casefold()
     is_preview = 'preview' in normalised_name
     is_final = '_final' in normalised_name
     is_temporary_vr_final = '_vr' in normalised_name
 
-    customer_visible = not is_preview and (is_final or is_temporary_vr_final)
+    path_parts = object_key.split('/')
+    is_summary_report = (
+        len(path_parts) == 5
+        and path_parts[0] == 'Accounts'
+        and bool(path_parts[1])
+        and path_parts[2] == 'Summary Service Reports'
+        and bool(path_parts[3])
+        and bool(path_parts[4])
+    )
+
+    customer_visible = is_summary_report or (
+        not is_preview and (is_final or is_temporary_vr_final)
+    )
 
     return {
         CUSTOMER_VISIBLE_TAG: 'true' if customer_visible else 'false',
@@ -45,18 +57,35 @@ def visibility_defaults(file_name: str) -> dict[str, str]:
 
 def should_process_key(key: str) -> bool:
     """Return True only for real objects under an approved prefix."""
-    return bool(key) and not key.endswith('/') and any(key.startswith(prefix) for prefix in ALLOWED_PREFIXES)
+    if not key or key.endswith('/'):
+        return False
+
+    if key.startswith(('Buildings/', 'WorkOrders/')):
+        return True
+
+    if key.startswith('Accounts/'):
+        parts = key.split('/')
+        return (
+            len(parts) == 5
+            and bool(parts[1])
+            and parts[2] == 'Summary Service Reports'
+            and bool(parts[3])
+            and bool(parts[4])
+        )
+
+    return False
 
 
 def merge_missing_visibility_tags(
     existing_tags: dict[str, str],
     file_name: str,
+    object_key: str = '',
 ) -> tuple[dict[str, str], bool]:
     """Add missing defaults without overwriting explicit uploader choices."""
     merged_tags = dict(existing_tags)
     changed = False
 
-    for key, value in visibility_defaults(file_name).items():
+    for key, value in visibility_defaults(file_name, object_key).items():
         if key not in merged_tags:
             merged_tags[key] = value
             changed = True
@@ -105,6 +134,7 @@ def tag_object_if_required(
     merged_tags, changed = merge_missing_visibility_tags(
         existing_tags,
         file_name,
+        key,
     )
 
     if not changed:

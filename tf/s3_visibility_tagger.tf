@@ -15,7 +15,8 @@ resource "aws_iam_policy" "s3_visibility_tagger_tagging" {
       ]
       Resource = [
         "arn:aws:s3:::metrosafetyprodfiles/Buildings/*",
-        "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*"
+        "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*",
+        "arn:aws:s3:::metrosafetyprodfiles/Accounts/*/Summary Service Reports/*"
       ]
     }]
   })
@@ -58,6 +59,12 @@ resource "aws_s3_bucket_notification" "files_visibility_tagger" {
     lambda_function_arn = module.lambdas_zip.lambda_arns["s3_visibility_tagger"]
     events              = ["s3:ObjectCreated:*"]
     filter_prefix       = "WorkOrders/"
+  }
+
+  lambda_function {
+    lambda_function_arn = module.lambdas_zip.lambda_arns["s3_visibility_tagger"]
+    events              = ["s3:ObjectCreated:*"]
+    filter_prefix       = "Accounts/"
   }
 
   depends_on = [aws_lambda_permission.allow_files_bucket_invoke_s3_visibility_tagger]
