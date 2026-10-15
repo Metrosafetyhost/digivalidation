@@ -4,6 +4,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import unquote
+import re
 
 import boto3
 from botocore.exceptions import ClientError
@@ -1023,6 +1024,59 @@ def validate_upload_folder(building_root: str, supplied_folder_path: str) -> str
 
     return folder_path
 
+def process_account_summary_reports_request(event: dict, raw_path: str) -> dict:
+    account_id = get_path_parameter(event, 'accountId')
+
+    if not account_id:
+        return response(400, {'error': 'Missing accountId'})
+
+    if not re.fullmatch(r'[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?', account_id):
+        return response(400, {'error': 'Invalid accountId'})
+
+    expected_prefix = f'Accounts/{account_id}/Summary Service Reports/'
+
+    # Account reports are always customer-visible only.
+    # Never accept visibilityScope=staff from the request.
+    visibility_scope = 'customer'
+
+    if raw_path.endswith('/open'):
+        key = get_query_parameter(event, 'key')
+
+        if not isinstance(key, str) or not key:
+            return response(400, {'error': 'Missing or invalid key'})
+
+        if not key.startswith(expected_prefix):
+            return response(403, {'error': 'The requested file does not belong to this Account'})
+
+        file_name = key.rsplit('/', 1)[-1]
+
+        if not file_name or file_name in IGNORED_FILE_NAMES:
+            return response(404, {'error': 'File not found'})
+
+        if not object_visible_to_scope(key, visibility_scope):
+            return response(404, {'error': 'File not found'})
+
+        try:
+            s3.head_object(Bucket=FILE_BUCKET, Key=key)
+        except s3.exceptions.ClientError as exc:
+            if exc.response.get('Error', {}).get('Code') in ('404', 'NoSuchKey', 'NotFound'):
+                return response(404, {'error': 'File not found'})
+            raise
+
+        return response(200, {
+            'url': create_presigned_url(key),
+            'expiresInSeconds': PRESIGNED_URL_SECONDS,
+        })
+
+    files = list_files(expected_prefix, visibility_scope)
+
+    return response(200, {
+        'accountId': account_id,
+        'prefix': expected_prefix,
+        'recordCount': len(files),
+        'files': files,
+    })
+
 
 def process_work_order_request(event: dict, raw_path: str) -> dict:
     work_order_id = get_path_parameter(event, 'workOrderId')
@@ -1688,6 +1742,10 @@ def process(event, context):
 
         if raw_path.startswith('/files/buildings'):
             return process_building_request(event, raw_path)
+
+        if raw_path.startswith('/files/accounts/'):
+            if raw_path.endswith('/summary-reports') or raw_path.endswith('/summary-reports/open'):
+                return process_account_summary_reports_request(event, raw_path)
 
         if raw_path.startswith('/files/workorders/'):
             return process_work_order_request(event, raw_path)

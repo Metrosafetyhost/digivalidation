@@ -823,3 +823,136 @@ def test_existing_upload_duplicate_check_is_unchanged(viewer, monkeypatch):
     result = viewer.process(upload_event('workorder', {'customerVisible': False}), None)
     assert result['statusCode'] == 409
     assert json.loads(result['body'])['objectKey'] == 'WorkOrders/42/report.pdf'
+
+def test_account_summary_reports_lists_customer_visible_files(viewer, monkeypatch):
+    account_id = '001123456789ABC'
+    prefix = f'Accounts/{account_id}/Summary Service Reports/'
+
+    expected_files = [
+        {
+            'key': prefix + '003123456789ABC/report.pdf',
+            'name': 'report.pdf',
+            'sizeBytes': 100,
+            'lastModified': '2026-10-14T00:00:00+00:00',
+        }
+    ]
+
+    calls = []
+
+    def fake_list_files(requested_prefix, visibility_scope):
+        calls.append((requested_prefix, visibility_scope))
+        return expected_files
+
+    monkeypatch.setattr(viewer, 'list_files', fake_list_files)
+
+    event = {
+        'rawPath': f'/files/accounts/{account_id}/summary-reports',
+        'pathParameters': {'accountId': account_id},
+        'queryStringParameters': {'visibilityScope': 'staff'},
+    }
+
+    result = viewer.process(event, None)
+
+    assert result['statusCode'] == 200, result['body']
+
+    body = json.loads(result['body'])
+
+    assert body['accountId'] == account_id
+    assert body['recordCount'] == 1
+    assert body['files'] == expected_files
+    assert calls == [(prefix, 'customer')]
+
+def test_account_summary_reports_rejects_other_account_files(viewer, monkeypatch):
+    account_id = '001123456789ABC'
+    other_account_id = '001987654321XYZ'
+
+    other_account_key = (
+        f'Accounts/{other_account_id}/Summary Service Reports/'
+        '003123456789ABC/private.pdf'
+    )
+
+    def unexpected_tag_check(*args, **kwargs):
+        raise AssertionError('Must reject before checking S3 tags')
+
+    monkeypatch.setattr(viewer, 'object_visible_to_scope', unexpected_tag_check)
+
+    event = {
+        'rawPath': f'/files/accounts/{account_id}/summary-reports/open',
+        'pathParameters': {'accountId': account_id},
+        'queryStringParameters': {'key': other_account_key},
+    }
+
+    result = viewer.process(event, None)
+
+    assert result['statusCode'] == 403, result['body']
+    assert json.loads(result['body']) == {
+        'error': 'The requested file does not belong to this Account'
+    }
+
+def test_account_summary_reports_filters_s3_visibility_tags(viewer, tagged_s3):
+    account_id = '001123456789ABC'
+    prefix = f'Accounts/{account_id}/Summary Service Reports/'
+
+    visible = prefix + '003111111111111/visible.pdf'
+    hidden = prefix + '003222222222222/internal.pdf'
+    untagged = prefix + '003333333333333/untagged.pdf'
+
+    tagged_s3.keys = [visible, hidden, untagged]
+    tagged_s3.tags = {
+        visible: [{'Key': 'customer-visible', 'Value': 'true'}],
+        hidden: [{'Key': 'customer-visible', 'Value': 'false'}],
+    }
+
+    event = {
+        'rawPath': f'/files/accounts/{account_id}/summary-reports',
+        'pathParameters': {'accountId': account_id},
+        'queryStringParameters': {'visibilityScope': 'staff'},
+    }
+
+    result = viewer.process(event, None)
+
+    assert result['statusCode'] == 200, result['body']
+
+    body = json.loads(result['body'])
+
+    assert body['recordCount'] == 1
+    assert [item['key'] for item in body['files']] == [visible]
+    assert len(tagged_s3.tag_calls) == 3
+
+def test_account_summary_reports_open_requires_customer_visibility(viewer, tagged_s3):
+    account_id = '001123456789ABC'
+    prefix = f'Accounts/{account_id}/Summary Service Reports/'
+
+    visible = prefix + '003111111111111/visible.pdf'
+    hidden = prefix + '003222222222222/internal.pdf'
+
+    tagged_s3.keys = [visible, hidden]
+    tagged_s3.tags = {
+        visible: [{'Key': 'customer-visible', 'Value': 'true'}],
+        hidden: [{'Key': 'customer-visible', 'Value': 'false'}],
+    }
+
+    def open_report(key):
+        return viewer.process({
+            'rawPath': f'/files/accounts/{account_id}/summary-reports/open',
+            'pathParameters': {'accountId': account_id},
+            'queryStringParameters': {
+                'key': key,
+                'visibilityScope': 'staff',
+            },
+        }, None)
+
+    denied = open_report(hidden)
+
+    assert denied['statusCode'] == 404, denied['body']
+    assert tagged_s3.presign_calls == []
+
+    allowed = open_report(visible)
+
+    assert allowed['statusCode'] == 200, allowed['body']
+    assert json.loads(allowed['body']) == {
+        'url': 'https://example.test/download',
+        'expiresInSeconds': viewer.PRESIGNED_URL_SECONDS,
+    }
+    assert len(tagged_s3.presign_calls) == 1
+    assert tagged_s3.presign_calls[0]['Params']['Key'] == visible

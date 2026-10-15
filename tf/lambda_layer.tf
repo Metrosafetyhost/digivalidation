@@ -23,8 +23,8 @@ resource "aws_iam_policy" "bedrock_invoke_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect   = "Allow"
-        Action   = [
+        Effect = "Allow"
+        Action = [
           "bedrock:InvokeModel",
           "bedrock:GetFoundationModel"
         ]
@@ -991,8 +991,8 @@ resource "aws_iam_policy" "nova_water_bedrock_policy" {
         Action = [
           "bedrock:Converse",
           "bedrock:ConverseStream",
-          "bedrock:InvokeModel",                      # keep for backwards-compat
-          "bedrock:InvokeModelWithResponseStream"     # keep for backwards-compat
+          "bedrock:InvokeModel",                  # keep for backwards-compat
+          "bedrock:InvokeModelWithResponseStream" # keep for backwards-compat
         ],
         Resource = [
           "arn:aws:bedrock:eu-west-2::foundation-model/amazon.nova-lite-v1:0",
@@ -1016,9 +1016,9 @@ resource "aws_iam_policy" "nova_water_s3_read" {
     Version = "2012-10-17",
     Statement = [
       {
-        Sid    = "ListWorkOrdersPrefix",
-        Effect = "Allow",
-        Action = ["s3:ListBucket"],
+        Sid      = "ListWorkOrdersPrefix",
+        Effect   = "Allow",
+        Action   = ["s3:ListBucket"],
         Resource = "arn:aws:s3:::metrosafetyprodfiles",
         Condition = {
           StringLike = { "s3:prefix" : "WorkOrders/*" }
@@ -1218,9 +1218,9 @@ resource "aws_iam_role_policy_attachment" "attach_blur_image_s3_and_rekognition"
 }
 
 resource "aws_lambda_layer_version" "pymupdf" {
-  layer_name          = "${var.namespace}-${var.env}-pymupdf-py313-arm64"
-  filename            = "${path.module}/../pymupdf/pymupdf.zip"
-  compatible_runtimes = ["python3.13"]
+  layer_name               = "${var.namespace}-${var.env}-pymupdf-py313-arm64"
+  filename                 = "${path.module}/../pymupdf/pymupdf.zip"
+  compatible_runtimes      = ["python3.13"]
   compatible_architectures = ["arm64"]
 
   source_code_hash = filebase64sha256("${path.module}/../pymupdf/pymupdf.zip")
@@ -1286,9 +1286,9 @@ data "aws_iam_policy_document" "pdf_merge_s3_read_write_metrosafetyprodfiles" {
   }
 
   statement {
-    sid       = "AllowReadWriteObjectsMetroSafetyProdFiles"
-    effect    = "Allow"
-    actions   = [
+    sid    = "AllowReadWriteObjectsMetroSafetyProdFiles"
+    effect = "Allow"
+    actions = [
       "s3:GetObject",
       "s3:HeadObject",
       "s3:PutObject",
@@ -1455,7 +1455,8 @@ resource "aws_iam_policy" "s3_file_viewer_read" {
           StringLike = {
             "s3:prefix" = [
               "WorkOrders/*",
-              "Buildings/*"
+              "Buildings/*",
+              "Accounts/*/Summary Service Reports/*"
             ]
           }
         }
@@ -1471,7 +1472,8 @@ resource "aws_iam_policy" "s3_file_viewer_read" {
 
         Resource = [
           "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*",
-          "arn:aws:s3:::metrosafetyprodfiles/Buildings/*"
+          "arn:aws:s3:::metrosafetyprodfiles/Buildings/*",
+          "arn:aws:s3:::metrosafetyprodfiles/Accounts/*/Summary Service Reports/*"
         ]
       },
       {

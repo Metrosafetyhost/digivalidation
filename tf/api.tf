@@ -102,8 +102,8 @@ resource "aws_lambda_permission" "apigw_lambda_digivalidation" {
   statement_id  = "AllowExecutionFromAPIGatewayDigivalidation"
   action        = "lambda:InvokeFunction"
   function_name = "bedrock-lambda-digival"
-  principal  = "apigateway.amazonaws.com"
-  source_arn = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
 }
 
 # Integration for Asset Categorisation Lambda
@@ -382,56 +382,56 @@ resource "aws_lambda_permission" "apigw_lambda_s3_file_viewer" {
 resource "aws_apigatewayv2_route" "list_work_order_files" {
   api_id = aws_apigatewayv2_api.lambda_api.id
 
-  route_key = "GET /files/workorders/{workOrderId}"
-  target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  route_key          = "GET /files/workorders/{workOrderId}"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
   authorization_type = "AWS_IAM"
 }
 
 resource "aws_apigatewayv2_route" "open_work_order_file" {
   api_id = aws_apigatewayv2_api.lambda_api.id
 
-  route_key = "GET /files/workorders/{workOrderId}/open"
-  target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  route_key          = "GET /files/workorders/{workOrderId}/open"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
   authorization_type = "AWS_IAM"
 }
 
 resource "aws_apigatewayv2_route" "create_work_order_upload_url" {
   api_id = aws_apigatewayv2_api.lambda_api.id
 
-  route_key = "POST /files/workorders/{workOrderId}/upload-url"
-  target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  route_key          = "POST /files/workorders/{workOrderId}/upload-url"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
   authorization_type = "AWS_IAM"
 }
 
 resource "aws_apigatewayv2_route" "delete_work_order_file" {
   api_id = aws_apigatewayv2_api.lambda_api.id
 
-  route_key = "POST /files/workorders/{workOrderId}/delete"
-  target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  route_key          = "POST /files/workorders/{workOrderId}/delete"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
   authorization_type = "AWS_IAM"
 }
 
 resource "aws_apigatewayv2_route" "list_building_documents" {
   api_id = aws_apigatewayv2_api.lambda_api.id
 
-  route_key = "GET /files/buildings"
-  target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  route_key          = "GET /files/buildings"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
   authorization_type = "AWS_IAM"
 }
 
 resource "aws_apigatewayv2_route" "open_building_document" {
   api_id = aws_apigatewayv2_api.lambda_api.id
 
-  route_key = "GET /files/buildings/open"
-  target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  route_key          = "GET /files/buildings/open"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
   authorization_type = "AWS_IAM"
 }
 
 resource "aws_apigatewayv2_route" "create_building_upload_url" {
   api_id = aws_apigatewayv2_api.lambda_api.id
 
-  route_key = "POST /files/buildings/upload-url"
-  target    = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  route_key          = "POST /files/buildings/upload-url"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
   authorization_type = "AWS_IAM"
 }
 
@@ -460,7 +460,7 @@ resource "aws_apigatewayv2_route" "s3_file_viewer_building_delete" {
 
   route_key = "POST /files/buildings/delete"
 
-  target = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
   authorization_type = "AWS_IAM"
 }
 
@@ -469,7 +469,7 @@ resource "aws_apigatewayv2_route" "s3_file_viewer_building_move" {
 
   route_key = "POST /files/buildings/move"
 
-  target = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
   authorization_type = "AWS_IAM"
 }
 
@@ -503,4 +503,18 @@ resource "aws_lambda_permission" "apigw_lambda_cannot_complete_classifier" {
   depends_on = [
     module.lambdas_zip
   ]
+}
+
+resource "aws_apigatewayv2_route" "list_account_summary_reports" {
+  api_id             = aws_apigatewayv2_api.lambda_api.id
+  route_key          = "GET /files/accounts/{accountId}/summary-reports"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
+}
+
+resource "aws_apigatewayv2_route" "open_account_summary_report" {
+  api_id             = aws_apigatewayv2_api.lambda_api.id
+  route_key          = "GET /files/accounts/{accountId}/summary-reports/open"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
 }
