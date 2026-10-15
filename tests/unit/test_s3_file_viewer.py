@@ -13,6 +13,7 @@ def viewer(monkeypatch):
     monkeypatch.setenv('AWS_DEFAULT_REGION', 'us-east-1')
     module = importlib.import_module('lambdas.s3_file_viewer')
     monkeypatch.setattr(module, 'object_exists', lambda key: False)
+    monkeypatch.setattr(module, 'find_building_roots', lambda prefix: set())
     return module
 
 
@@ -95,6 +96,95 @@ def test_legacy_upload_has_no_tagging(viewer, monkeypatch, kind):
     else:
         assert set(body) == {'uploadUrl', 'objectKey', 'fileName', 'contentType', 'expiresInSeconds'}
 
+def test_building_upload_reuses_existing_canonical_root(viewer, monkeypatch):
+    existing_root = 'Buildings/123 | Original Building Name/'
+    supplied_root = 'Buildings/123 | Updated Building Name/'
+
+    monkeypatch.setattr(
+        viewer,
+        'find_building_roots',
+        lambda prefix: [existing_root],
+    )
+
+    monkeypatch.setattr(
+        viewer.s3,
+        'generate_presigned_url',
+        lambda **kwargs: 'https://example.test/upload',
+    )
+
+    result = viewer.process(
+        upload_event('building', {
+            'buildingPrefix': supplied_root,
+        }),
+        None,
+    )
+
+    assert result['statusCode'] == 200
+
+    body = json.loads(result['body'])
+
+    assert body['buildingRoot'] == existing_root
+    assert body['objectKey'] == (
+        existing_root + 'Compliance Documents/Fire/Assessment/report.pdf'
+    )
+
+def test_building_upload_rejects_multiple_canonical_roots(viewer, monkeypatch):
+    monkeypatch.setattr(
+        viewer,
+        'find_building_roots',
+        lambda prefix: {
+            'Buildings/123 | Original Building Name/',
+            'Buildings/123 | Updated Building Name/',
+        },
+    )
+
+    def no_presign(**kwargs):
+        raise AssertionError('Ambiguous uploads must not be presigned')
+
+    monkeypatch.setattr(viewer.s3, 'generate_presigned_url', no_presign)
+
+    result = viewer.process(
+        upload_event('building', {
+            'buildingPrefix': 'Buildings/123 | Updated Building Name/',
+        }),
+        None,
+    )
+
+    assert result['statusCode'] == 400
+    assert 'Multiple canonical S3 Building folders' in json.loads(result['body'])['error']
+
+def test_building_upload_ignores_legacy_roots(viewer, monkeypatch):
+    monkeypatch.setattr(
+        viewer,
+        'find_building_roots',
+        lambda prefix: {
+            'Buildings//123 | Original Building Name/',
+            'Buildings/123 | null/',
+        },
+    )
+
+    monkeypatch.setattr(
+        viewer.s3,
+        'generate_presigned_url',
+        lambda **kwargs: 'https://example.test/upload',
+    )
+
+    result = viewer.process(
+        upload_event('building', {
+            'buildingPrefix': 'Buildings/123 | Updated Building Name/',
+        }),
+        None,
+    )
+
+    assert result['statusCode'] == 200
+
+    body = json.loads(result['body'])
+
+    assert body['buildingRoot'] == 'Buildings/123 | Updated Building Name/'
+    assert body['objectKey'] == (
+        'Buildings/123 | Updated Building Name/'
+        'Compliance Documents/Fire/Assessment/report.pdf'
+    )
 
 @pytest.mark.parametrize('kind', ['workorder', 'building'])
 @pytest.mark.parametrize('invalid', [None, 'true', 1, 0, [], {}])
