@@ -1644,9 +1644,33 @@ def process_building_move_request(event: dict) -> dict:
             },
         )
 
-    # All moves write to the canonical single-slash root.
+    # Reuse an existing canonical Building root when its descriptive
+    # name differs from Salesforce. Never move into legacy roots.
+    lookup_token = get_building_lookup_token(building_prefix)
+
+    canonical_roots = sorted(
+        root
+        for root in find_building_roots(building_prefix)
+        if get_root_parent_prefix(root) == f'{BUILDING_PREFIX}/'
+        and building_root_priority(root, lookup_token) >= 70
+        and get_building_root_suffix(root, lookup_token).strip().lower() not in {
+            'null',
+            'none',
+            'undefined',
+        }
+    )
+
+    if len(canonical_roots) > 1:
+        raise ValueError(
+            'Multiple canonical S3 Building folders were found for '
+            'this Building Number. The move was not started. Found: '
+            + ', '.join(canonical_roots)
+        )
+
     destination_building_root = (
-        building_prefix.rstrip('/') + '/'
+        canonical_roots[0]
+        if canonical_roots
+        else building_prefix.rstrip('/') + '/'
     )
 
     destination_folder_path = validate_upload_folder(
