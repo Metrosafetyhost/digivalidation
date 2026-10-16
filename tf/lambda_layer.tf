@@ -28,7 +28,7 @@ resource "aws_iam_policy" "bedrock_invoke_policy" {
           "bedrock:InvokeModel",
           "bedrock:GetFoundationModel"
         ]
-        Resource = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0" #anthropic.claude-3-haiku-20240307-v1:0"
+        Resource = local.sonnet_invoke_arns #anthropic.claude-3-haiku-20240307-v1:0"
       }
     ]
   })
@@ -295,7 +295,7 @@ resource "aws_iam_policy" "proofing_bedrock_invoke" {
     Statement = [{
       Effect   = "Allow",
       Action   = "bedrock:InvokeModel",
-      Resource = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0"
+      Resource = local.sonnet_invoke_arns
     }]
   })
 }
@@ -712,7 +712,7 @@ locals {
   pdf_bucket = "metrosafetyprodfiles"                               # PDF_BUCKET
 
   # Model you call from salesforce_input.py
-  bedrock_model_arn = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0"
+  bedrock_model_arns = local.sonnet_invoke_arns
   # The checklist lambda that salesforce_input.py invokes
   checklist_lambda_arn = "arn:aws:lambda:eu-west-2:837329614132:function:bedrock-lambda-checklist"
 }
@@ -839,7 +839,7 @@ data "aws_iam_policy_document" "process_policy" {
   statement {
     sid       = "InvokeBedrock"
     actions   = ["bedrock:InvokeModel"]
-    resources = [local.bedrock_model_arn]
+    resources = local.bedrock_model_arns
   }
 
   # Invoke the checklist lambda
@@ -1052,7 +1052,7 @@ resource "aws_iam_policy" "proofing_bedrock_controlplane" {
         Action = [
           "bedrock:GetFoundationModel"
         ],
-        Resource = "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0"
+        Resource = local.sonnet_model_arn
       }
     ]
   })
@@ -1366,9 +1366,7 @@ resource "aws_iam_policy" "fire_validation_bedrock_invoke" {
         Action = [
           "bedrock:InvokeModel"
         ]
-        Resource = [
-          "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0"
-        ]
+        Resource = local.sonnet_invoke_arns
       },
       {
         Sid    = "AllowGetFoundationModelForDebugging"
@@ -1376,9 +1374,7 @@ resource "aws_iam_policy" "fire_validation_bedrock_invoke" {
         Action = [
           "bedrock:GetFoundationModel"
         ]
-        Resource = [
-          "arn:aws:bedrock:eu-west-2::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0"
-        ]
+        Resource = [local.sonnet_model_arn]
       }
     ]
   })

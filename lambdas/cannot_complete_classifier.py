@@ -12,7 +12,7 @@ bedrock_client = boto3.client(
     region_name="eu-west-2"
 )
 
-BEDROCK_MODEL_ID = "anthropic.claude-3-7-sonnet-20250219-v1:0"
+BEDROCK_MODEL_ID = "eu.anthropic.claude-sonnet-5"
 
 
 ISSUE_TYPES = {
@@ -394,7 +394,7 @@ def call_bedrock(
             }
         ],
         "max_tokens": 1000,
-        "temperature": 0,
+        "thinking": {"type": "disabled"},
     }
 
     logger.info(

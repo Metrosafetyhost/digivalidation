@@ -17,7 +17,7 @@ s3 = boto3.client('s3', region_name=REGION)
 ENABLE_CLAUDE = os.getenv('ENABLE_CLAUDE', 'true').lower() == 'true'
 CLAUDE_MODEL_ID = os.getenv(
     'CLAUDE_MODEL_ID',
-    'anthropic.claude-3-7-sonnet-20250219-v1:0',
+    'eu.anthropic.claude-sonnet-5',
 )
 
 # Debug output setting.
@@ -1185,7 +1185,7 @@ def _extract_answer_status(answer_text):
 
 def _call_claude_for_question(evidence_pack):
     """
-    Calls Claude 3.7 Sonnet on AWS Bedrock.
+    Calls Claude Sonnet 5 on AWS Bedrock.
 
     This version expects a human-readable answer, not strict JSON.
 
@@ -1250,7 +1250,7 @@ Evidence:
     request_body = {
         'anthropic_version': 'bedrock-2023-05-31',
         'max_tokens': 2000,
-        'temperature': 0,
+        'thinking': {'type': 'disabled'},
         'messages': [
             {
                 'role': 'user',

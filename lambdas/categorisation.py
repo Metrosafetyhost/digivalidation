@@ -31,7 +31,7 @@ s3      = boto3.client(
     region_name="eu-west-2",
     config=Config(signature_version="s3v4")
 )
-MODEL_ID = "anthropic.claude-3-7-sonnet-20250219-v1:0"
+MODEL_ID = "eu.anthropic.claude-sonnet-5"
 
 def _norm(s: str) -> str:
     s = (s or "").lower().strip()
@@ -722,7 +722,7 @@ def classify_asset_text(text):
     payload = {
         "anthropic_version": "bedrock-2023-05-31",
         "max_tokens":        2000,
-        "temperature":       0.0,
+        "thinking": {"type": "disabled"},
         "messages": [
             { "role": "user", "content": prompt }
         ]

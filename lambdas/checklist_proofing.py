@@ -13,7 +13,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
-MODEL_ID = "anthropic.claude-3-7-sonnet-20250219-v1:0"
+MODEL_ID = "eu.anthropic.claude-sonnet-5"
 
 # Standard AWS client retries (covers transient network/service issues)
 AWS_RETRY_CONFIG = RetryConfig(retries={"max_attempts": 5, "mode": "standard"})
@@ -33,7 +33,7 @@ def get_model_lifecycle_safe():
     # A couple of quick retries with jitter - Bedrock control-plane can be transiently inconsistent.
     for attempt in range(3):
         try:
-            resp = bedrock_control.get_foundation_model(modelIdentifier=MODEL_ID)
+            resp = bedrock_control.get_foundation_model(modelIdentifier=MODEL_ID.removeprefix("eu."))
             _MODEL_LIFECYCLE_CACHE = resp["modelDetails"]["modelLifecycle"]
             return _MODEL_LIFECYCLE_CACHE
         except ClientError as e:
@@ -616,7 +616,7 @@ def send_to_bedrock(user_text):
     payload = {
         "anthropic_version": "bedrock-2023-05-31",
         "max_tokens":        1000,
-        "temperature":       0.0,
+        "thinking": {"type": "disabled"},
         "messages": [
             {
                 "role":    "user",

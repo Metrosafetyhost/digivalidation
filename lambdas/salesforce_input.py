@@ -43,7 +43,7 @@ def _should_email(work_type: str) -> bool:
     return (work_type or "").upper() in ALLOWED_EMAIL_TYPES
 
 # Configurations
-BEDROCK_MODEL_ID = "anthropic.claude-3-7-sonnet-20250219-v1:0"
+BEDROCK_MODEL_ID = "eu.anthropic.claude-sonnet-5"
 BUCKET_NAME = "metrosafety-bedrock-output-data-dev-bedrock-lambda"
 TABLE_NAME = "ProofingMetadata"
 PDF_BUCKET = "metrosafetyprodfiles"
@@ -187,7 +187,7 @@ def proof_table_content(html, record_id):
                            + json.dumps(fragments, ensure_ascii=False)
             }],
             "max_tokens": 3000,
-            "temperature": 0.0
+            "thinking": {"type": "disabled"}
         }
         logger.info(f"Record {record_id}: sending {len(fragments)} fragments to Bedrock")
         response = bedrock_client.invoke_model(
@@ -285,7 +285,7 @@ def proof_plain_text(text, record_id):
                 )
             }],
             "max_tokens": 1500,
-            "temperature": 0
+            "thinking": {"type": "disabled"}
         }
 
         logger.info("Sending payload to Bedrock: " + json.dumps(payload, indent=2))
