@@ -1042,7 +1042,13 @@ def process_account_summary_reports_request(event: dict, raw_path: str) -> dict:
     if raw_path.endswith('/open'):
         key = get_query_parameter(event, 'key')
 
-        if not isinstance(key, str) or not key:
+        if (
+            not isinstance(key, str)
+            or not key
+            or key != key.strip()
+            or '..' in key
+            or '\\' in key
+        ):
             return response(400, {'error': 'Missing or invalid key'})
 
         if not key.startswith(expected_prefix):
