@@ -1024,6 +1024,176 @@ def validate_upload_folder(building_root: str, supplied_folder_path: str) -> str
 
     return folder_path
 
+def process_account_folders_request(event: dict) -> dict:
+    account_id = get_path_parameter(event, 'accountId')
+
+    if not isinstance(account_id, str) or not re.fullmatch(
+        r'[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?', account_id
+    ):
+        return response(400, {'error': 'Invalid accountId'})
+
+    folder_path = get_query_parameter(event, 'folder') or ''
+
+    if not isinstance(folder_path, str):
+        return response(400, {'error': 'Invalid folder'})
+
+    if folder_path:
+        if (
+            folder_path != folder_path.strip()
+            or '..' in folder_path
+            or chr(92) in folder_path
+            or folder_path.startswith('/')
+            or not folder_path.endswith('/')
+        ):
+            return response(400, {'error': 'Invalid folder'})
+
+        if folder_path not in ('Summary Service Reports/', 'Other/'):
+            match = re.fullmatch(
+                r'Summary Service Reports/([a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?)/',
+                folder_path,
+            )
+            if not match:
+                return response(400, {'error': 'Invalid folder'})
+
+    account_prefix = f'Accounts/{account_id}/'
+
+    if not folder_path:
+        return response(200, {
+            'accountId': account_id,
+            'currentPath': '',
+            'folders': [
+                {'name': 'Summary Service Reports', 'path': 'Summary Service Reports/'},
+                {'name': 'Other', 'path': 'Other/'},
+            ],
+            'files': [],
+            'canUpload': False,
+        })
+
+    full_prefix = account_prefix + folder_path
+    folders = {}
+    files = []
+
+    for page in list_visible_pages(full_prefix, 'customer'):
+        for item in page.get('Contents', []):
+            key = item.get('Key', '')
+
+            if not key.startswith(full_prefix) or key.endswith('/'):
+                continue
+
+            relative_key = key[len(full_prefix):]
+
+            if not relative_key:
+                continue
+
+            if '/' in relative_key:
+                child_name, remainder = relative_key.split('/', 1)
+
+                if folder_path == 'Summary Service Reports/' and re.fullmatch(
+                    r'[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?', child_name
+                ) and remainder:
+                    child_path = folder_path + child_name + '/'
+                    folders[child_path] = {
+                        'name': child_name,
+                        'path': child_path,
+                    }
+
+                continue
+
+            if relative_key in IGNORED_FILE_NAMES:
+                continue
+
+            files.append({
+                'key': key,
+                'name': relative_key,
+                'sizeBytes': item['Size'],
+                'lastModified': item['LastModified'].isoformat(),
+            })
+
+    files.sort(key=lambda item: item['lastModified'], reverse=True)
+
+    return response(200, {
+        'accountId': account_id,
+        'currentPath': folder_path,
+        'folders': sorted(folders.values(), key=lambda item: item['name']),
+        'files': files,
+        'canUpload': folder_path == 'Other/',
+    })
+
+def process_account_file_open_request(event: dict) -> dict:
+    account_id = get_path_parameter(event, 'accountId')
+
+    if not isinstance(account_id, str) or not re.fullmatch(
+        r'[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?', account_id
+    ):
+        return response(400, {'error': 'Invalid accountId'})
+
+    key = get_query_parameter(event, 'key')
+
+    if (
+        not isinstance(key, str)
+        or not key
+        or key != key.strip()
+        or '..' in key
+        or '\\' in key
+        or any(ord(character) < 32 or ord(character) == 127 for character in key)
+    ):
+        return response(400, {'error': 'Missing or invalid key'})
+
+    account_prefix = f'Accounts/{account_id}/'
+
+    if not key.startswith(account_prefix):
+        return response(
+            403,
+            {'error': 'The requested file does not belong to this Account'},
+        )
+
+    relative_key = key[len(account_prefix):]
+    allowed = False
+
+    if relative_key.startswith('Other/'):
+        filename = relative_key[len('Other/'):]
+        allowed = bool(filename) and '/' not in filename
+
+    elif relative_key.startswith('Summary Service Reports/'):
+        remainder = relative_key[len('Summary Service Reports/'):]
+        parts = remainder.split('/')
+
+        allowed = (
+            len(parts) == 2
+            and re.fullmatch(
+                r'[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?',
+                parts[0],
+            ) is not None
+            and bool(parts[1])
+        )
+
+    if not allowed:
+        return response(403, {'error': 'File path is not permitted'})
+
+    filename = key.rsplit('/', 1)[-1]
+
+    if filename in IGNORED_FILE_NAMES:
+        return response(404, {'error': 'File not found'})
+
+    # Never accept visibilityScope=staff for customer Account files.
+    if not object_visible_to_scope(key, 'customer'):
+        return response(404, {'error': 'File not found'})
+
+    try:
+        s3.head_object(Bucket=FILE_BUCKET, Key=key)
+    except s3.exceptions.ClientError as exc:
+        if exc.response.get('Error', {}).get('Code') in (
+            '404', 'NoSuchKey', 'NotFound'
+        ):
+            return response(404, {'error': 'File not found'})
+        raise
+
+    return response(200, {
+        'url': create_presigned_url(key),
+        'expiresInSeconds': PRESIGNED_URL_SECONDS,
+    })
+
+
 def process_account_summary_reports_request(event: dict, raw_path: str) -> dict:
     account_id = get_path_parameter(event, 'accountId')
 
@@ -1774,8 +1944,17 @@ def process(event, context):
             return process_building_request(event, raw_path)
 
         if raw_path.startswith('/files/accounts/'):
-            if raw_path.endswith('/summary-reports') or raw_path.endswith('/summary-reports/open'):
+            if raw_path.endswith('/folders'):
+                return process_account_folders_request(event)
+
+            if raw_path.endswith('/summary-reports/open'):
                 return process_account_summary_reports_request(event, raw_path)
+
+            if raw_path.endswith('/summary-reports'):
+                return process_account_summary_reports_request(event, raw_path)
+
+            if raw_path.endswith('/open'):
+                return process_account_file_open_request(event)
 
         if raw_path.startswith('/files/workorders/'):
             return process_work_order_request(event, raw_path)

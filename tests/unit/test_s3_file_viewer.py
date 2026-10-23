@@ -956,3 +956,200 @@ def test_account_summary_reports_open_requires_customer_visibility(viewer, tagge
     }
     assert len(tagged_s3.presign_calls) == 1
     assert tagged_s3.presign_calls[0]['Params']['Key'] == visible
+
+def test_account_root_shows_configured_folders_when_empty(viewer, monkeypatch):
+    account_id = '001123456789ABC'
+
+    def fake_list_objects_v2(**kwargs):
+        assert kwargs['Bucket'] == viewer.FILE_BUCKET
+        assert kwargs['Prefix'] == f'Accounts/{account_id}/'
+        return {'Contents': [], 'CommonPrefixes': []}
+
+    monkeypatch.setattr(viewer.s3, 'list_objects_v2', fake_list_objects_v2)
+
+    event = {
+        'rawPath': f'/files/accounts/{account_id}/folders',
+        'pathParameters': {'accountId': account_id},
+        'queryStringParameters': {},
+    }
+
+    result = viewer.process(event, None)
+
+    assert result['statusCode'] == 200, result['body']
+
+    body = json.loads(result['body'])
+
+    assert body['accountId'] == account_id
+    assert body['currentPath'] == ''
+    assert body['files'] == []
+    assert [folder['name'] for folder in body['folders']] == [
+        'Summary Service Reports',
+        'Other',
+    ]
+    assert body['canUpload'] is False
+
+
+@pytest.mark.parametrize(
+    ('folder', 'expected_folders', 'expected_files', 'can_upload'),
+    [
+        ('Summary Service Reports/', ['003123456789ABC'], [], False),
+        ('Summary Service Reports/003123456789ABC/', [], ['weekly.pdf'], False),
+        ('Other/', [], ['photo.jpg'], True),
+    ],
+)
+def test_account_folder_navigation(
+    viewer, monkeypatch, folder, expected_folders, expected_files, can_upload
+):
+    account_id = '001123456789ABC'
+    base = f'Accounts/{account_id}/'
+
+    objects = [
+        base + 'Summary Service Reports/003123456789ABC/weekly.pdf',
+        base + 'Other/photo.jpg',
+    ]
+
+    monkeypatch.setattr(
+        viewer,
+        'list_visible_pages',
+        lambda prefix, scope: [{
+            'Contents': [
+                {
+                    'Key': key,
+                    'Size': 100,
+                    'LastModified': datetime(2026, 10, 21, tzinfo=UTC),
+                }
+                for key in objects
+                if key.startswith(prefix)
+            ],
+        }] if scope == 'customer' else [],
+    )
+
+    event = {
+        'rawPath': f'/files/accounts/{account_id}/folders',
+        'pathParameters': {'accountId': account_id},
+        'queryStringParameters': {'folder': folder},
+    }
+
+    result = viewer.process(event, None)
+    assert result['statusCode'] == 200, result['body']
+
+    body = json.loads(result['body'])
+
+    assert body['currentPath'] == folder
+    assert [item['name'] for item in body['folders']] == expected_folders
+    assert [item['name'] for item in body['files']] == expected_files
+    assert body['canUpload'] is can_upload
+
+
+@pytest.mark.parametrize('folder', [
+    '../',
+    'Other/../',
+    'Other/private/',
+    'Summary Service Reports/INVALID/',
+    '/Other/',
+])
+def test_account_folder_rejects_invalid_paths(viewer, folder):
+    account_id = '001123456789ABC'
+    result = viewer.process({
+        'rawPath': f'/files/accounts/{account_id}/folders',
+        'pathParameters': {'accountId': account_id},
+        'queryStringParameters': {'folder': folder},
+    }, None)
+
+    assert result['statusCode'] == 400
+
+def test_account_open_rejects_cross_account_key(viewer, monkeypatch):
+    account_id = '001000000000001AAA'
+    other_account_id = '001000000000002AAA'
+
+    monkeypatch.setattr(
+        viewer,
+        'object_visible_to_scope',
+        lambda key, scope: pytest.fail('Visibility must not be checked'),
+    )
+
+    event = {
+        'pathParameters': {'accountId': account_id},
+        'queryStringParameters': {
+            'key': f'Accounts/{other_account_id}/Other/private.pdf'
+        },
+    }
+
+    result = viewer.process_account_file_open_request(event)
+
+    assert result['statusCode'] == 403
+
+
+@pytest.mark.parametrize('key', [
+    'Accounts/001000000000001AAA/Other/',
+    'Accounts/001000000000001AAA/Other/subfolder/file.pdf',
+    'Accounts/001000000000001AAA/Other/../private.pdf',
+    'Accounts/001000000000001AAA/Summary Service Reports/file.pdf',
+    'Accounts/001000000000001AAA/Summary Service Reports/invalid/file.pdf',
+    'Accounts/001000000000001AAA/Unknown/file.pdf',
+])
+def test_account_open_rejects_invalid_paths(viewer, monkeypatch, key):
+    monkeypatch.setattr(
+        viewer,
+        'object_visible_to_scope',
+        lambda key, scope: pytest.fail('Visibility must not be checked'),
+    )
+
+    event = {
+        'pathParameters': {'accountId': '001000000000001AAA'},
+        'queryStringParameters': {'key': key},
+    }
+
+    result = viewer.process_account_file_open_request(event)
+
+    assert result['statusCode'] in (400, 403)
+
+
+def test_account_open_rejects_non_customer_visible_file(viewer, monkeypatch):
+    monkeypatch.setattr(
+        viewer,
+        'object_visible_to_scope',
+        lambda key, scope: False,
+    )
+
+    event = {
+        'pathParameters': {'accountId': '001000000000001AAA'},
+        'queryStringParameters': {
+            'key': 'Accounts/001000000000001AAA/Other/private.pdf'
+        },
+    }
+
+    result = viewer.process_account_file_open_request(event)
+
+    assert result['statusCode'] == 404
+
+
+def test_account_open_allows_visible_other_file(viewer, monkeypatch):
+    monkeypatch.setattr(
+        viewer,
+        'object_visible_to_scope',
+        lambda key, scope: scope == 'customer',
+    )
+
+    class FakeS3:
+        def head_object(self, **kwargs):
+            return {'ContentLength': 123}
+
+    monkeypatch.setattr(viewer, 's3', FakeS3())
+    monkeypatch.setattr(
+        viewer,
+        'create_presigned_url',
+        lambda key: 'https://example.com/signed-file',
+    )
+
+    event = {
+        'pathParameters': {'accountId': '001000000000001AAA'},
+        'queryStringParameters': {
+            'key': 'Accounts/001000000000001AAA/Other/photo.jpg'
+        },
+    }
+
+    result = viewer.process_account_file_open_request(event)
+
+    assert result['statusCode'] == 200
+    assert 'https://example.com/signed-file' in result['body']
