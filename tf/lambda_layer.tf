@@ -1510,6 +1510,19 @@ resource "aws_iam_policy" "s3_file_viewer_read" {
           "arn:aws:s3:::metrosafetyprodfiles/Buildings/*",
           "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*"
         ]
+      },
+      {
+        Sid    = "UploadAccountOtherFiles"
+        Effect = "Allow"
+
+        Action = [
+          "s3:PutObject",
+          "s3:PutObjectTagging"
+        ]
+
+        Resource = [
+          "arn:aws:s3:::metrosafetyprodfiles/Accounts/*/Other/*"
+        ]
       }
     ]
   })

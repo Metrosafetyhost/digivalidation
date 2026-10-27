@@ -1119,6 +1119,71 @@ def process_account_folders_request(event: dict) -> dict:
         'canUpload': folder_path == 'Other/',
     })
 
+
+def process_account_upload_request(event: dict) -> dict:
+    account_id = get_path_parameter(event, 'accountId')
+
+    if not isinstance(account_id, str) or not re.fullmatch(
+        r'[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?', account_id
+    ):
+        return response(400, {'error': 'Invalid accountId'})
+
+    body = get_json_body(event)
+    file_name = body.get('fileName')
+    content_type = body.get('contentType') or 'application/octet-stream'
+
+    if not file_name:
+        return response(400, {'error': 'Missing fileName'})
+
+    if not isinstance(content_type, str):
+        return response(400, {'error': 'Invalid contentType'})
+
+    content_type = content_type.strip() or 'application/octet-stream'
+    try:
+        safe_file_name = sanitise_file_name(file_name)
+    except ValueError:
+        return response(400, {'error': 'Invalid filename'})
+
+    object_key = f'Accounts/{account_id}/Other/{safe_file_name}'
+
+    if object_exists(object_key):
+        return response(
+            409,
+            {
+                'error': (
+                    'A file with this name already exists in Other. '
+                    'No file was uploaded.'
+                ),
+                'objectKey': object_key,
+            },
+        )
+
+    tagging = (
+        'customer-visible=true'
+        '&public-visible=false'
+        f'&community_account_id={account_id}'
+    )
+
+    upload_url = create_presigned_upload_url(
+        object_key,
+        content_type,
+        tagging,
+    )
+
+    return response(
+        200,
+        {
+            'uploadUrl': upload_url,
+            'objectKey': object_key,
+            'fileName': safe_file_name,
+            'contentType': content_type,
+            'expiresInSeconds': PRESIGNED_URL_SECONDS,
+            'taggingHeader': tagging,
+        },
+    )
+
+
+
 def process_account_file_open_request(event: dict) -> dict:
     account_id = get_path_parameter(event, 'accountId')
 
@@ -1946,6 +2011,9 @@ def process(event, context):
         if raw_path.startswith('/files/accounts/'):
             if raw_path.endswith('/folders'):
                 return process_account_folders_request(event)
+
+            if raw_path.endswith('/upload-url'):
+                return process_account_upload_request(event)
 
             if raw_path.endswith('/summary-reports/open'):
                 return process_account_summary_reports_request(event, raw_path)

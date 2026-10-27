@@ -1153,3 +1153,83 @@ def test_account_open_allows_visible_other_file(viewer, monkeypatch):
 
     assert result['statusCode'] == 200
     assert 'https://example.com/signed-file' in result['body']
+
+
+def test_account_upload_url_uses_other_folder_and_customer_tags(
+    viewer, monkeypatch
+):
+    calls = []
+
+    def fake_presigned_url(key, content_type, tagging=None):
+        calls.append({
+            'key': key,
+            'content_type': content_type,
+            'tagging': tagging,
+        })
+        return 'https://example.test/upload'
+
+    monkeypatch.setattr(
+        viewer,
+        'create_presigned_upload_url',
+        fake_presigned_url,
+    )
+    monkeypatch.setattr(viewer, 'object_exists', lambda key: False)
+
+    event = {
+        'pathParameters': {'accountId': '001123456789ABC'},
+        'body': json.dumps({
+            'fileName': 'customer-document.pdf',
+            'contentType': 'application/pdf',
+        }),
+    }
+
+    result = viewer.process_account_upload_request(event)
+    body = json.loads(result['body'])
+
+    assert result['statusCode'] == 200
+    assert body['objectKey'] == (
+        'Accounts/001123456789ABC/Other/customer-document.pdf'
+    )
+    assert body['uploadUrl'] == 'https://example.test/upload'
+    assert calls[0]['key'] == body['objectKey']
+    assert calls[0]['content_type'] == 'application/pdf'
+    assert calls[0]['tagging'] == (
+        'customer-visible=true&public-visible=false'
+        '&community_account_id=001123456789ABC'
+    )
+
+
+def test_account_upload_url_rejects_invalid_account_id(viewer, monkeypatch):
+    monkeypatch.setattr(
+        viewer,
+        'create_presigned_upload_url',
+        lambda **kwargs: pytest.fail('Must not generate an upload URL'),
+    )
+
+    result = viewer.process_account_upload_request({
+        'pathParameters': {'accountId': '../Other'},
+        'body': json.dumps({
+            'fileName': 'document.pdf',
+            'contentType': 'application/pdf',
+        }),
+    })
+
+    assert result['statusCode'] == 400
+
+
+def test_account_upload_url_rejects_blank_filename(viewer, monkeypatch):
+    monkeypatch.setattr(
+        viewer,
+        'create_presigned_upload_url',
+        lambda **kwargs: pytest.fail('Must not generate an upload URL'),
+    )
+
+    result = viewer.process_account_upload_request({
+        'pathParameters': {'accountId': '001123456789ABC'},
+        'body': json.dumps({
+            'fileName': '   ',
+            'contentType': 'application/pdf',
+        }),
+    })
+
+    assert result['statusCode'] == 400
