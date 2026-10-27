@@ -518,3 +518,24 @@ resource "aws_apigatewayv2_route" "open_account_summary_report" {
   target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
   authorization_type = "AWS_IAM"
 }
+
+resource "aws_apigatewayv2_route" "list_account_folders" {
+  api_id             = aws_apigatewayv2_api.lambda_api.id
+  route_key          = "GET /files/accounts/{accountId}/folders"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
+}
+
+resource "aws_apigatewayv2_route" "open_account_file" {
+  api_id             = aws_apigatewayv2_api.lambda_api.id
+  route_key          = "GET /files/accounts/{accountId}/open"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
+}
+
+resource "aws_apigatewayv2_route" "create_account_upload_url" {
+  api_id             = aws_apigatewayv2_api.lambda_api.id
+  route_key          = "POST /files/accounts/{accountId}/upload-url"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
+}

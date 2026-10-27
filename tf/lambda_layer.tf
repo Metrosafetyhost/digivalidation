@@ -1452,7 +1452,8 @@ resource "aws_iam_policy" "s3_file_viewer_read" {
             "s3:prefix" = [
               "WorkOrders/*",
               "Buildings/*",
-              "Accounts/*/Summary Service Reports/*"
+              "Accounts/*/Summary Service Reports/*",
+              "Accounts/*/Other/*"
             ]
           }
         }
@@ -1469,7 +1470,8 @@ resource "aws_iam_policy" "s3_file_viewer_read" {
         Resource = [
           "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*",
           "arn:aws:s3:::metrosafetyprodfiles/Buildings/*",
-          "arn:aws:s3:::metrosafetyprodfiles/Accounts/*/Summary Service Reports/*"
+          "arn:aws:s3:::metrosafetyprodfiles/Accounts/*/Summary Service Reports/*",
+          "arn:aws:s3:::metrosafetyprodfiles/Accounts/*/Other/*"
         ]
       },
       {
@@ -1507,6 +1509,19 @@ resource "aws_iam_policy" "s3_file_viewer_read" {
         Resource = [
           "arn:aws:s3:::metrosafetyprodfiles/Buildings/*",
           "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*"
+        ]
+      },
+      {
+        Sid    = "UploadAccountOtherFiles"
+        Effect = "Allow"
+
+        Action = [
+          "s3:PutObject",
+          "s3:PutObjectTagging"
+        ]
+
+        Resource = [
+          "arn:aws:s3:::metrosafetyprodfiles/Accounts/*/Other/*"
         ]
       }
     ]
