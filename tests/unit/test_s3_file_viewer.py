@@ -1233,3 +1233,39 @@ def test_account_upload_url_rejects_blank_filename(viewer, monkeypatch):
     })
 
     assert result['statusCode'] == 400
+
+@pytest.mark.parametrize('content_type', [
+    'text/html',
+    'image/svg+xml',
+    'application/octet-stream',
+    'application/javascript',
+    '',
+])
+def test_account_upload_rejects_unsupported_content_types(
+    viewer, monkeypatch, content_type
+):
+    monkeypatch.setattr(
+        viewer,
+        'object_exists',
+        lambda key: pytest.fail('Must not check S3 for unsupported types'),
+    )
+    monkeypatch.setattr(
+        viewer,
+        'create_presigned_upload_url',
+        lambda *args, **kwargs: pytest.fail(
+            'Must not generate an upload URL for unsupported types'
+        ),
+    )
+
+    event = {
+        'pathParameters': {'accountId': '001123456789ABC'},
+        'body': json.dumps({
+            'fileName': 'document.pdf',
+            'contentType': content_type,
+        }),
+    }
+
+    result = viewer.process_account_upload_request(event)
+
+    assert result['statusCode'] == 400
+    assert 'Unsupported file type' in json.loads(result['body'])['error']

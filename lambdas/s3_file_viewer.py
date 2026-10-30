@@ -1138,7 +1138,24 @@ def process_account_upload_request(event: dict) -> dict:
     if not isinstance(content_type, str):
         return response(400, {'error': 'Invalid contentType'})
 
-    content_type = content_type.strip() or 'application/octet-stream'
+    content_type = content_type.strip().lower()
+
+    allowed_content_types = {
+        'application/pdf',
+        'image/jpeg',
+        'image/png',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'text/plain',
+    }
+
+    if content_type not in allowed_content_types:
+        return response(400, {
+            'error': 'Unsupported file type for customer upload'
+        })
+
     try:
         safe_file_name = sanitise_file_name(file_name)
     except ValueError:
