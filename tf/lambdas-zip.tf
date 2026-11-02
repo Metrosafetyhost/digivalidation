@@ -30,7 +30,8 @@ module "lambdas_zip" {
     "s3_file_viewer",
     "s3_visibility_tagger",
     "gam",
-    "cannot_complete_classifier"
+    "cannot_complete_classifier",
+    "customer_document_download",
   ]
 
   lambda_file_names = [
@@ -59,7 +60,8 @@ module "lambdas_zip" {
     "s3_file_viewer.py",
     "s3_visibility_tagger.py",
     "gam.py",
-    "cannot_complete_classifier.py"
+    "cannot_complete_classifier.py",
+    "customer_document_download.py"
   ]
 
   runtime       = "python3.13"
@@ -188,6 +190,17 @@ module "lambdas_zip" {
       handler     = "process"
       timeout     = 60
       memory_size = 256
+    }
+
+    customer_document_download = {
+      handler     = "process"
+      timeout     = 30
+      memory_size = 256
+
+      lambda_environment = {
+        FILE_BUCKET           = "metrosafetyprodfiles"
+        PRESIGNED_URL_SECONDS = "300"
+      }
     }
 
     basic_event            = { handler = "process", timeout = 240, memory_size = 512 }
