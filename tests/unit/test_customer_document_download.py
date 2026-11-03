@@ -311,3 +311,21 @@ def test_production_stage_path_is_supported(setup_lambda):
 
     assert status == 200
     assert body["url"] == DOWNLOAD_URL
+
+def test_customer_visible_image_download(setup_lambda):
+    module, mock_s3 = setup_lambda
+
+    key = f"WorkOrders/{WORK_ORDER_ID}/sg s ite_photo.jpg"
+
+    status, body = invoke(
+        module,
+        make_event(object_key=key),
+    )
+
+    assert status == 200
+    assert body["url"] == DOWNLOAD_URL
+
+    mock_s3.head_object.assert_called_once_with(
+        Bucket=BUCKET,
+        Key=key,
+    )

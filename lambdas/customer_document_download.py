@@ -79,7 +79,10 @@ def process(event, context):
         if not customer_visible:
             return response(404, {"error": "Document not available"})
 
-        s3.head_object(Bucket=FILE_BUCKET, Key=object_key)
+        s3.head_object(
+            Bucket=FILE_BUCKET,
+            Key=object_key,
+        )
 
         url = s3.generate_presigned_url(
             ClientMethod="get_object",
