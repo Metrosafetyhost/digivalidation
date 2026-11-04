@@ -85,13 +85,14 @@ def process(event, context):
         )
 
         url = s3.generate_presigned_url(
-            ClientMethod="get_object",
-            Params={
-                "Bucket": FILE_BUCKET,
-                "Key": object_key,
-            },
-            ExpiresIn=PRESIGNED_URL_SECONDS,
-        )
+        ClientMethod="get_object",
+        Params={
+            "Bucket": FILE_BUCKET,
+            "Key": object_key,
+            "ResponseContentDisposition": "attachment",
+        },
+        ExpiresIn=PRESIGNED_URL_SECONDS,
+    )
 
         return response(200, {
             "url": url,
