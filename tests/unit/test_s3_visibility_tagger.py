@@ -102,6 +102,13 @@ def test_unexpected_http_route_and_method(tagger):
 
 
 def test_s3_uses_same_rule_and_preserves_explicit_tags(tagger, monkeypatch):
+
+    monkeypatch.setattr(
+        tagger,
+        'previous_version_visibility_tags',
+        lambda *args: {},
+    )
+
     class FakeS3:
         def __init__(self):
             self.puts = []
@@ -230,3 +237,139 @@ def test_http_and_s3_call_same_rule_function(tagger, monkeypatch):
     tagger.process({'Records': [s3_record('Buildings/123/report_final.pdf')]}, None)
     tagger.process(http_event(json.dumps({'fileName': 'report_final.pdf'})), None)
     assert called_with == ['report_final.pdf', 'report_final.pdf']
+
+
+
+@pytest.mark.parametrize(
+    ('current_tags', 'previous_tags', 'expected'),
+    [
+        (
+            {},
+            {'customer-visible': 'true', 'public-visible': 'false'},
+            {'customer-visible': 'true', 'public-visible': 'false'},
+        ),
+        (
+            {'customer-visible': 'false'},
+            {'customer-visible': 'true', 'public-visible': 'true'},
+            {'customer-visible': 'false', 'public-visible': 'true'},
+        ),
+        (
+            {},
+            {},
+            {'customer-visible': 'false', 'public-visible': 'false'},
+        ),
+    ],
+)
+def test_s3_inherits_previous_version_visibility(
+    tagger, monkeypatch, current_tags, previous_tags, expected
+):
+    from datetime import datetime, timezone
+
+    key = 'WorkOrders/42/Asset Register.pdf'
+
+    class FakeS3:
+        def __init__(self):
+            self.written = None
+
+        def get_paginator(self, operation):
+            assert operation == 'list_object_versions'
+            return self
+
+        def paginate(self, **params):
+            assert params == {
+                'Bucket': 'metrosafetyprodfiles',
+                'Prefix': key,
+            }
+            return [{
+                'Versions': [
+                    {
+                        'Key': key,
+                        'VersionId': 'v2',
+                        'LastModified': datetime(2026, 11, 5, tzinfo=timezone.utc),
+                    },
+                    {
+                        'Key': key,
+                        'VersionId': 'v1',
+                        'LastModified': datetime(2026, 11, 4, tzinfo=timezone.utc),
+                    },
+                ]
+            }]
+
+        def get_object_tagging(self, **params):
+            tags = (
+                previous_tags
+                if params.get('VersionId') == 'v1'
+                else current_tags
+            )
+            return {
+                'TagSet': [
+                    {'Key': key, 'Value': value}
+                    for key, value in tags.items()
+                ]
+            }
+
+        def put_object_tagging(self, **params):
+            assert params['VersionId'] == 'v2'
+            self.written = {
+                tag['Key']: tag['Value']
+                for tag in params['Tagging']['TagSet']
+            }
+
+    fake = FakeS3()
+    monkeypatch.setattr(tagger, 'S3', fake)
+
+    result = tagger.process(
+        {'Records': [s3_record(key, version_id='v2')]},
+        None,
+    )
+
+    assert result == {'received': 1, 'tagged': 1, 'skipped': 0}
+    assert fake.written == expected
+
+
+def test_s3_does_not_inherit_across_delete_marker(tagger, monkeypatch):
+    from datetime import datetime, timezone
+
+    key = 'WorkOrders/42/Asset Register.pdf'
+
+    class FakeS3:
+        def get_paginator(self, operation):
+            assert operation == 'list_object_versions'
+            return self
+
+        def paginate(self, **params):
+            return [{
+                'Versions': [
+                    {
+                        'Key': key,
+                        'VersionId': 'v3',
+                        'LastModified': datetime(2026, 11, 5, tzinfo=timezone.utc),
+                    },
+                    {
+                        'Key': key,
+                        'VersionId': 'v1',
+                        'LastModified': datetime(2026, 11, 3, tzinfo=timezone.utc),
+                    },
+                ],
+                'DeleteMarkers': [
+                    {
+                        'Key': key,
+                        'VersionId': 'deleted',
+                        'LastModified': datetime(2026, 11, 4, tzinfo=timezone.utc),
+                    }
+                ],
+            }]
+
+        def get_object_tagging(self, **params):
+            raise AssertionError('Previous tags must not be inherited')
+
+    monkeypatch.setattr(tagger, 'S3', FakeS3())
+
+    result = tagger.previous_version_visibility_tags(
+        'metrosafetyprodfiles',
+        key,
+        'v3',
+    )
+
+    assert result == {}
+

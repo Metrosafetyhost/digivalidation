@@ -4,21 +4,39 @@ resource "aws_iam_policy" "s3_visibility_tagger_tagging" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Sid    = "TagBuildingAndWorkOrderFiles"
-      Effect = "Allow"
-      Action = [
-        "s3:GetObjectTagging",
-        "s3:PutObjectTagging",
-        "s3:GetObjectVersionTagging",
-        "s3:PutObjectVersionTagging"
-      ]
-      Resource = [
-        "arn:aws:s3:::metrosafetyprodfiles/Buildings/*",
-        "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*",
-        "arn:aws:s3:::metrosafetyprodfiles/Accounts/*/Summary Service Reports/*"
-      ]
-    }]
+    Statement = [
+      {
+        Sid    = "TagBuildingAndWorkOrderFiles"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObjectTagging",
+          "s3:PutObjectTagging",
+          "s3:GetObjectVersionTagging",
+          "s3:PutObjectVersionTagging"
+        ]
+        Resource = [
+          "arn:aws:s3:::metrosafetyprodfiles/Buildings/*",
+          "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*",
+          "arn:aws:s3:::metrosafetyprodfiles/Accounts/*/Summary Service Reports/*"
+        ]
+      },
+      {
+        Sid      = "ListFileObjectVersions"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucketVersions"]
+        Resource = "arn:aws:s3:::metrosafetyprodfiles"
+
+        Condition = {
+          StringLike = {
+            "s3:prefix" = [
+              "Buildings/*",
+              "WorkOrders/*",
+              "Accounts/*/Summary Service Reports/*"
+            ]
+          }
+        }
+      }
+    ]
   })
 }
 
