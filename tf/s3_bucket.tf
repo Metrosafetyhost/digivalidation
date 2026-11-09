@@ -11,6 +11,14 @@ resource "aws_iam_access_key" "salesforce_prep_s3" {
 }
 
 data "aws_iam_policy_document" "salesforce_prep_s3_policy" {
+  
+  statement {
+    sid       = "AllowBucketDiscovery"
+    effect    = "Allow"
+    actions   = ["s3:ListAllMyBuckets"]
+    resources = ["*"]
+  }
+  
   statement {
     effect    = "Allow"
     actions   = ["s3:ListBucket"]
