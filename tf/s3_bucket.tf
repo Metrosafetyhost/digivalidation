@@ -29,6 +29,13 @@ data "aws_iam_policy_document" "salesforce_prep_s3_policy" {
   }
 
   statement {
+    sid       = "AllowSandboxBucketCORS"
+    effect    = "Allow"
+    actions   = ["s3:PutBucketCORS"]
+    resources = [aws_s3_bucket.metrosafetysandboxfiles.arn]
+  }
+
+  statement {
     effect = "Allow"
     actions = [
       "s3:GetObject",
