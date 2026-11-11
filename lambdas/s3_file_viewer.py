@@ -1336,6 +1336,89 @@ def process_account_summary_reports_request(event: dict, raw_path: str) -> dict:
     })
 
 
+def process_work_order_visibility_request(event: dict, work_order_id: str) -> dict:
+    expected_prefix = f'{WORK_ORDER_PREFIX}/{work_order_id}/'
+    method = (
+        event.get('requestContext', {})
+        .get('http', {})
+        .get('method')
+    )
+
+    if method == 'GET':
+        object_key = get_query_parameter(event, 'key')
+    elif method == 'PUT':
+        body = get_json_body(event)
+        object_key = body.get('objectKey')
+    else:
+        return response(405, {'error': 'Method not allowed'})
+
+    if not isinstance(object_key, str) or not object_key.strip():
+        return response(400, {'error': 'Missing or invalid objectKey'})
+
+    object_key = object_key.strip()
+
+    if (
+        not object_key.startswith(expected_prefix)
+        or object_key.endswith('/')
+        or object_key.rsplit('/', 1)[-1] in IGNORED_FILE_NAMES
+    ):
+        return response(
+            403,
+            {'error': 'The selected file does not belong to this Work Order'},
+        )
+
+    s3.head_object(Bucket=FILE_BUCKET, Key=object_key)
+
+    existing = s3.get_object_tagging(
+        Bucket=FILE_BUCKET,
+        Key=object_key,
+    )
+
+    tags = {
+        tag['Key']: tag['Value']
+        for tag in existing.get('TagSet', [])
+    }
+
+    if method == 'GET':
+        return response(200, {
+            'objectKey': object_key,
+            'customerVisible': tags.get('customer-visible') == 'true',
+            'publicVisible': tags.get('public-visible') == 'true',
+            'customerTagPresent': 'customer-visible' in tags,
+            'publicTagPresent': 'public-visible' in tags,
+        })
+
+    customer_visible = body.get('customerVisible')
+    public_visible = body.get('publicVisible')
+
+    if not isinstance(customer_visible, bool) or not isinstance(public_visible, bool):
+        return response(
+            400,
+            {'error': 'Both visibility values must be booleans'},
+        )
+
+    tags['customer-visible'] = str(customer_visible).lower()
+    tags['public-visible'] = str(public_visible).lower()
+
+    s3.put_object_tagging(
+        Bucket=FILE_BUCKET,
+        Key=object_key,
+        Tagging={
+            'TagSet': [
+                {'Key': key, 'Value': value}
+                for key, value in sorted(tags.items())
+            ]
+        },
+    )
+
+    return response(200, {
+        'updated': True,
+        'objectKey': object_key,
+        'customerVisible': customer_visible,
+        'publicVisible': public_visible,
+    })
+
+
 def process_work_order_request(event: dict, raw_path: str) -> dict:
     work_order_id = get_path_parameter(event, 'workOrderId')
 
@@ -1343,6 +1426,10 @@ def process_work_order_request(event: dict, raw_path: str) -> dict:
         return response(400, {'error': 'Missing workOrderId'})
 
     expected_prefix = f'{WORK_ORDER_PREFIX}/{work_order_id}/'
+
+    if raw_path.endswith('/visibility'):
+        return process_work_order_visibility_request(event, work_order_id)
+
 
     if raw_path.endswith('/upload-url'):
         body = get_json_body(event)

@@ -1269,3 +1269,148 @@ def test_account_upload_rejects_unsupported_content_types(
 
     assert result['statusCode'] == 400
     assert 'Unsupported file type' in json.loads(result['body'])['error']
+
+# Work Order admin visibility management tests
+
+def visibility_event(method='GET', key='WorkOrders/42/report.pdf', **changes):
+    event = {
+        'rawPath': '/files/workorders/42/visibility',
+        'pathParameters': {'workOrderId': '42'},
+        'requestContext': {'http': {'method': method}},
+    }
+    if method == 'GET':
+        event['queryStringParameters'] = {'key': key}
+    else:
+        event['body'] = json.dumps({'objectKey': key, **changes})
+    return event
+
+
+def test_work_order_visibility_get_reads_current_tags(viewer, monkeypatch):
+    monkeypatch.setattr(viewer.s3, 'head_object', lambda **kwargs: {})
+    monkeypatch.setattr(
+        viewer.s3,
+        'get_object_tagging',
+        lambda **kwargs: {
+            'TagSet': [
+                {'Key': 'customer-visible', 'Value': 'true'},
+                {'Key': 'public-visible', 'Value': 'false'},
+            ]
+        },
+    )
+
+    result = viewer.process(visibility_event(), None)
+
+    assert result['statusCode'] == 200
+    body = json.loads(result['body'])
+    assert body['customerVisible'] is True
+    assert body['publicVisible'] is False
+    assert body['customerTagPresent'] is True
+    assert body['publicTagPresent'] is True
+
+
+def test_work_order_visibility_get_reports_missing_tags(viewer, monkeypatch):
+    monkeypatch.setattr(viewer.s3, 'head_object', lambda **kwargs: {})
+    monkeypatch.setattr(
+        viewer.s3,
+        'get_object_tagging',
+        lambda **kwargs: {'TagSet': []},
+    )
+
+    result = viewer.process(visibility_event(), None)
+
+    assert result['statusCode'] == 200
+    body = json.loads(result['body'])
+    assert body['customerVisible'] is False
+    assert body['publicVisible'] is False
+    assert body['customerTagPresent'] is False
+    assert body['publicTagPresent'] is False
+
+
+def test_work_order_visibility_put_preserves_unrelated_tags(viewer, monkeypatch):
+    saved = []
+
+    monkeypatch.setattr(viewer.s3, 'head_object', lambda **kwargs: {})
+    monkeypatch.setattr(
+        viewer.s3,
+        'get_object_tagging',
+        lambda **kwargs: {
+            'TagSet': [
+                {'Key': 'customer-visible', 'Value': 'true'},
+                {'Key': 'public-visible', 'Value': 'false'},
+                {'Key': 'other', 'Value': 'preserved'},
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        viewer.s3,
+        'put_object_tagging',
+        lambda **kwargs: saved.append(kwargs),
+    )
+
+    result = viewer.process(
+        visibility_event(
+            'PUT',
+            customerVisible=False,
+            publicVisible=True,
+        ),
+        None,
+    )
+
+    assert result['statusCode'] == 200
+    assert len(saved) == 1
+
+    tags = {
+        tag['Key']: tag['Value']
+        for tag in saved[0]['Tagging']['TagSet']
+    }
+
+    assert tags == {
+        'customer-visible': 'false',
+        'public-visible': 'true',
+        'other': 'preserved',
+    }
+
+
+@pytest.mark.parametrize('method', ['GET', 'PUT'])
+def test_work_order_visibility_rejects_other_work_order(
+    viewer, monkeypatch, method
+):
+    def unexpected_call(**kwargs):
+        pytest.fail('S3 should not be called for an invalid key')
+
+    monkeypatch.setattr(viewer.s3, 'head_object', unexpected_call)
+
+    result = viewer.process(
+        visibility_event(
+            method,
+            key='WorkOrders/99/report.pdf',
+            customerVisible=True,
+            publicVisible=False,
+        ),
+        None,
+    )
+
+    assert result['statusCode'] == 403
+
+
+@pytest.mark.parametrize('value', ['true', 1, None])
+def test_work_order_visibility_rejects_invalid_boolean(
+    viewer, monkeypatch, value
+):
+    monkeypatch.setattr(viewer.s3, 'head_object', lambda **kwargs: {})
+    monkeypatch.setattr(
+        viewer.s3,
+        'get_object_tagging',
+        lambda **kwargs: {'TagSet': []},
+    )
+
+    result = viewer.process(
+        visibility_event(
+            'PUT',
+            customerVisible=value,
+            publicVisible=False,
+        ),
+        None,
+    )
+
+    assert result['statusCode'] == 400

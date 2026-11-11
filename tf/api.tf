@@ -411,6 +411,22 @@ resource "aws_apigatewayv2_route" "delete_work_order_file" {
   authorization_type = "AWS_IAM"
 }
 
+resource "aws_apigatewayv2_route" "get_work_order_file_visibility" {
+  api_id = aws_apigatewayv2_api.lambda_api.id
+
+  route_key          = "GET /files/workorders/{workOrderId}/visibility"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
+}
+
+resource "aws_apigatewayv2_route" "update_work_order_file_visibility" {
+  api_id = aws_apigatewayv2_api.lambda_api.id
+
+  route_key          = "PUT /files/workorders/{workOrderId}/visibility"
+  target             = "integrations/${aws_apigatewayv2_integration.s3_file_viewer.id}"
+  authorization_type = "AWS_IAM"
+}
+
 resource "aws_apigatewayv2_route" "list_building_documents" {
   api_id = aws_apigatewayv2_api.lambda_api.id
 
