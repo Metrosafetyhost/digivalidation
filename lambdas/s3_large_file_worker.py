@@ -385,25 +385,31 @@ def process(event, context):
     print(f'Retrieved {len(pending_requests)} Pending large-file requests')
     if not PROCESSING_ENABLED:
         return {'pending_count': len(pending_requests)}
+
+    # Initial Production pilot: fail closed unless a manual invocation identifies
+    # exactly one Pending request. A scheduled/empty event can never process files.
+    request_id = event.get('request_id') if isinstance(event, dict) else None
+    if (
+        not isinstance(event, dict)
+        or event.get('action') != 'process_one'
+        or not isinstance(request_id, str)
+        or not re.fullmatch(r'[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?', request_id)
+    ):
+        return {'pending_count': len(pending_requests), 'processing_skipped': 'specific_manual_request_required'}
+
+    # The read-only query is intentionally bounded at ten requests. If the
+    # selected ID isn't in that batch, don't touch any other request.
+    selected = [request for request in pending_requests if request['Id'] == request_id]
+    if len(selected) != 1:
+        return {'pending_count': len(pending_requests), 'processing_skipped': 'request_not_in_pending_batch'}
     if not FILE_BUCKET:
         raise RuntimeError('FILE_BUCKET must be configured before processing requests')
 
-    completed = 0
-    failures = 0
-    for request in pending_requests:
-        try:
-            _process_request(request, access_token, instance_url)
-        except Exception as error:
-            # Invalid/conflicting requests are terminal. Transient failures remain
-            # Pending for another run; an uncertain registration keeps its marker.
-            if isinstance(error, ValueError) and request.get('Error__c') != REGISTRATION_MARKER:
-                _update_request(
-                    access_token, instance_url, request['Id'], 'Failed',
-                    'Invalid or conflicting large-file request; administrator review required',
-                )
-            print(f'Large-file request could not be completed ({type(error).__name__})')
-            failures += 1
-        else:
-            completed += 1
-            break  # One successful transfer per invocation keeps runtime predictable.
-    return {'pending_count': len(pending_requests), 'completed_count': completed, 'failed_count': failures}
+    try:
+        _process_request(selected[0], access_token, instance_url)
+    except Exception as error:
+        # Pilot mode: never mark a request Failed automatically. A registration
+        # uncertainty marker written by _process_request still protects retries.
+        print(f'Selected large-file request could not be completed ({type(error).__name__})')
+        return {'pending_count': len(pending_requests), 'completed_count': 0, 'failed_count': 1}
+    return {'pending_count': len(pending_requests), 'completed_count': 1, 'failed_count': 0}

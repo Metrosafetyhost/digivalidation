@@ -622,7 +622,7 @@ def test_file_metadata_matches_existing_neilon_builder(setup_lambda, filename, e
     assert 'Work_Type__c' not in fields  # Not available on the hand-off request.
 
 
-def test_process_enabled_runs_one_successful_request_only(setup_lambda, monkeypatch):
+def test_process_enabled_requires_explicit_single_request(setup_lambda, monkeypatch):
     module, _, _, _ = setup_lambda
     monkeypatch.setattr(module, 'FILE_BUCKET', BUCKET)
     monkeypatch.setattr(module, 'PROCESSING_ENABLED', True)
@@ -631,11 +631,51 @@ def test_process_enabled_runs_one_successful_request_only(setup_lambda, monkeypa
     second['Id'] = 'a9dR500000000hZIAQ'
     with patch.object(module, '_get_pending_requests', return_value=[first, second]):
         with patch.object(module, '_process_request', return_value=FILE_ID) as complete:
-            assert module.process({}, None) == {'pending_count': 2, 'completed_count': 1, 'failed_count': 0}
-    complete.assert_called_once_with(first, TOKEN, INSTANCE_URL)
+            result = module.process({'action': 'process_one', 'request_id': second['Id']}, None)
+    assert result == {'pending_count': 2, 'completed_count': 1, 'failed_count': 0}
+    complete.assert_called_once_with(second, TOKEN, INSTANCE_URL)
 
 
-def test_invalid_request_is_marked_failed_without_registering(setup_lambda, monkeypatch):
+@pytest.mark.parametrize('event', [
+    {},
+    {'action': 'process_one'},
+    {'request_id': REQUEST_ID},
+    {'action': 'process_one', 'request_id': 'not-an-id'},
+    {'source': 'aws.events', 'request_id': REQUEST_ID},
+    None,
+])
+def test_processing_enabled_without_valid_manual_event_never_writes(setup_lambda, monkeypatch, event):
+    module, _, _, _ = setup_lambda
+    monkeypatch.setattr(module, 'FILE_BUCKET', BUCKET)
+    monkeypatch.setattr(module, 'PROCESSING_ENABLED', True)
+    with patch.object(module, '_get_pending_requests', return_value=[_pending_request()]):
+        with patch.object(module, '_process_request') as complete:
+            result = module.process(event, None)
+    assert result['processing_skipped'] == 'specific_manual_request_required'
+    complete.assert_not_called()
+    module.s3.put_object.assert_not_called()
+
+
+def test_selected_request_not_in_pending_batch_never_writes(setup_lambda, monkeypatch):
+    module, _, _, _ = setup_lambda
+    monkeypatch.setattr(module, 'FILE_BUCKET', BUCKET)
+    monkeypatch.setattr(module, 'PROCESSING_ENABLED', True)
+    with patch.object(module, '_get_pending_requests', return_value=[_pending_request()]):
+        with patch.object(module, '_process_request') as complete:
+            result = module.process({'action': 'process_one', 'request_id': 'a9dR500000000hZIAQ'}, None)
+    assert result['processing_skipped'] == 'request_not_in_pending_batch'
+    complete.assert_not_called()
+
+
+def test_processing_disabled_even_with_manual_event_never_writes(setup_lambda):
+    module, _, _, _ = setup_lambda
+    with patch.object(module, '_get_pending_requests', return_value=[_pending_request()]):
+        with patch.object(module, '_process_request') as complete:
+            assert module.process({'action': 'process_one', 'request_id': REQUEST_ID}, None) == {'pending_count': 1}
+    complete.assert_not_called()
+
+
+def test_invalid_request_is_left_pending_for_manual_review(setup_lambda, monkeypatch):
     module, _, _, _ = setup_lambda
     monkeypatch.setattr(module, 'FILE_BUCKET', BUCKET)
     monkeypatch.setattr(module, 'PROCESSING_ENABLED', True)
@@ -643,11 +683,9 @@ def test_invalid_request_is_marked_failed_without_registering(setup_lambda, monk
     with patch.object(module, '_get_pending_requests', return_value=[request]):
         with patch.object(module, '_process_request', side_effect=ValueError('some private input')):
             with patch.object(module, '_update_request') as update:
-                assert module.process({}, None)['failed_count'] == 1
-    update.assert_called_once_with(
-        TOKEN, INSTANCE_URL, REQUEST_ID, 'Failed',
-        'Invalid or conflicting large-file request; administrator review required',
-    )
+                result = module.process({'action': 'process_one', 'request_id': request['Id']}, None)
+    assert result == {'pending_count': 1, 'completed_count': 0, 'failed_count': 1}
+    update.assert_not_called()
 
 
 def test_uncertain_registration_not_marked_failed(setup_lambda, monkeypatch):
@@ -659,7 +697,7 @@ def test_uncertain_registration_not_marked_failed(setup_lambda, monkeypatch):
     with patch.object(module, '_get_pending_requests', return_value=[request]):
         with patch.object(module, '_process_request', side_effect=ValueError('private bad response')):
             with patch.object(module, '_update_request') as update:
-                assert module.process({}, None)['failed_count'] == 1
+                assert module.process({'action': 'process_one', 'request_id': request['Id']}, None)['failed_count'] == 1
     update.assert_not_called()
 
 
