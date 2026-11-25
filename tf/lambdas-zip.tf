@@ -5,6 +5,7 @@ module "lambdas_zip" {
   env       = var.env
 
   lambda_names = [
+    "s3_large_file_worker",
     "asset_categorisation",
     "checklist",
     "basic_event",
@@ -35,6 +36,7 @@ module "lambdas_zip" {
   ]
 
   lambda_file_names = [
+    "s3_large_file_worker.py",
     "asset_categorisation.py",
     "checklist.py",
     "basic_event.py",
@@ -82,6 +84,20 @@ module "lambdas_zip" {
   force_lambda_code_deploy = true
 
   lambda_config = {
+    s3_large_file_worker = {
+      handler                        = "process"
+      timeout                        = 900
+      memory_size                    = 1024
+      ephemeral_storage_size         = 2048
+      reserved_concurrent_executions = 1
+
+      lambda_environment = {
+        SF_OAUTH_SECRET_ARN = aws_secretsmanager_secret.sf_oauth_secret.arn
+        FILE_BUCKET         = "metrosafetyprodfiles"
+        PROCESSING_ENABLED  = "false"
+      }
+    }
+
     asset_categorisation = {
       handler     = "process"
       memory_size = 512
