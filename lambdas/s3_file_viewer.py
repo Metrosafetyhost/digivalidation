@@ -1613,34 +1613,9 @@ def process_building_upload_request(event: dict) -> dict:
 
     building_prefix = normalise_building_prefix(supplied_prefix)
 
-    # Reuse an existing canonical Building root when its descriptive
-    # name differs from Salesforce. Never upload into legacy roots.
-    lookup_token = get_building_lookup_token(building_prefix)
-
-    canonical_roots = sorted(
-        root
-        for root in find_building_roots(building_prefix)
-        if get_root_parent_prefix(root) == f'{BUILDING_PREFIX}/'
-        and building_root_priority(root, lookup_token) >= 70
-        and get_building_root_suffix(root, lookup_token).strip().lower() not in {
-            'null',
-            'none',
-            'undefined',
-        }
-    )
-
-    if len(canonical_roots) > 1:
-        raise ValueError(
-            'Multiple canonical S3 Building folders were found for '
-            'this Building Number. The upload was not started. Found: '
-            + ', '.join(canonical_roots)
-        )
-
-    building_root = (
-        canonical_roots[0]
-        if canonical_roots
-        else building_prefix.rstrip('/') + '/'
-    )
+    # Keep Building number validation, then use the Salesforce destination.
+    get_building_lookup_token(building_prefix)
+    building_root = building_prefix.rstrip('/') + '/'
 
     folder_path = validate_upload_folder(
         building_root,
