@@ -407,6 +407,14 @@ def test_find_existing_link_verifies_exact_metadata(setup_lambda, monkeypatch):
     assert 'NEILON__Amazon_File_Key__c' not in get.call_args.kwargs['params']['q'].split('WHERE', 1)[1]
 
 
+def test_link_lookup_allows_slow_salesforce_response(setup_lambda, monkeypatch):
+    module, _, _, get = setup_lambda
+    monkeypatch.setattr(module, 'FILE_BUCKET', BUCKET)
+    get.return_value.json.return_value = {'records': [], 'done': True}
+    assert module._find_s3_link(_pending_request(), TOKEN, INSTANCE_URL) is None
+    assert get.call_args.kwargs['timeout'] == (10, 60)
+
+
 def test_find_existing_link_rejects_duplicate_and_incorrect_metadata(setup_lambda, monkeypatch):
     module, _, _, get = setup_lambda
     monkeypatch.setattr(module, 'FILE_BUCKET', BUCKET)
@@ -709,7 +717,7 @@ def test_verify_source_version_matches_document_and_size(setup_lambda):
         f'{INSTANCE_URL}/services/data/v68.0/sobjects/ContentVersion/{VERSION_ID}',
         headers={'Authorization': f'Bearer {TOKEN}'},
         params={'fields': 'ContentDocumentId,ContentSize'},
-        timeout=10,
+        timeout=(10, 60),
         allow_redirects=False,
     )
     get.return_value.json.return_value['ContentDocumentId'] = '069R5000000OtherAA'

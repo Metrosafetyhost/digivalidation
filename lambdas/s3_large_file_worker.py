@@ -187,7 +187,7 @@ def _verify_content_version(request, access_token, instance_url):
         f'{instance_url}/services/data/v68.0/sobjects/ContentVersion/{version_id}',
         headers={'Authorization': f'Bearer {access_token}'},
         params={'fields': 'ContentDocumentId,ContentSize'},
-        timeout=10,
+        timeout=(10, 60),
         allow_redirects=False,
     )
     response.raise_for_status()
@@ -271,7 +271,7 @@ def _find_s3_link(request, access_token, instance_url, work_type_id=None):
         f'{instance_url}/services/data/v68.0/query',
         headers={'Authorization': f'Bearer {access_token}'},
         params={'q': query},
-        timeout=10,
+        timeout=(10, 60),
         allow_redirects=False,
     )
     response.raise_for_status()
@@ -348,27 +348,37 @@ def _process_request(request, access_token, instance_url):
     if request['Entity_Name__c'] == 'WorkOrder':
         work_type_id = _get_work_order_work_type(request, access_token, instance_url)
 
+    # Stage names provide safe Production diagnostics without exposing file names,
+    # record IDs, Salesforce responses or authentication details.
+    print('Large-file stage: verify_content_version')
     _verify_content_version(request, access_token, instance_url)
+    print('Large-file stage: find_s3_link')
     link_id = _find_s3_link(request, access_token, instance_url, work_type_id)
     previous_attempt = request.get('Error__c') == REGISTRATION_MARKER
     if previous_attempt and not link_id:
         # The previous POST may have succeeded without returning a response. Never repeat it blindly.
         raise RuntimeError('Uncertain NEILON registration requires manual reconciliation')
 
+    print('Large-file stage: upload_content_version')
     _upload_request_file(request, access_token, instance_url)
+    print('Large-file stage: verify_s3_upload')
     _verify_s3_upload(request)
 
     if not link_id:
         # Persist the uncertainty marker BEFORE the non-idempotent NEILON POST.
+        print('Large-file stage: mark_registration_attempt')
         _update_request(access_token, instance_url, request['Id'], 'Pending', REGISTRATION_MARKER)
         request['Error__c'] = REGISTRATION_MARKER
+        print('Large-file stage: register_s3_link')
         created_id = _register_s3_link(
             request, *_parse_destination(request['S3_Key__c']), access_token, instance_url, work_type_id,
         )
+        print('Large-file stage: verify_registered_s3_link')
         link_id = _find_s3_link(request, access_token, instance_url, work_type_id)
         if link_id != created_id:
             raise RuntimeError('Registered S3-Link could not be verified')
 
+    print('Large-file stage: mark_done')
     _update_request(access_token, instance_url, request['Id'], 'Done')
     return link_id
 
