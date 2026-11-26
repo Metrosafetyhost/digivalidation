@@ -96,95 +96,85 @@ def test_legacy_upload_has_no_tagging(viewer, monkeypatch, kind):
     else:
         assert set(body) == {'uploadUrl', 'objectKey', 'fileName', 'contentType', 'expiresInSeconds'}
 
-def test_building_upload_reuses_existing_canonical_root(viewer, monkeypatch):
-    existing_root = 'Buildings/123 | Original Building Name/'
-    supplied_root = 'Buildings/123 | Updated Building Name/'
 
-    monkeypatch.setattr(
-        viewer,
-        'find_building_roots',
-        lambda prefix: [existing_root],
-    )
-
-    monkeypatch.setattr(
-        viewer.s3,
-        'generate_presigned_url',
-        lambda **kwargs: 'https://example.test/upload',
-    )
+@pytest.mark.parametrize(
+    ('canonical_exists', 'historical_exists'),
+    [
+        pytest.param(True, False, id='canonical-only'),
+        pytest.param(False, True, id='historical-only'),
+        pytest.param(True, True, id='both-roots'),
+        pytest.param(False, False, id='no-roots'),
+    ],
+)
+def test_building_upload_uses_supplied_root(
+    viewer, tagged_s3, monkeypatch, canonical_exists, historical_exists
+):
+    canonical_root = 'Buildings/123 | Updated Building Name/'
+    historical_root = 'Buildings/123 | Original Building Name/'
+    folder = 'Compliance Documents/Fire/Assessment/'
+    roots = set()
+    if canonical_exists:
+        roots.add(canonical_root)
+    if historical_exists:
+        roots.add(historical_root)
+    tagged_s3.keys = [root + folder + 'existing.pdf' for root in roots]
+    monkeypatch.setattr(viewer, 'find_building_roots', lambda prefix: roots)
 
     result = viewer.process(
         upload_event('building', {
-            'buildingPrefix': supplied_root,
+            'buildingPrefix': canonical_root.rstrip('/'),
+            'folderPath': folder.rstrip('/'),
         }),
         None,
     )
 
     assert result['statusCode'] == 200
-
     body = json.loads(result['body'])
+    assert body['buildingRoot'] == canonical_root
+    assert body['folderPath'] == folder
+    assert body['fileName'] == 'report.pdf'
+    assert body['objectKey'] == canonical_root + folder + 'report.pdf'
+    assert tagged_s3.presign_calls[0]['Params']['Key'] == body['objectKey']
 
-    assert body['buildingRoot'] == existing_root
-    assert body['objectKey'] == (
-        existing_root + 'Compliance Documents/Fire/Assessment/report.pdf'
-    )
 
-def test_building_upload_rejects_multiple_canonical_roots(viewer, monkeypatch):
-    monkeypatch.setattr(
-        viewer,
-        'find_building_roots',
-        lambda prefix: {
-            'Buildings/123 | Original Building Name/',
-            'Buildings/123 | Updated Building Name/',
-        },
-    )
+def test_building_upload_rejects_leaf_found_only_under_historical_root(
+    viewer, tagged_s3, monkeypatch
+):
+    historical_root = 'Buildings/123 | Original Building Name/'
+    folder = 'Compliance Documents/Custom/'
+    tagged_s3.keys = [historical_root + folder + 'existing.pdf']
+    monkeypatch.setattr(viewer, 'find_building_roots', lambda prefix: {historical_root})
 
-    def no_presign(**kwargs):
-        raise AssertionError('Ambiguous uploads must not be presigned')
-
-    monkeypatch.setattr(viewer.s3, 'generate_presigned_url', no_presign)
-
-    result = viewer.process(
-        upload_event('building', {
-            'buildingPrefix': 'Buildings/123 | Updated Building Name/',
-        }),
-        None,
-    )
+    result = viewer.process(upload_event('building', {'folderPath': folder}), None)
 
     assert result['statusCode'] == 400
-    assert 'Multiple canonical S3 Building folders' in json.loads(result['body'])['error']
+    assert json.loads(result['body']) == {'error': 'The selected AWS folder does not exist.'}
+    assert tagged_s3.presign_calls == []
 
-def test_building_upload_ignores_legacy_roots(viewer, monkeypatch):
-    monkeypatch.setattr(
-        viewer,
-        'find_building_roots',
-        lambda prefix: {
-            'Buildings//123 | Original Building Name/',
-            'Buildings/123 | null/',
-        },
-    )
 
-    monkeypatch.setattr(
-        viewer.s3,
-        'generate_presigned_url',
-        lambda **kwargs: 'https://example.test/upload',
-    )
+@pytest.mark.parametrize('canonical_duplicate', [True, False])
+def test_building_upload_checks_duplicates_at_supplied_root(
+    viewer, tagged_s3, monkeypatch, canonical_duplicate
+):
+    canonical_root = 'Buildings/123 | Example/'
+    historical_root = 'Buildings/123 | Original Building Name/'
+    destination = 'Compliance Documents/Fire/Assessment/report.pdf'
+    canonical_key = canonical_root + destination
+    tagged_s3.keys = [historical_root + destination]
+    if canonical_duplicate:
+        tagged_s3.keys.append(canonical_key)
+    roots = {historical_root}
+    if canonical_duplicate:
+        roots.add(canonical_root)
+    monkeypatch.setattr(viewer, 'find_building_roots', lambda prefix: roots)
+    monkeypatch.setattr(viewer, 'object_exists', lambda key: key in tagged_s3.keys)
 
-    result = viewer.process(
-        upload_event('building', {
-            'buildingPrefix': 'Buildings/123 | Updated Building Name/',
-        }),
-        None,
-    )
+    result = viewer.process(upload_event('building', {}), None)
 
-    assert result['statusCode'] == 200
+    assert result['statusCode'] == (409 if canonical_duplicate else 200)
+    assert json.loads(result['body'])['objectKey'] == canonical_key
+    assert len(tagged_s3.presign_calls) == (0 if canonical_duplicate else 1)
 
-    body = json.loads(result['body'])
-
-    assert body['buildingRoot'] == 'Buildings/123 | Updated Building Name/'
-    assert body['objectKey'] == (
-        'Buildings/123 | Updated Building Name/'
-        'Compliance Documents/Fire/Assessment/report.pdf'
-    )
 
 @pytest.mark.parametrize('kind', ['workorder', 'building'])
 @pytest.mark.parametrize('invalid', [None, 'true', 1, 0, [], {}])
@@ -408,8 +398,8 @@ def test_staff_building_keeps_hidden_folders_counts_and_warnings(viewer, tagged_
     assert tagged_s3.tag_calls == []
 
 
-def test_staff_building_keeps_double_slash_root_support(viewer, tagged_s3):
-    root = 'Buildings//123 | Legacy/'
+@pytest.mark.parametrize('root', ['Buildings/123 | Old Address/', 'Buildings//123 | Legacy/'])
+def test_staff_building_lists_and_opens_historical_roots(viewer, tagged_s3, root):
     key = root + 'Compliance Documents/report.pdf'
     tagged_s3.keys = [key]
     event = building_event()
@@ -419,6 +409,11 @@ def test_staff_building_keeps_double_slash_root_support(viewer, tagged_s3):
     assert result['statusCode'] == 200
     assert body['buildingRoot'] == root
     assert [item['key'] for item in body['files']] == [key]
+    open_event = building_event(open_key=key)
+    open_event['queryStringParameters']['buildingRoot'] = root
+    opened = viewer.process(open_event, None)
+    assert opened['statusCode'] == 200
+    assert tagged_s3.presign_calls[0]['Params']['Key'] == key
     assert tagged_s3.tag_calls == []
 
 
