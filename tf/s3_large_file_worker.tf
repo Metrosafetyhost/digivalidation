@@ -28,7 +28,8 @@ resource "aws_iam_role_policy" "s3_large_file_worker" {
         ]
         Resource = [
           "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*",
-          "arn:aws:s3:::metrosafetyprodfiles/Opportunities/*"
+          "arn:aws:s3:::metrosafetyprodfiles/Opportunities/*",
+          "arn:aws:s3:::metrosafetyprodfiles/Buildings/*"
         ]
       }
     ]

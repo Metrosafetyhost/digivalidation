@@ -14,7 +14,11 @@ FILE_BUCKET = os.getenv('FILE_BUCKET')
 MAX_FILE_SIZE_BYTES = 1024 * 1024 * 1024  # 1 GiB; ensure Lambda /tmp is sized for this.
 PROCESSING_ENABLED = os.getenv('PROCESSING_ENABLED', 'false').lower() == 'true'
 REGISTRATION_MARKER = 'NEILON registration attempted; verify S3-Link before retry'
-ENTITY_LOOKUPS = {'WorkOrder': 'WorkOrder__c', 'Opportunity': 'NEILON__Opportunity__c'}
+ENTITY_LOOKUPS = {
+    'WorkOrder': 'WorkOrder__c',
+    'Opportunity': 'NEILON__Opportunity__c',
+    'Location__c': 'Location__c',
+}
 
 secretsmanager = boto3.client('secretsmanager', region_name=REGION)
 s3 = boto3.client('s3', region_name=REGION)
@@ -263,7 +267,7 @@ def _find_s3_link(request, access_token, instance_url, work_type_id=None):
         'SELECT Id, Name, NEILON__Bucket_Name__c, NEILON__Amazon_File_Key__c, '
         'NEILON__Content_Document_Id__c, NEILON__Size__c, NEILON__Folder__c, '
         'NEILON__Bucket_Region__c, NEILON__Extension__c, NEILON__Content_Type__c, '
-        'WorkOrder__c, NEILON__Opportunity__c, Report_Source_Id__c, Public__c, Work_Type__c '
+        'WorkOrder__c, NEILON__Opportunity__c, Location__c, Report_Source_Id__c, Public__c, Work_Type__c '
         "FROM NEILON__File__c WHERE NEILON__Content_Document_Id__c = '"
         + document_id + "' LIMIT 101"
     )

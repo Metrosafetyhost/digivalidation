@@ -856,3 +856,27 @@ def test_opportunity_still_never_queries_work_order_metadata(setup_lambda, monke
     ):
         assert module._process_request(request, TOKEN, INSTANCE_URL) == FILE_ID
     get_type.assert_not_called()
+
+def test_location_link_fields_match_salesforce_builder(setup_lambda):
+    module, _, _, _ = setup_lambda
+
+    location_id = 'a00R500000kZuL0IAK'
+    request = {
+        'Entity_Name__c': 'Location__c',
+        'Record_Id__c': location_id,
+        'Content_Document_Id__c': '069R5000000iJyC3IAK',
+        'Size_Bytes__c': 326303995,
+    }
+
+    fields = module._s3_link_fields(
+        request,
+        'metrosafetyprodfiles',
+        'Buildings/test-building/Files/20261119_125832.mp4',
+    )
+
+    assert fields['Location__c'] == location_id
+    assert fields['Report_Source_Id__c'] == location_id
+    assert fields['NEILON__Extension__c'] == '.mp4'
+    assert fields['NEILON__Size__c'] == 326303995
+    assert 'Work_Type__c' not in fields
+    assert 'WorkOrder__c' not in fields
