@@ -1583,3 +1583,29 @@ resource "aws_iam_role_policy_attachment" "cannot_complete_classifier_bedrock_at
     module.lambdas_zip
   ]
 }
+
+resource "aws_iam_role_policy" "customer_document_download_s3_read" {
+  name = "CustomerDocumentDownloadS3Read"
+  role = "bedrock-lambda-customer_document_download"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [
+      {
+        Effect = "Allow"
+
+        Action = [
+          "s3:GetObject",
+          "s3:GetObjectTagging"
+        ]
+
+        Resource = [
+          "arn:aws:s3:::metrosafetyprodfiles/WorkOrders/*"
+        ]
+      }
+    ]
+  })
+
+  depends_on = [module.lambdas_zip]
+}
