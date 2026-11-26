@@ -61,3 +61,61 @@ resource "aws_cloudwatch_event_target" "s3_large_file_worker" {
 
   depends_on = [aws_lambda_permission.s3_large_file_worker_schedule]
 }
+
+# UK end-of-day schedule. The legacy 10-minute EventBridge rule above stays disabled.
+# AWS EventBridge Scheduler observes Europe/London daylight-saving transitions.
+resource "aws_iam_role" "s3_large_file_worker_daily_scheduler" {
+  name = "${var.namespace}-s3-large-file-worker-daily-scheduler"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = "sts:AssumeRole"
+      Principal = {
+        Service = "scheduler.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "s3_large_file_worker_daily_scheduler" {
+  name = "InvokeS3LargeFileWorker"
+  role = aws_iam_role.s3_large_file_worker_daily_scheduler.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["lambda:InvokeFunction"]
+      Resource = module.lambdas_zip.lambda_function_arns["s3_large_file_worker"]
+    }]
+  })
+}
+
+resource "aws_scheduler_schedule" "s3_large_file_worker_daily" {
+  name                         = "${var.namespace}-s3-large-file-worker-daily"
+  description                  = "Process one Pending Salesforce large-file request each UK evening"
+  schedule_expression          = "cron(0 18 * * ? *)"
+  schedule_expression_timezone = "Europe/London"
+  state                        = "DISABLED"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  target {
+    arn      = module.lambdas_zip.lambda_function_arns["s3_large_file_worker"]
+    role_arn = aws_iam_role.s3_large_file_worker_daily_scheduler.arn
+    input = jsonencode({
+      action = "process_pending"
+      source = "metro-safety-daily-scheduler"
+    })
+
+    retry_policy {
+      maximum_retry_attempts = 0
+    }
+  }
+
+  depends_on = [aws_iam_role_policy.s3_large_file_worker_daily_scheduler]
+}

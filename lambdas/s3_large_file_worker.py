@@ -400,30 +400,41 @@ def process(event, context):
     if not PROCESSING_ENABLED:
         return {'pending_count': len(pending_requests)}
 
-    # Initial Production pilot: fail closed unless a manual invocation identifies
-    # exactly one Pending request. A scheduled/empty event can never process files.
-    request_id = event.get('request_id') if isinstance(event, dict) else None
-    if (
-        not isinstance(event, dict)
-        or event.get('action') != 'process_one'
-        or not isinstance(request_id, str)
-        or not re.fullmatch(r'[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?', request_id)
-    ):
-        return {'pending_count': len(pending_requests), 'processing_skipped': 'specific_manual_request_required'}
+    # Only the expected scheduler payload or an explicit manual request can write.
+    scheduled = (
+        isinstance(event, dict)
+        and event.get('action') == 'process_pending'
+        and event.get('source') == 'metro-safety-daily-scheduler'
+    )
+    if scheduled:
+        if not pending_requests:
+            return {'pending_count': 0, 'completed_count': 0, 'failed_count': 0}
+        # One transfer per day: avoid multiple large downloads in a 15-minute Lambda.
+        selected_request = pending_requests[0]
+    else:
+        request_id = event.get('request_id') if isinstance(event, dict) else None
+        if (
+            not isinstance(event, dict)
+            or event.get('action') != 'process_one'
+            or not isinstance(request_id, str)
+            or not re.fullmatch(r'[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?', request_id)
+        ):
+            return {'pending_count': len(pending_requests), 'processing_skipped': 'specific_manual_request_required'}
 
-    # The read-only query is intentionally bounded at ten requests. If the
-    # selected ID isn't in that batch, don't touch any other request.
-    selected = [request for request in pending_requests if request['Id'] == request_id]
-    if len(selected) != 1:
-        return {'pending_count': len(pending_requests), 'processing_skipped': 'request_not_in_pending_batch'}
+        # The read-only query is bounded at ten Pending records.
+        selected = [request for request in pending_requests if request['Id'] == request_id]
+        if len(selected) != 1:
+            return {'pending_count': len(pending_requests), 'processing_skipped': 'request_not_in_pending_batch'}
+        selected_request = selected[0]
+
     if not FILE_BUCKET:
         raise RuntimeError('FILE_BUCKET must be configured before processing requests')
 
     try:
-        _process_request(selected[0], access_token, instance_url)
+        _process_request(selected_request, access_token, instance_url)
     except Exception as error:
-        # Pilot mode: never mark a request Failed automatically. A registration
-        # uncertainty marker written by _process_request still protects retries.
+        # Leave failures Pending for review; _process_request retains its NEILON
+        # registration uncertainty marker and existing idempotence checks.
         print(f'Selected large-file request could not be completed ({type(error).__name__})')
         return {'pending_count': len(pending_requests), 'completed_count': 0, 'failed_count': 1}
     return {'pending_count': len(pending_requests), 'completed_count': 1, 'failed_count': 0}
