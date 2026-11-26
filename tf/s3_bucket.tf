@@ -11,6 +11,14 @@ resource "aws_iam_access_key" "salesforce_prep_s3" {
 }
 
 data "aws_iam_policy_document" "salesforce_prep_s3_policy" {
+
+  statement {
+    sid       = "AllowBucketDiscovery"
+    effect    = "Allow"
+    actions   = ["s3:ListAllMyBuckets"]
+    resources = ["*"]
+  }
+
   statement {
     effect    = "Allow"
     actions   = ["s3:ListBucket"]
@@ -18,6 +26,13 @@ data "aws_iam_policy_document" "salesforce_prep_s3_policy" {
       aws_s3_bucket.metrosafetysandboxfiles.arn,
       aws_s3_bucket.metrosafetysandboximages.arn
     ]
+  }
+
+  statement {
+    sid       = "AllowSandboxBucketCORS"
+    effect    = "Allow"
+    actions   = ["s3:PutBucketCORS"]
+    resources = [aws_s3_bucket.metrosafetysandboxfiles.arn]
   }
 
   statement {

@@ -61,12 +61,7 @@ resource "aws_s3_object" "lambda_zip" {
 resource "aws_lambda_function" "lambda" {
   for_each      = local.lambda_map
   function_name = "${var.namespace}-${each.key}"
-  handler = "${each.key}.${lookup(var.lambda_config, each.key, {
-    handler            = "process"
-    memory_size        = 512
-    timeout            = 240
-    lambda_environment = {}
-  }).handler}"
+  handler       = "${each.key}.${try(var.lambda_config[each.key].handler, "process")}"
   runtime       = var.runtime
   architectures = [var.arch]
   role          = local.effective_lambda_roles[each.key]
@@ -74,18 +69,18 @@ resource "aws_lambda_function" "lambda" {
   s3_key        = aws_s3_object.lambda_zip[each.key].key
   layers        = length(var.lambda_layer_arns) > 0 ? var.lambda_layer_arns : (var.lambda_layer_arn != "" ? [var.lambda_layer_arn] : [])
 
-  memory_size = lookup(var.lambda_config, each.key, {
-    handler            = "process"
-    memory_size        = 512
-    timeout            = 240
-    lambda_environment = {}
-  }).memory_size
-  timeout = lookup(var.lambda_config, each.key, {
-    handler            = "process"
-    memory_size        = 512
-    timeout            = 240
-    lambda_environment = {}
-  }).timeout
+  # Optional per-function settings
+  reserved_concurrent_executions = try(var.lambda_config[each.key].reserved_concurrent_executions, null)
+
+  dynamic "ephemeral_storage" {
+    for_each = try(var.lambda_config[each.key].ephemeral_storage_size, null) == null ? [] : [1]
+    content {
+      size = var.lambda_config[each.key].ephemeral_storage_size
+    }
+  }
+
+  memory_size = try(var.lambda_config[each.key].memory_size, 512)
+  timeout     = try(var.lambda_config[each.key].timeout, 240)
 
 
   source_code_hash = aws_s3_object.lambda_zip[each.key].metadata["commit"] == data.external.git.result["sha"] ? (
@@ -93,12 +88,7 @@ resource "aws_lambda_function" "lambda" {
   ) : aws_s3_object.lambda_zip[each.key].metadata["hash"]
 
   environment {
-    variables = merge(var.default_environment, lookup(var.lambda_config, each.key, {
-      handler            = "process"
-      memory_size        = 512
-      timeout            = 240
-      lambda_environment = {}
-    }).lambda_environment)
+    variables = merge(var.default_environment, try(var.lambda_config[each.key].lambda_environment, {}))
   }
 
   tags = merge(local.common_tags, {
@@ -279,3 +269,7 @@ resource "aws_iam_role_policy_attachment" "lambda_logs" {
 #   source_code_hash    = filesha256(local.layer_zip)
 #   depends_on          = [null_resource.build_openai_layer]
 # }
+# EventBridge targets can reference deployed Lambda ARNs without rebuilding ARN strings.
+output "lambda_function_arns" {
+  value = { for name, function in aws_lambda_function.lambda : name => function.arn }
+}

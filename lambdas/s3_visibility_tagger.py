@@ -95,6 +95,53 @@ def merge_missing_visibility_tags(
 
     return merged_tags, changed
 
+def previous_version_visibility_tags(
+    bucket: str,
+    key: str,
+    version_id: str | None,
+) -> dict[str, str]:
+    """Retrieve visibility tags from the immediately previous S3 version."""
+    if not version_id or version_id == 'null':
+        return {}
+
+    entries = []
+
+    paginator = S3.get_paginator('list_object_versions')
+
+    for page in paginator.paginate(Bucket=bucket, Prefix=key):
+        for version in page.get('Versions', []):
+            if version['Key'] == key:
+                entries.append((version['LastModified'], version['VersionId'], False))
+
+        for marker in page.get('DeleteMarkers', []):
+            if marker['Key'] == key:
+                entries.append((marker['LastModified'], marker['VersionId'], True))
+
+    entries.sort(key=lambda entry: entry[0], reverse=True)
+
+    for index, (_, candidate_id, is_delete) in enumerate(entries):
+        if candidate_id != version_id or is_delete:
+            continue
+
+        if index + 1 >= len(entries) or entries[index + 1][2]:
+            return {}
+
+        previous_id = entries[index + 1][1]
+
+        response = S3.get_object_tagging(
+            Bucket=bucket,
+            Key=key,
+            VersionId=previous_id,
+        )
+
+        return {
+            tag['Key']: tag['Value']
+            for tag in response.get('TagSet', [])
+            if tag['Key'] in (CUSTOMER_VISIBLE_TAG, PUBLIC_VISIBLE_TAG)
+        }
+
+    return {}
+
 
 def _tagging_parameters(
     bucket: str,
@@ -131,11 +178,30 @@ def tag_object_if_required(
     existing_tags = {item['Key']: item['Value'] for item in current.get('TagSet', [])}
 
     file_name = PurePosixPath(key).name
-    merged_tags, changed = merge_missing_visibility_tags(
-        existing_tags,
+
+    # Preserve visibility settings from the previous object version,
+    # unless the uploader explicitly supplied new values.
+    inherited_tags = {}
+
+    if (
+        CUSTOMER_VISIBLE_TAG not in existing_tags
+        or PUBLIC_VISIBLE_TAG not in existing_tags
+    ):
+        inherited_tags = previous_version_visibility_tags(
+            bucket,
+            key,
+            version_id,
+        )
+
+    tags_to_merge = {**inherited_tags, **existing_tags}
+
+    merged_tags, _ = merge_missing_visibility_tags(
+        tags_to_merge,
         file_name,
         key,
     )
+
+    changed = merged_tags != existing_tags
 
     if not changed:
         LOGGER.info('Visibility tags already set bucket=%s key=%s', bucket, key)

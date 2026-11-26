@@ -77,10 +77,12 @@ variable "arch" {
 variable "lambda_config" {
   description = "A map of Lambda function names to their specific configurations"
   type = map(object({
-    memory_size        = optional(number, 512)
-    timeout            = optional(number, 6)
-    handler            = optional(string, "process")
-    lambda_environment = optional(map(string), {})
+    memory_size                    = optional(number, 512)
+    timeout                        = optional(number, 6)
+    handler                        = optional(string, "process")
+    lambda_environment             = optional(map(string), {})
+    ephemeral_storage_size         = optional(number)
+    reserved_concurrent_executions = optional(number)
   }))
   default = {}
 }
